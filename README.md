@@ -88,7 +88,7 @@ All knobs are CARP_-prefixed environment variables.
 | `CARP_MCP_LISTEN_ADDR` | `:8081` | MCP HTTP/SSE listen address |
 | `CARP_MCP_STDIO` | `false` | Run MCP over stdio (also via `--mcp-stdio` flag) |
 | `CARP_METRICS_ADDR` | `:9090` | Prometheus + health listen address |
-| `CARP_API_KEY` | _(unset)_ | Bearer token for `/crawl`; empty disables auth (dev mode) |
+| `CARP_API_KEY` | _(unset)_ | Bearer token for `/crawl` and `/mcp` (HTTP transport); empty disables auth (dev mode). Stdio MCP is unaffected. |
 | `CARP_CRAWL4AI_URL` | _(unset)_ | Upstream crawl4ai endpoint; empty disables fallback |
 | `CARP_CRAWL4AI_TIMEOUT` | `90s` | Per-call timeout to crawl4ai |
 | `CARP_REDDIT_TIMEOUT` | `4m` | Wall-clock cap for a Reddit thread expansion |

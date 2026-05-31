@@ -139,8 +139,9 @@ func run(cfg config.Config, logger *slog.Logger) error {
 	// --- MCP HTTP server (separate listener) ---
 
 	mcpServer := mcp.New(mcp.Config{
-		Registry: registry,
-		Logger:   logger,
+		Registry:      registry,
+		Authenticator: authn,
+		Logger:        logger,
 		RedditDefaults: reddit.Options{
 			MaxRounds:   cfg.RedditMaxRounds,
 			Format:      cfg.RedditFormat,

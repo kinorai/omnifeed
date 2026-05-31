@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"sync"
 
+	"github.com/kinorai/crawl4ai-reddit-proxy/internal/auth"
 	"github.com/kinorai/crawl4ai-reddit-proxy/internal/domain"
 	"github.com/kinorai/crawl4ai-reddit-proxy/internal/engine"
 	"github.com/kinorai/crawl4ai-reddit-proxy/internal/engine/reddit"
@@ -33,13 +34,19 @@ const ProtocolVersion = "2024-11-05"
 // Server is a JSON-RPC 2.0 MCP server.
 type Server struct {
 	registry       *engine.Registry
+	auth           auth.Authenticator
 	logger         *slog.Logger
 	redditDefaults reddit.Options
 }
 
 // Config configures the Server.
+//
+// Authenticator gates the HTTP transport (POST /mcp and GET /mcp/sse). The
+// stdio transport is unaffected because it runs as a local subprocess and
+// inherits trust from its parent. If nil, auth.AlwaysAllow is used.
 type Config struct {
 	Registry       *engine.Registry
+	Authenticator  auth.Authenticator
 	Logger         *slog.Logger
 	RedditDefaults reddit.Options
 }
@@ -49,8 +56,12 @@ func New(cfg Config) *Server {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
+	if cfg.Authenticator == nil {
+		cfg.Authenticator = auth.AlwaysAllow{}
+	}
 	return &Server{
 		registry:       cfg.Registry,
+		auth:           cfg.Authenticator,
 		logger:         cfg.Logger,
 		redditDefaults: cfg.RedditDefaults,
 	}
@@ -338,8 +349,23 @@ func httpJSON(w http.ResponseWriter, code int, body any) {
 	_ = json.NewEncoder(w).Encode(body)
 }
 
-// Register attaches /mcp (POST + GET for SSE) to mux.
+// Register attaches /mcp (POST + GET for SSE) to mux behind the configured
+// authenticator. Both POST and GET routes share the same bearer-token check.
 func (s *Server) Register(mux *http.ServeMux) {
-	mux.HandleFunc("/mcp", s.ServeHTTP)
-	mux.HandleFunc("/mcp/sse", s.serveHTTPSSE)
+	mux.Handle("/mcp", s.requireAuth(s.ServeHTTP))
+	mux.Handle("/mcp/sse", s.requireAuth(s.serveHTTPSSE))
+}
+
+// requireAuth wraps a handler with the configured authenticator. On failure
+// it responds with 401 and the RFC 6750 WWW-Authenticate challenge so clients
+// can surface a clear error.
+func (s *Server) requireAuth(next http.HandlerFunc) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, err := s.auth.Authenticate(r); err != nil {
+			w.Header().Set("WWW-Authenticate", `Bearer realm="mcp"`)
+			http.Error(w, "invalid or missing API key", http.StatusUnauthorized)
+			return
+		}
+		next(w, r)
+	})
 }

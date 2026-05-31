@@ -25,7 +25,7 @@ Only the latest minor release receives security fixes. Pin to `:latest` or the h
 ## Security posture
 
 - **SSRF protection**: requests to RFC 1918 / loopback / link-local ranges are blocked by default (`CARP_BLOCK_PRIVATE_IPS=true`). Disable only when running on a trusted internal network.
-- **Auth**: a single shared bearer token (`CARP_API_KEY`) gates the `/crawl` endpoint. Constant-time comparison.
+- **Auth**: a single shared bearer token (`CARP_API_KEY`) gates the `/crawl` (Open WebUI loader) and `/mcp` (HTTP transport) endpoints. Constant-time comparison. Stdio MCP is unauthenticated by design — it runs as a local subprocess and inherits trust from its parent.
 - **Container**: distroless/scratch base, runs as non-root (uid 65532), read-only root filesystem in shipped manifests.
 - **TLS**: terminated at your reverse proxy / ingress — the binary speaks plain HTTP internally.
 - **Reddit auth**: the proxy uses Reddit's *public* JSON API. No user credentials are stored, transmitted, or required.
@@ -38,5 +38,5 @@ Only the latest minor release receives security fixes. Pin to `:latest` or the h
 | Resource exhaustion via huge URL list | `CARP_MAX_URLS_PER_REQUEST` cap (default 30) |
 | Resource exhaustion via large Reddit thread | `CARP_REDDIT_TIMEOUT` + `MaxExpansionRounds=40` cap |
 | Reddit rate-limit blocking | Per-domain limiter + identifiable User-Agent + Retry-After honoring |
-| Unauthorized `/crawl` access | `CARP_API_KEY` bearer token (constant-time compare) |
+| Unauthorized `/crawl` or `/mcp` access | `CARP_API_KEY` bearer token (constant-time compare) |
 | Container escape | Non-root user, read-only root FS, dropped capabilities, scratch base |
