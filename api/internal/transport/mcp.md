@@ -8,7 +8,12 @@ import "github.com/kinorai/crawl4ai-reddit-proxy/internal/transport/mcp"
 
 Package mcp implements a minimal Model Context Protocol server.
 
-The server speaks JSON\-RPC 2.0. It supports stdio transport \(one JSON message per line on stdin/stdout\) and an HTTP\+SSE transport for remote clients \(Cursor remote, hosted MCP\).
+The server speaks JSON\-RPC 2.0 over two transports:
+
+- stdio: one JSON message per line on stdin/stdout. Used by local MCP clients that spawn the proxy as a subprocess.
+- Streamable HTTP \(MCP spec 2025\-03\-26\): a single endpoint at /mcp that accepts POST \(one\-shot JSON\-RPC request/response\) and GET \(server\- initiated SSE event stream\). This is the canonical HTTP transport for remote MCP clients \(Claude Code, OpenCode, Cursor remote, hosted MCP\).
+
+For backwards compatibility with older clients that only speak the deprecated dual\-endpoint SSE shape, the server also exposes /mcp/sse as a legacy alias — same handler as the GET path of /mcp. New clients should target /mcp; /mcp/sse is preserved for compat and may eventually be removed.
 
 Exposed tools:
 
@@ -41,9 +46,12 @@ const ProtocolVersion = "2024-11-05"
 
 Config configures the Server.
 
+Authenticator gates the HTTP transport \(POST /mcp and GET /mcp/sse\). The stdio transport is unaffected because it runs as a local subprocess and inherits trust from its parent. If nil, auth.AlwaysAllow is used.
+
 ```go
 type Config struct {
     Registry       *engine.Registry
+    Authenticator  auth.Authenticator
     Logger         *slog.Logger
     RedditDefaults reddit.Options
 }
@@ -76,7 +84,12 @@ New constructs the server.
 func (s *Server) Register(mux *http.ServeMux)
 ```
 
-Register attaches /mcp \(POST \+ GET for SSE\) to mux.
+Register attaches the MCP HTTP routes behind the configured authenticator.
+
+- /mcp — canonical Streamable HTTP endpoint \(POST = JSON\-RPC, GET = SSE event stream\). This is what new clients use.
+- /mcp/sse — legacy alias kept for compatibility with older clients that only speak the deprecated dual\-endpoint SSE shape. Same handler as GET /mcp.
+
+Both routes share the same bearer\-token check.
 
 <a name="Server.ServeHTTP"></a>
 ### func \(\*Server\) ServeHTTP
