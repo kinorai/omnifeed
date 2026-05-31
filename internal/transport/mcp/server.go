@@ -363,10 +363,10 @@ func httpJSON(w http.ResponseWriter, code int, body any) {
 // Register attaches the MCP HTTP routes behind the configured authenticator.
 //
 //   - /mcp     — canonical Streamable HTTP endpoint (POST = JSON-RPC,
-//                GET = SSE event stream). This is what new clients use.
+//     GET = SSE event stream). This is what new clients use.
 //   - /mcp/sse — legacy alias kept for compatibility with older clients
-//                that only speak the deprecated dual-endpoint SSE shape.
-//                Same handler as GET /mcp.
+//     that only speak the deprecated dual-endpoint SSE shape.
+//     Same handler as GET /mcp.
 //
 // Both routes share the same bearer-token check.
 func (s *Server) Register(mux *http.ServeMux) {
