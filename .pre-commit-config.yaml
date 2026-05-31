@@ -1,17 +1,18 @@
 # Pre-commit hooks for crawl4ai-reddit-proxy.
 #
-# Mirrors the checks in .github/workflows/ci.yml so that a clean
-# `pre-commit run --all-files` pass on your laptop is the same green you'd
-# get from CI — no more "pushed, CI failed on gofmt, force-pushed, repeat".
+# Design: hooks shim into `make <target>` so the Makefile is the single
+# source of truth for what "clean repo" means. CI calls the same targets,
+# which means a clean `pre-commit run --all-files` ≡ a green CI lint job
+# by construction — no drift possible.
 #
 # First-time setup (once per clone):
-#   brew install pre-commit                       # or: pip install pre-commit
-#   make pre-commit-install                       # installs both hooks
+#   brew install pre-commit                    # or: pip install pre-commit
+#   make pre-commit-install                    # installs both git hooks
 #
-# Run manually against all files (great after a rebase):
+# Run manually (CI parity check):
 #   make pre-commit-run
 #
-# Skip just this commit (emergencies only):
+# Skip a single commit (emergencies only):
 #   git commit --no-verify
 
 repos:
@@ -29,33 +30,50 @@ repos:
       - id: check-added-large-files
         args: [--maxkb=1024]
 
-  # ── Go: gofmt + vet + golangci-lint ─────────────────────────────────
-  # `local` hooks reuse the system-installed tools (already required by
-  # the Makefile / CI), so we don't pull in a redundant pre-built binary.
+  # ── Go: every hook shims into a Makefile target ─────────────────────
+  # The Makefile is the single source of truth. CI calls the same
+  # targets, so pre-commit ≡ CI lint job. To change a check, edit the
+  # Makefile and both layers pick it up automatically.
   - repo: local
     hooks:
       - id: gofmt
-        name: gofmt (CI's first check)
-        entry: bash -c 'out=$(gofmt -l "$@"); [ -z "$out" ] || { echo "Not gofmt-clean (run make fmt)"; echo "$out"; exit 1; }' --
+        name: make fmt-check
+        entry: make fmt-check
         language: system
-        types: [go]
+        types_or: [go]
+        pass_filenames: false
 
       - id: go-vet
-        name: go vet
-        entry: go vet ./...
+        name: make vet
+        entry: make vet
         language: system
-        types: [go]
+        types_or: [go]
         pass_filenames: false
 
       - id: golangci-lint
-        name: golangci-lint run (full, matches CI)
-        entry: golangci-lint run ./...
+        name: make lint
+        entry: make lint
         language: system
-        types: [go]
+        types_or: [go]
+        pass_filenames: false
+
+      - id: golangci-lint-config-verify
+        name: make config-verify
+        entry: make config-verify
+        language: system
+        files: ^\.golangci\.(yml|yaml|toml|json)$
+        pass_filenames: false
+
+      - id: go-mod-tidy
+        name: make tidy-check
+        entry: make tidy-check
+        language: system
+        files: ^(go\.mod|go\.sum|.*\.go)$
         pass_filenames: false
 
   # ── Conventional commits ────────────────────────────────────────────
-  # Runs on commit-msg, not pre-commit, so it sees the commit message.
+  # Runs on commit-msg, not pre-commit. Reads .commitlintrc.json for
+  # the allowed type-enum, same config CI uses with the wagoid action.
   - repo: https://github.com/alessandrojcm/commitlint-pre-commit-hook
     rev: v9.21.0
     hooks:

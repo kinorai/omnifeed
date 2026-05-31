@@ -50,6 +50,7 @@ jobs:
         uses: github/codeql-action/upload-sarif@v4.36.0
         with:
           sarif_file: gosec.sarif
+          wait-for-processing: true
 
   codeql:
     name: CodeQL Analysis
@@ -99,6 +100,7 @@ jobs:
         if: always()
         with:
           sarif_file: 'trivy-fs-results.sarif'
+          wait-for-processing: true
 
   # Trivy image scan only runs on release publication or the weekly schedule
   # — there's no image to scan until the first release ships, and the
@@ -133,3 +135,15 @@ jobs:
         if: always() && hashFiles('trivy-image-results.sarif') != ''
         with:
           sarif_file: 'trivy-image-results.sarif'
+          wait-for-processing: true
+
+      # Docker Scout complements Trivy with Docker Hub-integrated CVE data
+      # and remediation recommendations. Runs on the same release/schedule
+      # cadence as the Trivy image scan above.
+      - name: Run Docker Scout
+        uses: docker/scout-action@v1.18.1
+        with:
+          command: quickview,cves,recommendations
+          image: kinorai/crawl4ai-reddit-proxy:latest
+          dockerhub-user: ${{ secrets.DOCKERHUB_USERNAME }}
+          dockerhub-password: ${{ secrets.DOCKERHUB_TOKEN }}

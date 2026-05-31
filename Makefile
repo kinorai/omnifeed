@@ -45,21 +45,43 @@ bench: ## Run benchmarks
 ## --- Lint / format ---
 
 .PHONY: fmt
-fmt: ## Format code with gofmt + goimports
+fmt: ## Format code with gofmt + goimports (mutates files)
 	gofmt -s -w .
 	@command -v goimports >/dev/null 2>&1 && goimports -w . || true
+
+.PHONY: fmt-check
+fmt-check: ## Fail if any .go file is not gofmt-clean (non-mutating, used by CI + pre-commit)
+	@out=$$(gofmt -l .); \
+	if [ -n "$$out" ]; then \
+	  echo "Files not gofmt-clean (run 'make fmt' to fix):"; \
+	  echo "$$out"; \
+	  exit 1; \
+	fi
 
 .PHONY: lint
 lint: ## Run golangci-lint (install via `make install-tools`)
 	golangci-lint run ./...
+
+.PHONY: config-verify
+config-verify: ## Validate .golangci.yml against the schema (catches typos before CI does)
+	golangci-lint config verify
 
 .PHONY: vet
 vet: ## Run go vet
 	$(GO) vet ./...
 
 .PHONY: tidy
-tidy: ## Run go mod tidy
+tidy: ## Run go mod tidy (mutates go.mod / go.sum)
 	$(GO) mod tidy
+
+.PHONY: tidy-check
+tidy-check: ## Fail if go.mod or go.sum would change after `go mod tidy` (non-mutating)
+	@$(GO) mod tidy
+	@if ! git diff --quiet go.mod go.sum; then \
+	  echo "go.mod or go.sum are not tidy. Run 'make tidy' and commit the diff:"; \
+	  git --no-pager diff go.mod go.sum; \
+	  exit 1; \
+	fi
 
 .PHONY: check
 check: vet lint test ## Run all checks (vet + lint + test)

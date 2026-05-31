@@ -53,3 +53,21 @@ dependencies:
       - any-glob-to-any-file:
           - go.mod
           - go.sum
+
+test:
+  - changed-files:
+      - any-glob-to-any-file:
+          - '**/*_test.go'
+          - 'internal/**/testdata/**'
+
+configuration:
+  - changed-files:
+      - any-glob-to-any-file:
+          - '*.yml'
+          - '*.yaml'
+          - '*.json'
+          - '*.toml'
+          - '.tool-versions'
+          - '.golangci.yml'
+          - '.goreleaser.yaml'
+          - '.commitlintrc.json'
