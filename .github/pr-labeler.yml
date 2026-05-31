@@ -70,4 +70,3 @@ configuration:
           - '.tool-versions'
           - '.golangci.yml'
           - '.goreleaser.yaml'
-          - '.commitlintrc.json'

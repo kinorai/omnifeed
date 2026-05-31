@@ -128,10 +128,9 @@ install-tools: ## Install development tools (golangci-lint, govulncheck, gomarkd
 	$(GO) install github.com/goreleaser/goreleaser/v2@latest
 
 .PHONY: pre-commit-install
-pre-commit-install: ## Install git hooks (gofmt/vet/golangci-lint/commitlint) — run once per clone
+pre-commit-install: ## Install git hooks (gofmt/vet/golangci-lint) — run once per clone
 	@command -v pre-commit >/dev/null 2>&1 || { echo "pre-commit not installed. Run: brew install pre-commit  (or: pip install pre-commit)"; exit 1; }
 	pre-commit install --install-hooks
-	pre-commit install --hook-type commit-msg
 
 .PHONY: pre-commit-run
 pre-commit-run: ## Run all pre-commit hooks against every file (CI parity check)

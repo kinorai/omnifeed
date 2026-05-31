@@ -61,18 +61,6 @@ jobs:
           version: "~> v2"
           args: check
 
-      - name: Validate commits (commitlint)
-        if: github.event_name == 'push' && github.actor != 'dependabot[bot]'
-        uses: wagoid/commitlint-github-action@v6.2.1
-        with:
-          configFile: .commitlintrc.json
-
-      - name: Validate PR commits (commitlint)
-        if: github.event_name == 'pull_request' && github.actor != 'dependabot[bot]'
-        uses: wagoid/commitlint-github-action@v6.2.1
-        with:
-          configFile: .commitlintrc.json
-
   test:
     name: Test
     runs-on: ubuntu-latest
