@@ -47,7 +47,7 @@ type AlwaysAllow struct{}
 func (AlwaysAllow) Authenticate(*http.Request) (TenantID, error)
 ```
 
-
+Authenticate always returns SelfTenant and no error.
 
 <a name="Authenticator"></a>
 ## type Authenticator
@@ -87,7 +87,7 @@ NewSharedBearer returns an authenticator that accepts exactly the given token. I
 func (s *SharedBearer) Authenticate(r *http.Request) (TenantID, error)
 ```
 
-
+Authenticate validates the Authorization: Bearer \<token\> header against the configured shared token in constant time.
 
 <a name="TenantID"></a>
 ## type TenantID
@@ -98,7 +98,7 @@ TenantID identifies the caller. Single\-tenant deployments use "self".
 type TenantID string
 ```
 
-<a name="SelfTenant"></a>
+<a name="SelfTenant"></a>SelfTenant is the default tenant used in single\-tenant deployments.
 
 ```go
 const SelfTenant TenantID = "self"

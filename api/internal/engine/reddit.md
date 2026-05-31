@@ -81,7 +81,7 @@ ParseMoreChildren parses the /api/morechildren response: \{ json: \{ data: \{ th
 <a name="Comment"></a>
 ## type Comment
 
-
+Comment is a Reddit comment stripped to LLM\-relevant fields.
 
 ```go
 type Comment struct {
@@ -128,7 +128,7 @@ type Engine struct {
 func New(cfg Config) *Engine
 ```
 
-
+New returns a Reddit Engine configured per cfg.
 
 <a name="Engine.Crawl"></a>
 ### func \(\*Engine\) Crawl
@@ -175,7 +175,7 @@ type Fetcher struct {
 func NewFetcher(client *httpx.Client, userAgent string) *Fetcher
 ```
 
-
+NewFetcher constructs a Fetcher backed by the given retrying client and UA.
 
 <a name="Fetcher.FetchMoreChildren"></a>
 ### func \(\*Fetcher\) FetchMoreChildren
@@ -198,7 +198,7 @@ FetchThread retrieves a thread via old.reddit.com's .json endpoint with a genero
 <a name="Gap"></a>
 ## type Gap
 
-
+Gap represents a collapsed branch in the comment tree \(a "more" placeholder\).
 
 ```go
 type Gap struct {
@@ -236,7 +236,7 @@ OptionsFromQuery parses ?format=, ?depth=, ?nocreated=, ?expand= from a query st
 <a name="Post"></a>
 ## type Post
 
-
+Post is a Reddit post stripped to LLM\-relevant fields.
 
 ```go
 type Post struct {
@@ -257,7 +257,7 @@ type Post struct {
 <a name="Thread"></a>
 ## type Thread
 
-
+Thread groups a Reddit post with its comment tree and remaining gaps.
 
 ```go
 type Thread struct {

@@ -28,10 +28,10 @@ Resp:    [{"page_content": "...", "metadata": {...}}, ...]
 
 ## Variables
 
-<a name="ServerError"></a>ServerError is returned when the Server itself fails \(vs a single URL\).
+<a name="ErrServer"></a>ErrServer is returned when the Server itself fails \(vs a single URL\).
 
 ```go
-var ServerError = errors.New("openwebui server error")
+var ErrServer = errors.New("openwebui server error")
 ```
 
 <a name="Config"></a>
@@ -69,7 +69,7 @@ type Server struct {
 func New(cfg Config) *Server
 ```
 
-
+New constructs the server.
 
 <a name="Server.Register"></a>
 ### func \(\*Server\) Register

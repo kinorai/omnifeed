@@ -67,7 +67,7 @@ type Server struct {
 func New(cfg Config) *Server
 ```
 
-
+New constructs the server.
 
 <a name="Server.Register"></a>
 ### func \(\*Server\) Register
