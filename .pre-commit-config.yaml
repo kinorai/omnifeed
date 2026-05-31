@@ -1,0 +1,65 @@
+# Pre-commit hooks for crawl4ai-reddit-proxy.
+#
+# Mirrors the checks in .github/workflows/ci.yml so that a clean
+# `pre-commit run --all-files` pass on your laptop is the same green you'd
+# get from CI — no more "pushed, CI failed on gofmt, force-pushed, repeat".
+#
+# First-time setup (once per clone):
+#   brew install pre-commit                       # or: pip install pre-commit
+#   make pre-commit-install                       # installs both hooks
+#
+# Run manually against all files (great after a rebase):
+#   make pre-commit-run
+#
+# Skip just this commit (emergencies only):
+#   git commit --no-verify
+
+repos:
+  # ── File hygiene ────────────────────────────────────────────────────
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: \.golden$
+      - id: end-of-file-fixer
+      - id: check-yaml
+        args: [--allow-multiple-documents]
+      - id: check-json
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: [--maxkb=1024]
+
+  # ── Go: gofmt + vet + golangci-lint ─────────────────────────────────
+  # `local` hooks reuse the system-installed tools (already required by
+  # the Makefile / CI), so we don't pull in a redundant pre-built binary.
+  - repo: local
+    hooks:
+      - id: gofmt
+        name: gofmt (CI's first check)
+        entry: bash -c 'out=$(gofmt -l "$@"); [ -z "$out" ] || { echo "Not gofmt-clean (run make fmt)"; echo "$out"; exit 1; }' --
+        language: system
+        types: [go]
+
+      - id: go-vet
+        name: go vet
+        entry: go vet ./...
+        language: system
+        types: [go]
+        pass_filenames: false
+
+      - id: golangci-lint
+        name: golangci-lint run (full, matches CI)
+        entry: golangci-lint run ./...
+        language: system
+        types: [go]
+        pass_filenames: false
+
+  # ── Conventional commits ────────────────────────────────────────────
+  # Runs on commit-msg, not pre-commit, so it sees the commit message.
+  - repo: https://github.com/alessandrojcm/commitlint-pre-commit-hook
+    rev: v9.21.0
+    hooks:
+      - id: commitlint
+        stages: [commit-msg]
+        additional_dependencies:
+          - "@commitlint/config-conventional"
