@@ -1,27 +1,13 @@
-# Changelog
+## 0.1.0 (2026-05-31)
 
-All notable changes to this project will be documented in this file.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+### Features
 
-This file is automatically updated by the release workflow on `main`. Use
-[Conventional Commits](https://www.conventionalcommits.org/) when committing.
+* initial commit ([bd73407](https://github.com/kinorai/crawl4ai-reddit-proxy/commit/bd73407a23b929cf0df3f94e1b29fc05aeda32e2))
 
-## [Unreleased]
 
-### Added
+### Bug Fixes
 
-- Initial public release.
-- Open WebUI external-loader compatible `/crawl` endpoint.
-- Reddit-aware engine: full `/api/morechildren` expansion (up to 40 rounds),
-  deleted-comment stripping, TOON encoding (~40% fewer tokens vs JSON).
-- crawl4ai upstream fallback for non-Reddit URLs.
-- MCP server: stdio + HTTP/SSE transports. Tools: `crawl`, `reddit_get_post`.
-- Kubernetes-style health endpoints (`/livez`, `/readyz`, `/healthz`).
-- Prometheus metrics on `/metrics`.
-- Graceful shutdown on SIGINT/SIGTERM.
-- Structured JSON logging via `log/slog`.
-- SSRF protection (private-IP filtering) on by default.
-- Per-domain rate limiting + identifiable Reddit User-Agent.
-- All configuration via `CARP_*` environment variables.
+* **ci:** migrate .golangci.yml to v2 schema, fix trivy-action tag ([bd38a55](https://github.com/kinorai/crawl4ai-reddit-proxy/commit/bd38a55fa6abdffb2fc4e13e7822ea0fdcfc42e5))
+* **ci:** satisfy golangci-lint v2 (godoc, errcheck, deprecations) ([81f669a](https://github.com/kinorai/crawl4ai-reddit-proxy/commit/81f669ae2645d795bc2477e31373a6fb323833fc))
+
