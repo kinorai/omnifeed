@@ -14,6 +14,7 @@ import (
 // TenantID identifies the caller. Single-tenant deployments use "self".
 type TenantID string
 
+// SelfTenant is the default tenant used in single-tenant deployments.
 const SelfTenant TenantID = "self"
 
 var (
@@ -30,6 +31,7 @@ type Authenticator interface {
 // request runs as the self-tenant. Intended for local docker-run tryouts.
 type AlwaysAllow struct{}
 
+// Authenticate always returns SelfTenant and no error.
 func (AlwaysAllow) Authenticate(*http.Request) (TenantID, error) { return SelfTenant, nil }
 
 // SharedBearer accepts a single shared bearer token and compares it in
@@ -44,6 +46,8 @@ func NewSharedBearer(token string) *SharedBearer {
 	return &SharedBearer{expected: []byte(token)}
 }
 
+// Authenticate validates the Authorization: Bearer <token> header against
+// the configured shared token in constant time.
 func (s *SharedBearer) Authenticate(r *http.Request) (TenantID, error) {
 	h := r.Header.Get("Authorization")
 	const prefix = "Bearer "

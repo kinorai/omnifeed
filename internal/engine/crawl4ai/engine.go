@@ -29,10 +29,12 @@ type Config struct {
 	Limiter  *httpx.DomainLimiter
 }
 
+// New returns a crawl4ai fallback Engine wired with the given config.
 func New(cfg Config) *Engine {
 	return &Engine{endpoint: cfg.Endpoint, client: cfg.Client, limiter: cfg.Limiter}
 }
 
+// Name returns the engine identifier ("crawl4ai").
 func (*Engine) Name() string { return "crawl4ai" }
 
 // Matches returns false: this engine is the fallback only.
@@ -122,7 +124,7 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, _ domain.EngineOption
 	if err != nil {
 		return domain.Document{}, fmt.Errorf("crawl4ai request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
 	if err != nil {

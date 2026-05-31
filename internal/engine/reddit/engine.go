@@ -42,6 +42,7 @@ type Config struct {
 	Logger      *slog.Logger
 }
 
+// New returns a Reddit Engine configured per cfg.
 func New(cfg Config) *Engine {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()

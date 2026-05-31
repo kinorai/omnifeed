@@ -13,6 +13,7 @@ const (
 
 // --- Output shape returned to callers ---
 
+// Post is a Reddit post stripped to LLM-relevant fields.
 type Post struct {
 	ID          string  `json:"id" toon:"id"`
 	Title       string  `json:"title" toon:"title"`
@@ -27,6 +28,7 @@ type Post struct {
 	Permalink   string  `json:"permalink" toon:"permalink"`
 }
 
+// Comment is a Reddit comment stripped to LLM-relevant fields.
 type Comment struct {
 	ID       string `json:"id" toon:"id"`
 	ParentID string `json:"parent_id" toon:"parent_id"`
@@ -37,6 +39,7 @@ type Comment struct {
 	Created  *int64 `json:"created,omitempty" toon:"created,omitempty"`
 }
 
+// Gap represents a collapsed branch in the comment tree (a "more" placeholder).
 type Gap struct {
 	Type     string   `json:"type" toon:"type"`
 	ParentID string   `json:"parent_id" toon:"parent_id"`
@@ -45,6 +48,7 @@ type Gap struct {
 	Children []string `json:"children,omitempty" toon:"children,omitempty"`
 }
 
+// Thread groups a Reddit post with its comment tree and remaining gaps.
 type Thread struct {
 	Post     Post      `json:"post" toon:"post"`
 	Comments []Comment `json:"comments" toon:"comments"`

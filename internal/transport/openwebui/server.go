@@ -51,6 +51,7 @@ type Config struct {
 	RedditDefaults    reddit.Options
 }
 
+// New constructs the server.
 func New(cfg Config) *Server {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
@@ -98,7 +99,7 @@ func (s *Server) crawl(w http.ResponseWriter, r *http.Request) {
 	}
 
 	body := http.MaxBytesReader(w, r.Body, maxBodySize)
-	defer body.Close()
+	defer func() { _ = body.Close() }()
 
 	var req loaderRequest
 	if err := json.NewDecoder(body).Decode(&req); err != nil {
@@ -213,5 +214,5 @@ func writeError(w http.ResponseWriter, code int, msg string) {
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
 }
 
-// ServerError is returned when the Server itself fails (vs a single URL).
-var ServerError = errors.New("openwebui server error")
+// ErrServer is returned when the Server itself fails (vs a single URL).
+var ErrServer = errors.New("openwebui server error")

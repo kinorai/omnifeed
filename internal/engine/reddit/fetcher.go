@@ -20,6 +20,7 @@ type Fetcher struct {
 	userAgent string
 }
 
+// NewFetcher constructs a Fetcher backed by the given retrying client and UA.
 func NewFetcher(client *httpx.Client, userAgent string) *Fetcher {
 	return &Fetcher{client: client, userAgent: userAgent}
 }
@@ -39,7 +40,7 @@ func (f *Fetcher) FetchThread(ctx context.Context, permalink string) ([]byte, er
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 20<<20)) // 20MB cap
 	if err != nil {
 		return nil, err
@@ -69,7 +70,7 @@ func (f *Fetcher) FetchMoreChildren(ctx context.Context, linkID string, childIDs
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 20<<20))
 	if err != nil {
 		return nil, err

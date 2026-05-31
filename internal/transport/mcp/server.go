@@ -44,6 +44,7 @@ type Config struct {
 	RedditDefaults reddit.Options
 }
 
+// New constructs the server.
 func New(cfg Config) *Server {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
@@ -291,7 +292,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) serveHTTPPost(w http.ResponseWriter, r *http.Request) {
 	body := http.MaxBytesReader(w, r.Body, 1<<20)
-	defer body.Close()
+	defer func() { _ = body.Close() }()
 
 	var req rpcRequest
 	if err := json.NewDecoder(body).Decode(&req); err != nil {
