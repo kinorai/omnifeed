@@ -136,7 +136,8 @@ Per-request query parameters (Reddit URLs only):
 JSON-RPC 2.0 at:
 
 - `stdio` when `CARP_MCP_STDIO=true` or `--mcp-stdio`
-- `POST /mcp` (single request/response) and `GET /mcp/sse` (streaming) on `CARP_MCP_LISTEN_ADDR`
+- Canonical: **Streamable HTTP** at `/mcp` (MCP spec 2025-03-26) on `CARP_MCP_LISTEN_ADDR` — `POST /mcp` for one-shot JSON-RPC, `GET /mcp` for the SSE event stream.
+- Legacy: `GET /mcp/sse` is kept as an alias for older clients that only speak the deprecated dual-endpoint SSE shape. New clients should target `/mcp`.
 
 ## Architecture
 

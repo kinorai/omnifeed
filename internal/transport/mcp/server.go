@@ -1,8 +1,19 @@
 // Package mcp implements a minimal Model Context Protocol server.
 //
-// The server speaks JSON-RPC 2.0. It supports stdio transport (one JSON
-// message per line on stdin/stdout) and an HTTP+SSE transport for remote
-// clients (Cursor remote, hosted MCP).
+// The server speaks JSON-RPC 2.0 over two transports:
+//
+//   - stdio: one JSON message per line on stdin/stdout. Used by local MCP
+//     clients that spawn the proxy as a subprocess.
+//   - Streamable HTTP (MCP spec 2025-03-26): a single endpoint at /mcp that
+//     accepts POST (one-shot JSON-RPC request/response) and GET (server-
+//     initiated SSE event stream). This is the canonical HTTP transport for
+//     remote MCP clients (Claude Code, OpenCode, Cursor remote, hosted MCP).
+//
+// For backwards compatibility with older clients that only speak the
+// deprecated dual-endpoint SSE shape, the server also exposes /mcp/sse as
+// a legacy alias — same handler as the GET path of /mcp. New clients
+// should target /mcp; /mcp/sse is preserved for compat and may eventually
+// be removed.
 //
 // Exposed tools:
 //
@@ -349,8 +360,15 @@ func httpJSON(w http.ResponseWriter, code int, body any) {
 	_ = json.NewEncoder(w).Encode(body)
 }
 
-// Register attaches /mcp (POST + GET for SSE) to mux behind the configured
-// authenticator. Both POST and GET routes share the same bearer-token check.
+// Register attaches the MCP HTTP routes behind the configured authenticator.
+//
+//   - /mcp     — canonical Streamable HTTP endpoint (POST = JSON-RPC,
+//                GET = SSE event stream). This is what new clients use.
+//   - /mcp/sse — legacy alias kept for compatibility with older clients
+//                that only speak the deprecated dual-endpoint SSE shape.
+//                Same handler as GET /mcp.
+//
+// Both routes share the same bearer-token check.
 func (s *Server) Register(mux *http.ServeMux) {
 	mux.Handle("/mcp", s.requireAuth(s.ServeHTTP))
 	mux.Handle("/mcp/sse", s.requireAuth(s.serveHTTPSSE))
