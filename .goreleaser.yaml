@@ -1,0 +1,152 @@
+# GoReleaser config — https://goreleaser.com
+# Uses v2.16+ syntax. dockers_v2 graduated out of experimental in v2.16.
+#
+# Tag-driven release:
+#   git tag v0.1.0 && git push --tags
+# CI workflow then runs:
+#   goreleaser release --clean
+version: 2
+
+project_name: crawl4ai-reddit-proxy
+
+before:
+  hooks:
+    - go mod tidy
+    - go mod verify
+
+builds:
+  - id: crawl4ai-reddit-proxy
+    main: ./cmd/crawl4ai-reddit-proxy
+    binary: crawl4ai-reddit-proxy
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X github.com/kinorai/crawl4ai-reddit-proxy/internal/version.Version={{ .Version }}
+      - -X github.com/kinorai/crawl4ai-reddit-proxy/internal/version.Commit={{ .FullCommit }}
+      - -X github.com/kinorai/crawl4ai-reddit-proxy/internal/version.Date={{ .Date }}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: default
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: windows
+        formats: ["zip"]
+    files:
+      - LICENSE
+      - README.md
+      - CHANGELOG.md
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+# Multi-arch Docker image, published to Docker Hub.
+# Requires DOCKERHUB_USERNAME + DOCKERHUB_TOKEN in CI; goreleaser does the
+# `docker buildx` manifest build using the pre-built binaries above.
+dockers_v2:
+  - id: crawl4ai-reddit-proxy
+    ids:
+      - crawl4ai-reddit-proxy
+    dockerfile: goreleaser.Dockerfile
+    images:
+      - kinorai/crawl4ai-reddit-proxy
+    tags:
+      - "{{ .Version }}"
+      - "v{{ .Version }}"
+      - "{{ if not .IsNightly }}latest{{ end }}"
+      - "{{ .Major }}"
+      - "{{ .Major }}.{{ .Minor }}"
+    platforms:
+      - linux/amd64
+      - linux/arm64
+    labels:
+      org.opencontainers.image.title: "{{ .ProjectName }}"
+      org.opencontainers.image.description: "LLM-friendly web crawler & scraper with a dedicated Reddit engine, built on Crawl4AI — Open WebUI compatible"
+      org.opencontainers.image.url: "https://github.com/kinorai/crawl4ai-reddit-proxy"
+      org.opencontainers.image.source: "https://github.com/kinorai/crawl4ai-reddit-proxy"
+      org.opencontainers.image.version: "{{ .Version }}"
+      org.opencontainers.image.revision: "{{ .FullCommit }}"
+      org.opencontainers.image.created: "{{ .Date }}"
+      org.opencontainers.image.licenses: "MIT"
+
+sboms:
+  - id: archive
+    artifacts: archive
+  - id: source
+    artifacts: source
+
+source:
+  enabled: true
+  name_template: "{{ .ProjectName }}_{{ .Version }}_source"
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-dev+{{ .ShortCommit }}"
+
+changelog:
+  use: git
+  sort: asc
+  groups:
+    - title: "🛠 Breaking changes"
+      regexp: '^.*?(feat|fix|refactor)(\(.+\))??!:.+$'
+      order: 0
+    - title: "🎉 Features"
+      regexp: '^.*?feat(\(.+\))??:.+$'
+      order: 1
+    - title: "🐛 Bug fixes"
+      regexp: '^.*?fix(\(.+\))??:.+$'
+      order: 2
+    - title: "♻️ Refactor"
+      regexp: '^.*?refactor(\(.+\))??:.+$'
+      order: 3
+    - title: "⚡️ Performance"
+      regexp: '^.*?perf(\(.+\))??:.+$'
+      order: 4
+    - title: "📄 Documentation"
+      regexp: '^.*?docs(\(.+\))??:.+$'
+      order: 5
+    - title: "✅ Tests"
+      regexp: '^.*?test(\(.+\))??:.+$'
+      order: 6
+    - title: "⬆️ Dependencies"
+      regexp: '^.*?(chore|build)\(deps\)??:.+$'
+      order: 7
+    - title: "Other changes"
+      order: 999
+  filters:
+    exclude:
+      - '^chore: bump'
+      - '^Merge pull request'
+      - '^Merge branch'
+
+release:
+  github:
+    owner: kinorai
+    name: crawl4ai-reddit-proxy
+  draft: false
+  prerelease: auto
+  mode: replace
+  header: |
+    ## crawl4ai-reddit-proxy {{ .Tag }}
+
+    LLM-friendly web crawler & scraper with a dedicated Reddit engine — Open WebUI compatible.
+  footer: |
+    ## Docker
+
+    ```
+    docker pull kinorai/crawl4ai-reddit-proxy:{{ .Version }}
+    ```
+
+    ## Verify
+
+    The `checksums.txt` file contains SHA-256 hashes for every artifact in this release.

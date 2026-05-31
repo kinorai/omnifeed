@@ -1,0 +1,12 @@
+.git
+.github
+*.md
+docs
+dist
+.idea
+.vscode
+.DS_Store
+coverage.txt
+coverage.html
+/crawl4ai-reddit-proxy
+internal/engine/reddit/testdata

@@ -1,0 +1,84 @@
+name: Community Support
+
+on:
+  issues:
+    types: [opened, reopened, labeled, unlabeled]
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+  schedule:
+    - cron: '0 0 * * 1'  # weekly, Monday 00:00 UTC
+
+jobs:
+  triage-issues:
+    name: Triage Issues
+    runs-on: ubuntu-latest
+    if: github.event_name == 'issues'
+    steps:
+      - name: Auto-label issues
+        uses: github/issue-labeler@v3.4
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          configuration-path: .github/issue-labeler.yml
+          enable-versioned-regex: 0
+          include-title: 1
+      - name: Welcome first-time contributors
+        if: github.event.action == 'opened' && github.event.issue.author_association == 'FIRST_TIME_CONTRIBUTOR'
+        uses: actions/github-script@v9.0.0
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: '👋 Thanks for opening your first issue! The maintainers will review it soon. In the meantime, please make sure you have read our [contributing guidelines](https://github.com/${{ github.repository }}/blob/main/CONTRIBUTING.md).'
+            })
+
+  triage-prs:
+    name: Triage Pull Requests
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6.0.2
+        with:
+          fetch-depth: 1
+      - name: Label PRs
+        uses: actions/labeler@v6.1.0
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          configuration-path: .github/pr-labeler.yml
+          sync-labels: true
+      - name: Welcome first-time contributors
+        if: github.event.action == 'opened' && github.event.pull_request.author_association == 'FIRST_TIME_CONTRIBUTOR'
+        uses: actions/github-script@v9.0.0
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: '👋 Thanks for your contribution! The maintainers will review your PR soon. Please make sure all checks pass and you have read [CONTRIBUTING.md](https://github.com/${{ github.repository }}/blob/main/CONTRIBUTING.md).'
+            })
+
+  stale:
+    name: Mark Stale Issues and PRs
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule'
+    steps:
+      - name: Mark stale issues and PRs
+        uses: actions/stale@v10.3.0
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          stale-issue-message: 'This issue has been automatically marked as stale because it has not had recent activity. It will be closed if no further activity occurs.'
+          stale-pr-message: 'This PR has been automatically marked as stale because it has not had recent activity. It will be closed if no further activity occurs.'
+          stale-issue-label: 'stale'
+          stale-pr-label: 'stale'
+          days-before-stale: 60
+          days-before-close: 7
+          exempt-issue-labels: 'pinned,security,enhancement,bug'
+          exempt-pr-labels: 'pinned,security,work-in-progress'

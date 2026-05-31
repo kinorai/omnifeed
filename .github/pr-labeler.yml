@@ -1,0 +1,55 @@
+# Auto-label PRs based on changed file paths.
+# Used by .github/workflows/community.yml -> actions/labeler@v6.
+
+reddit:
+  - changed-files:
+      - any-glob-to-any-file:
+          - internal/engine/reddit/**
+
+crawl4ai:
+  - changed-files:
+      - any-glob-to-any-file:
+          - internal/engine/crawl4ai/**
+
+mcp:
+  - changed-files:
+      - any-glob-to-any-file:
+          - internal/transport/mcp/**
+
+openwebui:
+  - changed-files:
+      - any-glob-to-any-file:
+          - internal/transport/openwebui/**
+
+observability:
+  - changed-files:
+      - any-glob-to-any-file:
+          - internal/observability/**
+
+docker:
+  - changed-files:
+      - any-glob-to-any-file:
+          - Dockerfile
+          - docker-compose*.yml
+          - .dockerignore
+
+ci:
+  - changed-files:
+      - any-glob-to-any-file:
+          - .github/**
+
+documentation:
+  - changed-files:
+      - any-glob-to-any-file:
+          - README.md
+          - CONTRIBUTING.md
+          - SECURITY.md
+          - CODE_OF_CONDUCT.md
+          - CHANGELOG.md
+          - docs/**
+
+dependencies:
+  - changed-files:
+      - any-glob-to-any-file:
+          - go.mod
+          - go.sum

@@ -1,0 +1,16 @@
+# Standalone mode: only the proxy, Reddit-only.
+# Non-Reddit URLs return a friendly error explaining how to add crawl4ai.
+# Use this to try the binary out without spinning up crawl4ai.
+
+services:
+  proxy:
+    image: kinorai/crawl4ai-reddit-proxy:latest
+    container_name: crawl4ai-reddit-proxy
+    ports:
+      - "8080:8080"
+      - "8081:8081"
+      - "9090:9090"
+    environment:
+      CARP_LOG_LEVEL: info
+      CARP_LOG_FORMAT: json
+    restart: unless-stopped

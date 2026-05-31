@@ -1,0 +1,48 @@
+name: Bug report
+description: Something is broken
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please redact any secrets (API keys, tokens) before pasting logs.
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Image tag or git SHA
+      placeholder: "kinorai/crawl4ai-reddit-proxy:0.1.0"
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: Describe the bug.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce
+      description: Curl command, MCP call, or step-by-step.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Structured JSON logs from the proxy.
+      render: shell
+  - type: textarea
+    id: config
+    attributes:
+      label: Configuration (CARP_* env vars, with secrets redacted)
+      render: shell

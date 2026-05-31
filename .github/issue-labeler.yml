@@ -1,0 +1,13 @@
+# Auto-label issues based on title regex matches.
+# Used by .github/workflows/community.yml -> github/issue-labeler@v3.
+
+bug: '(?i)(bug|broken|error|crash|panic|fails?|not working|does ?n.t work)'
+enhancement: '(?i)(feature|enhancement|improve|support|add|allow)'
+documentation: '(?i)(docs?|readme|typo)'
+question: '(?i)(question|how (do|to|can|should)|why|what does)'
+security: '(?i)(security|vulnerab|cve|ssrf|injection|leak)'
+reddit: '(?i)(reddit|subreddit|comment tree|morechildren|toon)'
+mcp: '(?i)(mcp|model context protocol|claude code|cursor|windsurf)'
+openwebui: '(?i)(open ?webui|external loader)'
+crawl4ai: '(?i)(crawl4ai|crawl ?4 ?ai)'
+performance: '(?i)(slow|performance|latency|memory|leak|spike)'

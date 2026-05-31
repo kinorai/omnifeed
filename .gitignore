@@ -1,0 +1,63 @@
+# Based on https://github.com/github/gitignore/blob/main/Go.gitignore
+
+# ========================
+# Binary builds
+# ========================
+/crawl4ai-reddit-proxy
+/crawl4ai-proxy
+
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+*.out
+
+# Code coverage profiles and test artifacts
+coverage.txt
+coverage.html
+coverage.*
+*.coverprofile
+profile.cov
+
+# Go build cache
+# (none by default, handled by Go from $GOCACHE)
+
+# Dependency directories (uncomment to ignore vendor)
+/vendor/
+
+# Go workspace files
+go.work
+go.work.sum
+
+# ========================
+# Environment files
+# ========================
+.env
+.env.local
+
+# ========================
+# IDE and Editor settings
+# ========================
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# ========================
+# OS files
+# ========================
+.DS_Store
+
+# ========================
+# CI/CD and release artifacts
+# ========================
+/dist/
+
+# ========================
+# Reference: If you prefer the allow list template instead of the deny list, see:
+# https://github.com/github/gitignore/blob/main/community/Golang/Go.AllowList.gitignore
