@@ -8,10 +8,9 @@ linters:
   default: none
   enable:
     - errcheck
-    - gosimple
     - govet
     - ineffassign
-    - staticcheck
+    - staticcheck   # subsumes the v1 'gosimple' linter
     - unused
     - bodyclose
     - copyloopvar
@@ -28,10 +27,14 @@ linters:
             - "checkPrivateReceivers"
             - "disableStutteringCheck"
 
+  exclusions:
+    paths:
+      - testdata
+    rules:
+      - path: _test\.go$
+        linters:
+          - errcheck
+
 issues:
-  exclude-dirs:
-    - testdata
-  exclude-files:
-    - ".*_test.go"
   max-issues-per-linter: 0
   max-same-issues: 0
