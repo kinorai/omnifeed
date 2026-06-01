@@ -1,3 +1,11 @@
+## [0.3.0](https://github.com/kinorai/crawl4ai-reddit-proxy/compare/v0.2.1...v0.3.0) (2026-06-01)
+
+
+### Features
+
+* **reddit:** fetch via crawl4ai headless browser (Reddit JA3-blocks direct HTTP) ([d84cae5](https://github.com/kinorai/crawl4ai-reddit-proxy/commit/d84cae545bdbfa3c7a9c7f374ae2915f6ff60310))
+* **reddit:** fetch via crawl4ai headless browser (Reddit JA3-blocks direct HTTP) ([9e72399](https://github.com/kinorai/crawl4ai-reddit-proxy/commit/9e72399228112d8256bc78946fa3e05f64567c3c))
+
 ## [0.2.1](https://github.com/kinorai/crawl4ai-reddit-proxy/compare/v0.2.0...v0.2.1) (2026-05-31)
 
 ## [0.2.0](https://github.com/kinorai/crawl4ai-reddit-proxy/compare/v0.1.0...v0.2.0) (2026-05-31)
