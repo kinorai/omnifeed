@@ -84,6 +84,16 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, eo domain.EngineOptio
 	ctx, cancel := context.WithTimeout(ctx, e.timeout)
 	defer cancel()
 
+	// Reddit share links (/r/{sub}/s/{code}) 301-redirect to the canonical
+	// /comments/ permalink; resolve them in the browser before normalizing.
+	if IsShareURL(rawURL) {
+		resolved, rerr := e.fetcher.ResolveShareURL(ctx, rawURL)
+		if rerr != nil {
+			return domain.Document{}, fmt.Errorf("resolve share url: %w", rerr)
+		}
+		rawURL = resolved
+	}
+
 	permalink, err := NormalizePermalink(rawURL)
 	if err != nil {
 		return domain.Document{}, fmt.Errorf("normalize url: %w", err)

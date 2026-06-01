@@ -263,3 +263,16 @@ func NormalizePermalink(rawURL string) (string, error) {
 	}
 	return m[1], nil
 }
+
+// shareRE matches Reddit share links: /r/{sub}/s/{code}. They 301-redirect to
+// the canonical /comments/ permalink and must be resolved before fetching.
+var shareRE = regexp.MustCompile(`(?i)^/r/[^/]+/s/[A-Za-z0-9_-]+/?$`)
+
+// IsShareURL reports whether rawURL is a Reddit share link needing resolution.
+func IsShareURL(rawURL string) bool {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	return shareRE.MatchString(u.Path)
+}

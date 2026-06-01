@@ -202,3 +202,59 @@ func TestGetPostJS(t *testing.T) {
 		t.Errorf("postJS missing escaped form body: %s", p)
 	}
 }
+
+func TestIsShareURL(t *testing.T) {
+	share := []string{
+		"https://www.reddit.com/r/news/s/abc123",
+		"https://www.reddit.com/r/OpenWebUI/s/ibnxYbmeOE",
+	}
+	for _, u := range share {
+		if !IsShareURL(u) {
+			t.Errorf("IsShareURL(%q) = false, want true", u)
+		}
+	}
+	notShare := []string{
+		"https://www.reddit.com/r/news/comments/abc/t/",
+		"https://www.reddit.com/r/news/",
+	}
+	for _, u := range notShare {
+		if IsShareURL(u) {
+			t.Errorf("IsShareURL(%q) = true, want false", u)
+		}
+	}
+}
+
+// crawl4aiRawJS builds a /crawl response whose js_execution_result returns a
+// plain string (e.g. location.href) rather than a {s,b} envelope.
+func crawl4aiRawJS(jsReturn string) []byte {
+	return mustJSON(map[string]interface{}{
+		"success": true,
+		"results": []interface{}{map[string]interface{}{
+			"success": true, "status_code": 200,
+			"js_execution_result": map[string]interface{}{"results": []interface{}{jsReturn}},
+		}},
+	})
+}
+
+func TestResolveShareURL(t *testing.T) {
+	canonical := "https://www.reddit.com/r/news/comments/abc123/title/?utm_source=share"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(crawl4aiRawJS(canonical))
+	}))
+	defer srv.Close()
+	f := NewFetcher(httpx.New(nil), srv.URL)
+	got, err := f.ResolveShareURL(context.Background(), "https://www.reddit.com/r/news/s/abc")
+	if err != nil || got != canonical {
+		t.Fatalf("ResolveShareURL = %q, %v; want %q", got, err, canonical)
+	}
+
+	// A resolution that isn't a thread is an error.
+	srv2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(crawl4aiRawJS("https://www.reddit.com/r/news/"))
+	}))
+	defer srv2.Close()
+	f2 := NewFetcher(httpx.New(nil), srv2.URL)
+	if _, err := f2.ResolveShareURL(context.Background(), "https://www.reddit.com/r/news/s/abc"); err == nil {
+		t.Error("expected error when share link resolves to a non-thread URL")
+	}
+}

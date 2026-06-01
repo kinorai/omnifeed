@@ -72,6 +72,21 @@ func (f *Fetcher) FetchMoreChildren(ctx context.Context, linkID string, childIDs
 	return f.browserFetch(ctx, page, postJS(redditOrigin+"/api/morechildren", form.Encode()), "carp-reddit-"+id36, true)
 }
 
+// ResolveShareURL resolves a Reddit share link (/r/{sub}/s/{code}) to its
+// canonical /comments/ permalink: the browser follows the 301 redirect and we
+// read the resulting location. Returns the full canonical URL (tracking query
+// params and all — NormalizePermalink only looks at the path).
+func (f *Fetcher) ResolveShareURL(ctx context.Context, shareURL string) (string, error) {
+	resolved, err := f.browserExec(ctx, shareURL, "return location.href;", "", false)
+	if err != nil {
+		return "", err
+	}
+	if !strings.Contains(resolved, "/comments/") {
+		return "", fmt.Errorf("share link did not resolve to a thread (got %q)", truncate(resolved, 200))
+	}
+	return resolved, nil
+}
+
 // threadSession derives a stable crawl4ai session key for a thread from its
 // permalink (/r/{sub}/comments/{id36}/...). FetchThread and all its
 // FetchMoreChildren rounds share this key so they reuse ONE warmed browser
@@ -147,9 +162,10 @@ type fetchEnvelope struct {
 	B string `json:"b"`
 }
 
-// browserFetch drives crawl4ai: navigate navURL (a reddit.com page that clears
-// the bot wall), run js (a same-origin fetch of the target endpoint), and
-// return the fetched body.
+// browserExec navigates navURL via crawl4ai (or reuses a warmed session when
+// jsOnly) and runs js, returning the first JS return value as a string. Shared
+// by browserFetch (which expects a {s,b} envelope) and ResolveShareURL (which
+// expects a URL).
 //
 // Which crawl4ai knobs, and why:
 //   - enable_stealth (BrowserConfig) + override_navigator (CrawlerRunConfig)
@@ -160,13 +176,11 @@ type fetchEnvelope struct {
 //     never needs — pure latency here. If Reddit's wall starts challenging
 //     this path, re-add them (cheap insurance); they were verified working.
 //
-// sessionID (when non-empty) reuses one warmed browser context across a
-// thread's fetches; jsOnly skips re-navigation and runs js on that context.
-// Errors distinguish crawl4ai failures, navigation blocks, and Reddit-side
-// non-200s for clear operator diagnostics.
-func (f *Fetcher) browserFetch(ctx context.Context, navURL, js, sessionID string, jsOnly bool) ([]byte, error) {
+// sessionID (when non-empty) reuses one warmed browser context; jsOnly skips
+// re-navigation and runs js on that context.
+func (f *Fetcher) browserExec(ctx context.Context, navURL, js, sessionID string, jsOnly bool) (string, error) {
 	if f.crawl4aiURL == "" {
-		return nil, fmt.Errorf("crawl4ai endpoint not configured (set CARP_CRAWL4AI_URL)")
+		return "", fmt.Errorf("crawl4ai endpoint not configured (set CARP_CRAWL4AI_URL)")
 	}
 
 	crawler := map[string]interface{}{
@@ -191,63 +205,70 @@ func (f *Fetcher) browserFetch(ctx context.Context, navURL, js, sessionID string
 		CrawlerConfig: c4aTypedConfig{Type: "CrawlerRunConfig", Params: crawler},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("marshal crawl4ai request: %w", err)
+		return "", fmt.Errorf("marshal crawl4ai request: %w", err)
 	}
 
 	// MaxAttempts: 1 — no retry. A Reddit block surfaces as a crawl4ai 500
 	// (anti-bot detector) which is NOT transient, so retrying just re-drives an
 	// expensive browser crawl for the same failure; genuine transient crawl4ai
-	// 5xx are rare and the caller/engine degrades gracefully (a failed
-	// morechildren round just stops expansion).
+	// 5xx are rare and the caller/engine degrades gracefully.
 	resp, err := f.client.DoRetry(ctx, http.MethodPost, f.crawl4aiURL, reqBody,
 		map[string]string{"Content-Type": "application/json"}, httpx.RetryConfig{MaxAttempts: 1})
 	if err != nil {
-		return nil, fmt.Errorf("crawl4ai request: %w", err)
+		return "", fmt.Errorf("crawl4ai request: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 20<<20)) // 20MB cap
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	if resp.StatusCode != http.StatusOK {
 		// 3xx/4xx from crawl4ai (DoRetry passes these through). 5xx/429 surface
-		// above via the DoRetry error path — crawl4ai's anti-bot block on a 403
-		// nav manifests there as a 500.
-		return nil, fmt.Errorf("crawl4ai returned %d: %s", resp.StatusCode, truncate(string(body), 200))
+		// above via the DoRetry error path — the anti-bot block on a 403 nav
+		// manifests there as a 500.
+		return "", fmt.Errorf("crawl4ai returned %d: %s", resp.StatusCode, truncate(string(body), 200))
 	}
 
 	var cr c4aResponse
 	if err := json.Unmarshal(body, &cr); err != nil {
-		return nil, fmt.Errorf("decode crawl4ai response: %w", err)
+		return "", fmt.Errorf("decode crawl4ai response: %w", err)
 	}
 	if !cr.Success || len(cr.Results) == 0 {
 		msg := cr.Error
 		if msg == "" && len(cr.Results) > 0 {
 			msg = cr.Results[0].ErrorMessage
 		}
-		return nil, fmt.Errorf("crawl4ai fetch failed (reddit may have blocked the nav): %s", truncate(msg, 200))
+		return "", fmt.Errorf("crawl4ai fetch failed (reddit may have blocked the nav): %s", truncate(msg, 200))
 	}
-
 	res0 := cr.Results[0]
 	if !res0.Success {
 		msg := res0.ErrorMessage
 		if msg == "" {
 			msg = cr.Error
 		}
-		return nil, fmt.Errorf("crawl4ai result failed (reddit may have blocked the nav): %s", truncate(msg, 200))
+		return "", fmt.Errorf("crawl4ai result failed (reddit may have blocked the nav): %s", truncate(msg, 200))
 	}
-
 	jsResults := res0.JSExecutionResult.Results
 	if len(jsResults) == 0 {
-		return nil, fmt.Errorf("crawl4ai returned no js result (navigation blocked?)")
+		return "", fmt.Errorf("crawl4ai returned no js result (navigation blocked?)")
 	}
 
-	// jsResults[0] is the JSON-encoded string our snippet returned; unwrap it
-	// once to get the string, then decode the {s,b} envelope.
-	var envStr string
-	if err := json.Unmarshal(jsResults[0], &envStr); err != nil {
-		return nil, fmt.Errorf("unwrap js result: %w", err)
+	// jsResults[0] is the JSON-encoded string our snippet returned; unwrap it.
+	var out string
+	if err := json.Unmarshal(jsResults[0], &out); err != nil {
+		return "", fmt.Errorf("unwrap js result: %w", err)
+	}
+	return out, nil
+}
+
+// browserFetch runs js (a getJS/postJS snippet that returns a {s,b} envelope)
+// and returns the fetched Reddit body, distinguishing a Reddit-side block (the
+// envelope's non-200 status) from a crawl4ai/navigation failure.
+func (f *Fetcher) browserFetch(ctx context.Context, navURL, js, sessionID string, jsOnly bool) ([]byte, error) {
+	envStr, err := f.browserExec(ctx, navURL, js, sessionID, jsOnly)
+	if err != nil {
+		return nil, err
 	}
 	var env fetchEnvelope
 	if err := json.Unmarshal([]byte(envStr), &env); err != nil {
