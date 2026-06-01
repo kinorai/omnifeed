@@ -49,14 +49,14 @@ type Config struct {
 // required variable is malformed. Defaults are documented inline.
 func Load() (Config, error) {
 	c := Config{
-		ListenAddr:      env("CARP_LISTEN_ADDR", ":8080"),
-		MCPListenAddr:   env("CARP_MCP_LISTEN_ADDR", ":8081"),
-		MetricsAddr:     env("CARP_METRICS_ADDR", ":9090"),
-		LogLevel:        env("CARP_LOG_LEVEL", "info"),
-		LogFormat:       env("CARP_LOG_FORMAT", "json"),
-		APIKey:          os.Getenv("CARP_API_KEY"),
-		Crawl4AIURL:     env("CARP_CRAWL4AI_URL", ""),
-		RedditFormat:    env("CARP_REDDIT_FORMAT", "toon"),
+		ListenAddr:    env("CARP_LISTEN_ADDR", ":8080"),
+		MCPListenAddr: env("CARP_MCP_LISTEN_ADDR", ":8081"),
+		MetricsAddr:   env("CARP_METRICS_ADDR", ":9090"),
+		LogLevel:      env("CARP_LOG_LEVEL", "info"),
+		LogFormat:     env("CARP_LOG_FORMAT", "json"),
+		APIKey:        os.Getenv("CARP_API_KEY"),
+		Crawl4AIURL:   env("CARP_CRAWL4AI_URL", ""),
+		RedditFormat:  env("CARP_REDDIT_FORMAT", "toon"),
 	}
 
 	var err error
