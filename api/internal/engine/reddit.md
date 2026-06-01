@@ -23,7 +23,7 @@ Package reddit implements the Reddit\-specific engine: fetches threads via the p
   - [func \(\*Engine\) Matches\(rawURL string\) bool](<#Engine.Matches>)
   - [func \(\*Engine\) Name\(\) string](<#Engine.Name>)
 - [type Fetcher](<#Fetcher>)
-  - [func NewFetcher\(client \*httpx.Client, userAgent string\) \*Fetcher](<#NewFetcher>)
+  - [func NewFetcher\(client \*httpx.Client, crawl4aiURL string\) \*Fetcher](<#NewFetcher>)
   - [func \(f \*Fetcher\) FetchMoreChildren\(ctx context.Context, linkID string, childIDs \[\]string\) \(\[\]byte, error\)](<#Fetcher.FetchMoreChildren>)
   - [func \(f \*Fetcher\) FetchThread\(ctx context.Context, permalink string\) \(\[\]byte, error\)](<#Fetcher.FetchThread>)
 - [type Gap](<#Gap>)
@@ -160,7 +160,7 @@ Name returns the engine identifier.
 <a name="Fetcher"></a>
 ## type Fetcher
 
-Fetcher fetches raw bytes from Reddit's public JSON API. It uses the shared httpx.Client \(retry \+ Retry\-After\) and tags every request with the configured User\-Agent.
+Fetcher retrieves raw JSON from Reddit. Reddit's edge now hard\-blocks non\-browser HTTP clients \(Go's net/http gets a 403 "network security" wall keyed on TLS/JA3 fingerprint\), so we no longer hit Reddit directly. Instead every fetch is routed through the upstream crawl4ai instance: it drives a real headless Chromium to a reddit.com page \(which clears the bot challenge\), then runs a same\-origin fetch\(\) of the target JSON endpoint from inside that page and hands back the raw response text. The browser context is what passes the wall; the in\-page fetch inherits it, so the JSON comes back exactly as a logged\-out browser would see it — no auth, no cookies.
 
 ```go
 type Fetcher struct {
@@ -172,10 +172,10 @@ type Fetcher struct {
 ### func NewFetcher
 
 ```go
-func NewFetcher(client *httpx.Client, userAgent string) *Fetcher
+func NewFetcher(client *httpx.Client, crawl4aiURL string) *Fetcher
 ```
 
-NewFetcher constructs a Fetcher backed by the given retrying client and UA.
+NewFetcher constructs a Fetcher that drives crawl4ai's /crawl endpoint \(crawl4aiURL == CARP\_CRAWL4AI\_URL\) to reach Reddit through a browser.
 
 <a name="Fetcher.FetchMoreChildren"></a>
 ### func \(\*Fetcher\) FetchMoreChildren
@@ -184,7 +184,7 @@ NewFetcher constructs a Fetcher backed by the given retrying client and UA.
 func (f *Fetcher) FetchMoreChildren(ctx context.Context, linkID string, childIDs []string) ([]byte, error)
 ```
 
-FetchMoreChildren expands collapsed reply branches via /api/morechildren. linkID must include the t3\_ prefix; childIDs are bare IDs \(no prefix\).
+FetchMoreChildren expands collapsed reply branches via /api/morechildren. linkID must include the t3\_ prefix; childIDs are bare IDs \(no prefix\). It reuses the thread's warmed browser session \(js\_only: no re\-navigation\).
 
 <a name="Fetcher.FetchThread"></a>
 ### func \(\*Fetcher\) FetchThread
@@ -193,7 +193,7 @@ FetchMoreChildren expands collapsed reply branches via /api/morechildren. linkID
 func (f *Fetcher) FetchThread(ctx context.Context, permalink string) ([]byte, error)
 ```
 
-FetchThread retrieves a thread via old.reddit.com's .json endpoint with a generous limit and depth. Returns the raw response body or an error.
+FetchThread retrieves a thread via the .json endpoint with a generous limit and depth, fetched from inside a real browser on the reddit.com origin. This call navigates the page, creating/warming the per\-thread crawl4ai session that subsequent FetchMoreChildren calls reuse.
 
 <a name="Gap"></a>
 ## type Gap

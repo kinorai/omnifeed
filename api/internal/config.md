@@ -44,7 +44,6 @@ type Config struct {
     // Reddit engine defaults.
     RedditTimeout   time.Duration
     RedditMaxRounds int
-    RedditUserAgent string
     RedditFormat    string
 
     // Limits and rate control.

@@ -27,7 +27,7 @@ Package httpx provides HTTP utilities shared across engines: a retrying HTTP cli
 func ValidateURL(rawURL string, blockPrivate bool) error
 ```
 
-ValidateURL parses rawURL and, when blockPrivate is true, rejects URLs whose hostname resolves to a private/reserved IPv4 range. DNS failures are allowed to pass through — the downstream fetcher will surface them.
+ValidateURL parses rawURL and, when blockPrivate is true, rejects URLs whose hostname resolves to a private/reserved IP — IPv4 OR IPv6 \(loopback, RFC1918, RFC4193 ULA fc00::/7, link\-local 169.254/16 & fe80::/10, unspecified, multicast\). DNS failures pass through — the downstream fetcher surfaces them.
 
 <a name="Client"></a>
 ## type Client
