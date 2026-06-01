@@ -12,6 +12,7 @@ Package reddit implements the Reddit\-specific engine: fetches threads via the p
 
 - [Constants](<#constants>)
 - [func IsRedditURL\(rawURL string\) bool](<#IsRedditURL>)
+- [func IsShareURL\(rawURL string\) bool](<#IsShareURL>)
 - [func MergeExpanded\(thread \*Thread, newC \[\]Comment, newG \[\]Gap, requestedIDs \[\]string, usedGapIdx \[\]int\)](<#MergeExpanded>)
 - [func NormalizePermalink\(rawURL string\) \(string, error\)](<#NormalizePermalink>)
 - [func ParseMoreChildren\(raw \[\]byte, opts Options\) \(\[\]Comment, \[\]Gap, error\)](<#ParseMoreChildren>)
@@ -26,6 +27,7 @@ Package reddit implements the Reddit\-specific engine: fetches threads via the p
   - [func NewFetcher\(client \*httpx.Client, crawl4aiURL string\) \*Fetcher](<#NewFetcher>)
   - [func \(f \*Fetcher\) FetchMoreChildren\(ctx context.Context, linkID string, childIDs \[\]string\) \(\[\]byte, error\)](<#Fetcher.FetchMoreChildren>)
   - [func \(f \*Fetcher\) FetchThread\(ctx context.Context, permalink string\) \(\[\]byte, error\)](<#Fetcher.FetchThread>)
+  - [func \(f \*Fetcher\) ResolveShareURL\(ctx context.Context, shareURL string\) \(string, error\)](<#Fetcher.ResolveShareURL>)
 - [type Gap](<#Gap>)
 - [type Options](<#Options>)
   - [func OptionsFromQuery\(q url.Values, opts Options\) Options](<#OptionsFromQuery>)
@@ -50,6 +52,15 @@ func IsRedditURL(rawURL string) bool
 ```
 
 IsRedditURL is the package\-level matcher used by Engine.Matches; exported so callers \(and tests\) can detect Reddit URLs without instantiating an Engine.
+
+<a name="IsShareURL"></a>
+## func IsShareURL
+
+```go
+func IsShareURL(rawURL string) bool
+```
+
+IsShareURL reports whether rawURL is a Reddit share link needing resolution.
 
 <a name="MergeExpanded"></a>
 ## func MergeExpanded
@@ -194,6 +205,15 @@ func (f *Fetcher) FetchThread(ctx context.Context, permalink string) ([]byte, er
 ```
 
 FetchThread retrieves a thread via the .json endpoint with a generous limit and depth, fetched from inside a real browser on the reddit.com origin. This call navigates the page, creating/warming the per\-thread crawl4ai session that subsequent FetchMoreChildren calls reuse.
+
+<a name="Fetcher.ResolveShareURL"></a>
+### func \(\*Fetcher\) ResolveShareURL
+
+```go
+func (f *Fetcher) ResolveShareURL(ctx context.Context, shareURL string) (string, error)
+```
+
+ResolveShareURL resolves a Reddit share link \(/r/\{sub\}/s/\{code\}\) to its canonical /comments/ permalink: the browser follows the 301 redirect and we read the resulting location. Returns the full canonical URL \(tracking query params and all — NormalizePermalink only looks at the path\).
 
 <a name="Gap"></a>
 ## type Gap
