@@ -1,3 +1,10 @@
+## [0.4.0](https://github.com/kinorai/crawl4ai-reddit-proxy/compare/v0.3.0...v0.4.0) (2026-06-01)
+
+
+### Features
+
+* **reddit:** resolve share links (/r/{sub}/s/{code}) before fetching ([677f1c3](https://github.com/kinorai/crawl4ai-reddit-proxy/commit/677f1c3e42f2aa4bc7b8d637e5a69856d4292d04))
+
 ## [0.3.0](https://github.com/kinorai/crawl4ai-reddit-proxy/compare/v0.2.1...v0.3.0) (2026-06-01)
 
 
