@@ -8,7 +8,7 @@
 
 A single Go binary that wraps [crawl4ai](https://github.com/unclecode/crawl4ai) and adds a **dedicated Reddit engine** that returns full comment trees encoded as **[TOON](https://github.com/toon-format/toon)** — typically **40% fewer tokens than JSON**, lossless. Implements both the **Open WebUI external-loader contract** and an **MCP server** (stdio + HTTP/SSE).
 
-Most Reddit MCP servers either ship pretty-printed JSON or "save tokens" by truncating comments. This one does neither: full `/api/morechildren` expansion, TOON encoding, deleted-comment stripping, no rotating browser UA (Reddit explicitly prefers identifiable user agents).
+Most Reddit MCP servers either ship pretty-printed JSON or "save tokens" by truncating comments. This one does neither: full `/api/morechildren` expansion, TOON encoding, deleted-comment stripping. Reddit now blocks non-browser HTTP clients at its edge, so Reddit fetches are routed through a [crawl4ai](https://github.com/unclecode/crawl4ai) headless browser — no auth or API key required.
 
 ## Why this exists
 
@@ -23,13 +23,11 @@ Most Reddit MCP servers either ship pretty-printed JSON or "save tokens" by trun
 
 ## Quick start
 
-### Try it (Reddit-only, no crawl4ai needed)
+### Try it
 
-```bash
-docker run -p 8080:8080 kinorai/crawl4ai-reddit-proxy:latest
-```
+> **A crawl4ai upstream is required.** Reddit now blocks non-browser HTTP clients, so the Reddit engine — like the generic fallback — fetches through crawl4ai's headless browser. The proxy needs `CARP_CRAWL4AI_URL` set or it exits at startup; the [compose file](#full-mode-proxy--crawl4ai-upstream) below wires it for you.
 
-Open a Reddit thread:
+Once it's running, open a Reddit thread:
 
 ```bash
 curl -X POST http://localhost:8080/crawl \
@@ -89,11 +87,10 @@ All knobs are CARP_-prefixed environment variables.
 | `CARP_MCP_STDIO` | `false` | Run MCP over stdio (also via `--mcp-stdio` flag) |
 | `CARP_METRICS_ADDR` | `:9090` | Prometheus + health listen address |
 | `CARP_API_KEY` | _(unset)_ | Bearer token for `/crawl` and `/mcp` (HTTP transport); empty disables auth (dev mode). Stdio MCP is unaffected. |
-| `CARP_CRAWL4AI_URL` | _(unset)_ | Upstream crawl4ai endpoint; empty disables fallback |
+| `CARP_CRAWL4AI_URL` | _(required)_ | Upstream crawl4ai endpoint. **Required** — every engine (Reddit + fallback) fetches through crawl4ai; if empty, the proxy exits at startup. |
 | `CARP_CRAWL4AI_TIMEOUT` | `90s` | Per-call timeout to crawl4ai |
 | `CARP_REDDIT_TIMEOUT` | `4m` | Wall-clock cap for a Reddit thread expansion |
 | `CARP_REDDIT_MAX_ROUNDS` | `3` | Default `/api/morechildren` rounds (max 40 via `?expand=full`) |
-| `CARP_REDDIT_USER_AGENT` | identifiable default | Reddit User-Agent (do not rotate browser UAs) |
 | `CARP_REDDIT_FORMAT` | `toon` | Default Reddit output: `toon` or `json` |
 | `CARP_MAX_URLS_PER_REQUEST` | `30` | Cap on `urls[]` array length |
 | `CARP_PER_DOMAIN_CONCURRENCY` | `2` | Max concurrent requests to one domain |
@@ -153,11 +150,26 @@ JSON-RPC 2.0 at:
                                        └───┬────────┬───┘
                                            ▼        ▼
                                     ┌────────┐ ┌────────────┐
-                                    │ reddit │ │  crawl4ai  │
+                                    │ reddit │ │  generic   │
                                     │ engine │ │  fallback  │
-                                    │ (TOON) │ │  (markdown)│
-                                    └────────┘ └────────────┘
+                                    │ (TOON) │ │ (markdown) │
+                                    └───┬────┘ └─────┬──────┘
+                                        └──────┬─────┘
+                                               ▼
+                                    ┌───────────────────────┐
+                                    │    crawl4ai upstream   │
+                                    │  (headless browser —   │
+                                    │   fetches all URLs)    │
+                                    └───────────────────────┘
 ```
+
+### Reddit anti-bot handling
+
+Reddit's edge 403-blocks non-browser HTTP clients (it fingerprints the TLS/JA3 handshake), so the Reddit engine never calls Reddit directly. It drives crawl4ai's headless Chromium to a `www.reddit.com` page — which clears the bot wall — then runs a **same-origin `fetch()`** of the `.json` (and `/api/morechildren`) endpoint from inside that page and returns the raw JSON. No Reddit auth, cookies, or API key.
+
+The browser request sets **`enable_stealth` + `override_navigator`** — fingerprint-level evasions evaluated at page *load*, which is what clears the wall. It deliberately omits crawl4ai's **`magic` / `simulate_user`**: those drive post-*load* behavioral simulation (scroll/click) that an in-page `fetch()` never needs, so they were pure latency here. If Reddit's wall starts challenging this path, re-add them as insurance. A per-thread crawl4ai `session_id` is reused across `morechildren` rounds (one warmed context, fewer requests, lower bot-risk).
+
+> Heads-up: the residential/source IP's risk score can rise under sustained scraping — if fetches start returning the block page, slow down, keep `expand` modest, or route crawl4ai through a residential proxy.
 
 Extensibility points:
 

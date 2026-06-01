@@ -6,19 +6,10 @@ import (
 	"net/url"
 )
 
-// privateRanges enumerates the IPv4 CIDRs we treat as off-limits to fetch.
-var privateRanges = []net.IPNet{
-	{IP: net.IP{10, 0, 0, 0}, Mask: net.CIDRMask(8, 32)},
-	{IP: net.IP{172, 16, 0, 0}, Mask: net.CIDRMask(12, 32)},
-	{IP: net.IP{192, 168, 0, 0}, Mask: net.CIDRMask(16, 32)},
-	{IP: net.IP{169, 254, 0, 0}, Mask: net.CIDRMask(16, 32)},
-	{IP: net.IP{127, 0, 0, 0}, Mask: net.CIDRMask(8, 32)},
-	{IP: net.IP{0, 0, 0, 0}, Mask: net.CIDRMask(8, 32)},
-}
-
-// ValidateURL parses rawURL and, when blockPrivate is true, rejects URLs
-// whose hostname resolves to a private/reserved IPv4 range. DNS failures are
-// allowed to pass through — the downstream fetcher will surface them.
+// ValidateURL parses rawURL and, when blockPrivate is true, rejects URLs whose
+// hostname resolves to a private/reserved IP — IPv4 OR IPv6 (loopback, RFC1918,
+// RFC4193 ULA fc00::/7, link-local 169.254/16 & fe80::/10, unspecified,
+// multicast). DNS failures pass through — the downstream fetcher surfaces them.
 func ValidateURL(rawURL string, blockPrivate bool) error {
 	u, err := url.Parse(rawURL)
 	if err != nil {
@@ -41,12 +32,11 @@ func ValidateURL(rawURL string, blockPrivate bool) error {
 		return nil
 	}
 	for _, ip := range ips {
-		if ip4 := ip.To4(); ip4 != nil {
-			for _, cidr := range privateRanges {
-				if cidr.Contains(ip4) {
-					return fmt.Errorf("private/reserved IP %s not allowed", ip4)
-				}
-			}
+		// stdlib predicates cover both IPv4 and IPv6 — the old IPv4-only CIDR
+		// list let IPv6 loopback/ULA/link-local (::1, fc00::/7, fe80::/10) past.
+		if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() ||
+			ip.IsLinkLocalMulticast() || ip.IsMulticast() || ip.IsUnspecified() {
+			return fmt.Errorf("private/reserved IP %s not allowed", ip)
 		}
 	}
 	return nil

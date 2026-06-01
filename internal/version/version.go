@@ -13,11 +13,3 @@ var (
 	// Date is the build timestamp (RFC3339). Stamped by goreleaser.
 	Date = "unknown"
 )
-
-// UserAgentTemplate produces a Reddit-compliant User-Agent following the
-// format `<platform>:<app-id>:<version> (+<url>)` recommended by Reddit's
-// API rules. A unique, identifiable UA earns more generous rate limits
-// than browser-impersonating UAs.
-func UserAgentTemplate() string {
-	return "go:crawl4ai-reddit-proxy:v" + Version + " (+https://github.com/kinorai/crawl4ai-reddit-proxy)"
-}

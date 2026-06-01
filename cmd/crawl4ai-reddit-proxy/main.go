@@ -59,12 +59,10 @@ func run(cfg config.Config, logger *slog.Logger) error {
 
 	// --- Engines ---
 
-	redditUA := cfg.RedditUserAgent
-	if redditUA == "" {
-		redditUA = version.UserAgentTemplate()
-	}
+	// The Reddit engine fetches through crawl4ai (a real browser) because
+	// Reddit's edge blocks non-browser HTTP clients — see reddit.Fetcher.
 	redditEngine := reddit.New(reddit.Config{
-		Fetcher: reddit.NewFetcher(httpClient, redditUA),
+		Fetcher: reddit.NewFetcher(httpClient, cfg.Crawl4AIURL),
 		Limiter: limiter,
 		Timeout: cfg.RedditTimeout,
 		DefaultOpts: reddit.Options{

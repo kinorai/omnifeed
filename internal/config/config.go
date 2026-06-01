@@ -36,7 +36,6 @@ type Config struct {
 	// Reddit engine defaults.
 	RedditTimeout   time.Duration
 	RedditMaxRounds int
-	RedditUserAgent string
 	RedditFormat    string
 
 	// Limits and rate control.
@@ -58,7 +57,6 @@ func Load() (Config, error) {
 		APIKey:          os.Getenv("CARP_API_KEY"),
 		Crawl4AIURL:     env("CARP_CRAWL4AI_URL", ""),
 		RedditFormat:    env("CARP_REDDIT_FORMAT", "toon"),
-		RedditUserAgent: os.Getenv("CARP_REDDIT_USER_AGENT"),
 	}
 
 	var err error
@@ -93,6 +91,14 @@ func Load() (Config, error) {
 	c.RedditFormat = strings.ToLower(c.RedditFormat)
 	if c.RedditFormat != "toon" && c.RedditFormat != "json" {
 		return c, fmt.Errorf("CARP_REDDIT_FORMAT must be 'toon' or 'json', got %q", c.RedditFormat)
+	}
+
+	// crawl4ai is required for ALL engines now: the Reddit engine fetches
+	// through crawl4ai's headless browser (Reddit blocks non-browser clients),
+	// and the generic fallback obviously needs it too. Fail fast rather than
+	// reporting healthy while every crawl errors.
+	if c.Crawl4AIURL == "" {
+		return c, fmt.Errorf("CARP_CRAWL4AI_URL is required: every engine (Reddit and the generic fallback) fetches through crawl4ai")
 	}
 
 	return c, nil
