@@ -7,9 +7,14 @@ Thanks for considering a contribution!
 ```bash
 git clone https://github.com/kinorai/crawl4ai-reddit-proxy.git
 cd crawl4ai-reddit-proxy
-go test ./...
-go build ./...
+make install-tools        # golangci-lint, govulncheck, gomarkdoc
+make pre-commit-install   # git hooks that mirror CI (run once per clone)
+make check                # vet + lint + test — the same targets CI runs
 ```
+
+The Makefile is the single source of truth for "clean repo": CI and the
+pre-commit hooks call the same `make` targets, so a green `make check` (or
+`make pre-commit-run`) locally means a green CI lint job.
 
 ## Conventional Commits
 
@@ -24,13 +29,14 @@ Commit prefixes:
 - `chore:` — tooling, deps, build, CI
 - `perf:` — performance improvement
 
-The release workflow uses commit history to generate the changelog automatically.
+The release workflow (git-cliff + goreleaser) reads commit history to version
+and changelog automatically: `feat` cuts a minor release, `fix`/`perf` and
+dependency bumps (`chore(deps)` / `chore(docker)`) cut a patch release that
+rebuilds and publishes the image; other types don't release.
 
 ## Pull request checklist
 
-- [ ] `go test ./...` passes locally
-- [ ] `go vet ./...` clean
-- [ ] `golangci-lint run` clean (or document why)
+- [ ] `make check` passes locally (vet + lint + test) — or `make pre-commit-run` for full CI parity
 - [ ] New behaviour has a test
 - [ ] Commit messages follow Conventional Commits
 - [ ] README/docs updated if user-visible behaviour changed

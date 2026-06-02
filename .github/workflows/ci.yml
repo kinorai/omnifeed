@@ -182,29 +182,80 @@ jobs:
           cache-from: type=gha,scope=dev
           cache-to: type=gha,mode=max,scope=dev
 
-  # On push to main: TriPSs creates the next semver tag, then goreleaser
-  # releases binaries + multi-arch image + checksums + SBOM.
+  # On push to main: git-cliff computes the next semver from the Conventional
+  # Commits since the last tag, regenerates CHANGELOG.md, commits it, and tags
+  # vX.Y.Z. Then goreleaser (release job) builds binaries + multi-arch image +
+  # checksums + SBOM from that tag.
+  #
+  # The git tag is the single source of truth — goreleaser uses `{{ .Version }}`
+  # and the Makefile uses `git describe --tags`; there is no package.json or
+  # tracked version file. Releases are cut for feat/fix/perf only; chore, docs,
+  # refactor, etc. skip cleanly (no empty releases). See cliff.toml.
   versioning:
     name: Versioning
     runs-on: ubuntu-latest
     needs: [lint, test]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    permissions:
+      contents: write   # push the release commit + tag
     outputs:
-      skipped: ${{ steps.changelog.outputs.skipped }}
-      tag: ${{ steps.changelog.outputs.tag }}
+      skipped: ${{ steps.decide.outputs.skipped }}
+      tag: ${{ steps.decide.outputs.tag }}
     steps:
       - uses: actions/checkout@v6.0.2
         with:
           ref: main
           fetch-depth: 0
-      - name: Conventional Changelog
-        id: changelog
-        uses: TriPSs/conventional-changelog-action@v6.3.1
+
+      # git-cliff prints the next version to stdout (exposed as `content`).
+      # Returns the current latest tag unchanged when nothing is releasable.
+      - name: Compute next version
+        id: bump
+        uses: orhun/git-cliff-action@v4.8.0
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          preset: conventionalcommits
-          skip-on-empty: "false"
-          tag-prefix: v
+          config: cliff.toml
+          args: --bumped-version
+
+      - name: Decide whether to release
+        id: decide
+        env:
+          NEXT: ${{ steps.bump.outputs.content }}
+        run: |
+          next="$(printf '%s' "$NEXT" | tr -d '[:space:]')"
+          latest="$(git describe --tags --abbrev=0 2>/dev/null || echo '')"
+          echo "Latest tag  : ${latest:-<none>}"
+          echo "Next version: ${next:-<none>}"
+          if [ -z "$next" ] || [ "$next" = "$latest" ]; then
+            echo "No releasable commits (feat/fix/perf) since ${latest:-the beginning} — skipping."
+            echo "skipped=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skipped=false" >> "$GITHUB_OUTPUT"
+            echo "tag=${next}" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Regenerate the full changelog, promoting the unreleased section to the
+      # bumped version.
+      - name: Generate changelog
+        if: steps.decide.outputs.skipped != 'true'
+        uses: orhun/git-cliff-action@v4.8.0
+        with:
+          config: cliff.toml
+          args: --bump -o CHANGELOG.md
+
+      # Commit the changelog and create the annotated tag. [skip ci] keeps the
+      # release commit from re-triggering this workflow (pushes by GITHUB_TOKEN
+      # don't trigger workflows anyway, and tag pushes aren't a CI trigger).
+      - name: Commit, tag, and push
+        if: steps.decide.outputs.skipped != 'true'
+        env:
+          TAG: ${{ steps.decide.outputs.tag }}
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add CHANGELOG.md
+          git commit -m "chore(release): ${TAG} [skip ci]"
+          git tag -a "${TAG}" -m "${TAG}"
+          git push --atomic origin main "refs/tags/${TAG}"
 
   release:
     name: Release

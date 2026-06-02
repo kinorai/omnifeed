@@ -26,7 +26,7 @@ Only the latest minor release receives security fixes. Pin to `:latest` or the h
 
 - **SSRF protection**: requests to RFC 1918 / loopback / link-local ranges are blocked by default (`CARP_BLOCK_PRIVATE_IPS=true`). Disable only when running on a trusted internal network.
 - **Auth**: a single shared bearer token (`CARP_API_KEY`) gates the `/crawl` (Open WebUI loader) and `/mcp` (HTTP transport) endpoints. Constant-time comparison. Stdio MCP is unauthenticated by design — it runs as a local subprocess and inherits trust from its parent.
-- **Container**: distroless/scratch base, runs as non-root (uid 65532), read-only root filesystem in shipped manifests.
+- **Container**: distroless static base (`gcr.io/distroless/static-debian13:nonroot`) — no shell or package manager — runs as non-root (uid 65532). The static binary needs no writable paths, so deploy it with a read-only root filesystem and dropped capabilities.
 - **TLS**: terminated at your reverse proxy / ingress — the binary speaks plain HTTP internally.
 - **Reddit auth**: the proxy uses Reddit's *public* JSON API. No user credentials are stored, transmitted, or required.
 
@@ -39,4 +39,4 @@ Only the latest minor release receives security fixes. Pin to `:latest` or the h
 | Resource exhaustion via large Reddit thread | `CARP_REDDIT_TIMEOUT` + `MaxExpansionRounds=40` cap |
 | Reddit rate-limit blocking | Per-domain limiter + identifiable User-Agent + Retry-After honoring |
 | Unauthorized `/crawl` or `/mcp` access | `CARP_API_KEY` bearer token (constant-time compare) |
-| Container escape | Non-root user, read-only root FS, dropped capabilities, scratch base |
+| Container escape | Non-root user (uid 65532), distroless-static base (no shell/libc); deploy with read-only root FS + dropped capabilities |

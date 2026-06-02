@@ -175,7 +175,7 @@ Extensibility points:
 
 - **New engines** (HN, Stack Overflow, …): implement `domain.Engine` and register before the fallback
 - **New transports**: implement on top of `engine.Registry`
-- **New encoders**: add to `internal/encoding/`
+- **Output encoding** (e.g. TOON rendering): `internal/domain/document.go`
 
 ## Development
 
