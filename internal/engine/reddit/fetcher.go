@@ -82,7 +82,7 @@ func (f *Fetcher) ResolveShareURL(ctx context.Context, shareURL string) (string,
 		return "", err
 	}
 	if !strings.Contains(resolved, "/comments/") {
-		return "", fmt.Errorf("share link did not resolve to a thread (got %q)", truncate(resolved, 200))
+		return "", fmt.Errorf("share link did not resolve to a thread (got %q)", redactQuery(resolved))
 	}
 	return resolved, nil
 }
@@ -288,4 +288,14 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n] + "..."
+}
+
+// redactQuery strips the query string from a URL before logging it: Reddit's
+// share-link redirect appends a transient anti-bot token (js_challenge/token)
+// we don't want in error logs. Scheme+host+path are enough for diagnosis.
+func redactQuery(u string) string {
+	if i := strings.IndexByte(u, '?'); i >= 0 {
+		u = u[:i]
+	}
+	return truncate(u, 200)
 }
