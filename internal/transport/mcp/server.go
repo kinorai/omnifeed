@@ -31,6 +31,7 @@ import (
 	"log/slog"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/kinorai/crawl4ai-reddit-proxy/internal/auth"
 	"github.com/kinorai/crawl4ai-reddit-proxy/internal/domain"
@@ -335,10 +336,11 @@ func (s *Server) serveHTTPPost(w http.ResponseWriter, r *http.Request) {
 	httpJSON(w, http.StatusOK, resp)
 }
 
-// serveHTTPSSE keeps the connection open and emits a comment every 30s so
-// proxies don't close the stream. We don't currently push server-initiated
-// notifications, but the endpoint is here so MCP clients that try to open it
-// don't fail.
+// serveHTTPSSE keeps the connection open and emits a keepalive comment every
+// 30s so intermediaries don't drop an otherwise-idle stream — Cloudflare cuts
+// proxied/tunnel connections that send no bytes for ~100s. We don't currently
+// push server-initiated notifications, but the endpoint is here so MCP clients
+// that try to open it don't fail.
 func (s *Server) serveHTTPSSE(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -348,10 +350,31 @@ func (s *Server) serveHTTPSSE(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
 		return
 	}
+	// The HTTP server sets a finite WriteTimeout (see runServers) that would
+	// otherwise tear this long-lived stream down mid-flight. Clear the write
+	// deadline for this connection. Best-effort: a ResponseWriter that doesn't
+	// support it (e.g. httptest) keeps its default deadline.
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
+
 	ctx := r.Context()
-	_, _ = fmt.Fprint(w, ": connected\n\n")
+	if _, err := fmt.Fprint(w, ": connected\n\n"); err != nil {
+		return
+	}
 	flusher.Flush()
-	<-ctx.Done()
+
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if _, err := fmt.Fprint(w, ": keepalive\n\n"); err != nil {
+				return // client or proxy went away
+			}
+			flusher.Flush()
+		}
+	}
 }
 
 func httpJSON(w http.ResponseWriter, code int, body any) {
