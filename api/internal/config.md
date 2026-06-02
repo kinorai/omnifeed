@@ -35,7 +35,8 @@ type Config struct {
     EnablePprof bool
 
     // Auth.
-    APIKey string
+    APIKey      string
+    AllowNoAuth bool
 
     // Upstream crawl4ai.
     Crawl4AIURL     string

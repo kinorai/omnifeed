@@ -12,6 +12,7 @@ Package engine defines the dispatch mechanism that picks the right per\-URL hand
 
 - [type Registry](<#Registry>)
   - [func New\(\) \*Registry](<#New>)
+  - [func \(r \*Registry\) BlockPrivateIPs\(block bool\) \*Registry](<#Registry.BlockPrivateIPs>)
   - [func \(r \*Registry\) Crawl\(ctx context.Context, rawURL string, opts domain.EngineOptions\) \(domain.Document, error\)](<#Registry.Crawl>)
   - [func \(r \*Registry\) Fallback\(e domain.Engine\) \*Registry](<#Registry.Fallback>)
   - [func \(r \*Registry\) Register\(e domain.Engine\) \*Registry](<#Registry.Register>)
@@ -38,6 +39,15 @@ func New() *Registry
 
 New returns an empty Registry. Use Register and Fallback to populate it.
 
+<a name="Registry.BlockPrivateIPs"></a>
+### func \(\*Registry\) BlockPrivateIPs
+
+```go
+func (r *Registry) BlockPrivateIPs(block bool) *Registry
+```
+
+BlockPrivateIPs configures the SSRF choke point. Crawl validates every URL before dispatch, so no transport \(HTTP loader, MCP HTTP, MCP stdio\) can forget the check. The http\(s\)\-scheme and non\-empty\-host checks always run; the private/reserved\-IP rejection is gated on block.
+
 <a name="Registry.Crawl"></a>
 ### func \(\*Registry\) Crawl
 
@@ -45,7 +55,7 @@ New returns an empty Registry. Use Register and Fallback to populate it.
 func (r *Registry) Crawl(ctx context.Context, rawURL string, opts domain.EngineOptions) (domain.Document, error)
 ```
 
-Crawl dispatches rawURL to the resolved engine.
+Crawl dispatches rawURL to the resolved engine, after validating it at the SSRF choke point \(see BlockPrivateIPs\). Validating here — rather than in each transport — guarantees every inbound path is covered.
 
 <a name="Registry.Fallback"></a>
 ### func \(\*Registry\) Fallback

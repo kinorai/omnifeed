@@ -27,7 +27,15 @@ Package httpx provides HTTP utilities shared across engines: a retrying HTTP cli
 func ValidateURL(rawURL string, blockPrivate bool) error
 ```
 
-ValidateURL parses rawURL and, when blockPrivate is true, rejects URLs whose hostname resolves to a private/reserved IP — IPv4 OR IPv6 \(loopback, RFC1918, RFC4193 ULA fc00::/7, link\-local 169.254/16 & fe80::/10, unspecified, multicast\). DNS failures pass through — the downstream fetcher surfaces them.
+ValidateURL parses rawURL and enforces the proxy's outbound\-request guard:
+
+- the scheme must be http or https \(always — rejects file://, gopher://, …\);
+- the host must be non\-empty;
+- when blockPrivate is true, the host must not be \(or resolve to\) a private/reserved IP — IPv4 OR IPv6 \(loopback, RFC1918, RFC4193 ULA fc00::/7, link\-local 169.254/16 & fe80::/10, unspecified, multicast\).
+
+When blockPrivate is set, obfuscated IPv4 literals \(leading\-zero octal 0177.0.0.1, short 127.1, decimal 2130706433\) are rejected outright: Go's net.LookupIP and a browser disagree on what they resolve to, so validating one interpretation and letting the downstream fetcher act on another is a bypass. DNS failures pass through — the downstream fetcher surfaces them.
+
+NOTE: this is a best\-effort, app\-layer guard only. The actual fetch is done by the crawl4ai upstream's headless browser, which re\-resolves DNS and follows redirects on its own — so a determined attacker can still defeat this via DNS rebinding or a redirect to a private target. The crawl4ai egress NetworkPolicy \(which blocks RFC1918 \+ link\-local\) is the load\-bearing control; this check is defense in depth that rejects the common cases early.
 
 <a name="Client"></a>
 ## type Client
