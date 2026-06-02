@@ -16,6 +16,11 @@ func TestValidateURL_BlocksPrivate(t *testing.T) {
 		"http://[fc00::1]/",       // ULA v6 (was bypassing the old check)
 		"http://[fe80::1]/",       // link-local v6
 		"http://0.0.0.0/",         // unspecified
+		// Obfuscated IPv4 literals: net.ParseIP rejects these but a browser
+		// would interpret them as 127.0.0.1 — reject rather than forward.
+		"http://0177.0.0.1/", // octal-encoded loopback
+		"http://127.1/",      // short-form loopback
+		"http://2130706433/", // decimal-encoded loopback
 	}
 	for _, u := range blocked {
 		if err := ValidateURL(u, true); err == nil {

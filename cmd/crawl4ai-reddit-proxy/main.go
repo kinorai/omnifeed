@@ -81,17 +81,8 @@ func run(cfg config.Config, logger *slog.Logger) error {
 
 	registry := engine.New().
 		Register(redditEngine).
-		Fallback(crawl4aiEngine)
-
-	// --- Auth ---
-
-	var authn auth.Authenticator = auth.AlwaysAllow{}
-	if cfg.APIKey != "" {
-		authn = auth.NewSharedBearer(cfg.APIKey)
-		logger.Info("api key authentication enabled")
-	} else {
-		logger.Warn("CARP_API_KEY not set — running in dev mode (no auth)")
-	}
+		Fallback(crawl4aiEngine).
+		BlockPrivateIPs(cfg.BlockPrivateIPs)
 
 	// --- Metrics ---
 
@@ -113,6 +104,28 @@ func run(cfg config.Config, logger *slog.Logger) error {
 			},
 		})
 		return s.ServeStdio(ctx, os.Stdin, os.Stdout)
+	}
+
+	// --- Auth (HTTP transports only; stdio inherits its parent process's
+	// trust). Fail closed: refuse to start the internet-facing transports
+	// without a token rather than silently allowing every request. The
+	// Cloudflare tunnel bypasses the nginx RFC1918 whitelist, so an empty key
+	// would mean a fully unauthenticated public proxy. CARP_DEV_NO_AUTH=true is
+	// the explicit local-development opt-out.
+	var authn auth.Authenticator
+	switch {
+	case cfg.APIKey != "":
+		if cfg.AllowNoAuth {
+			logger.Warn("CARP_DEV_NO_AUTH=true ignored because CARP_API_KEY is set — authentication is enabled")
+		}
+		authn = auth.NewSharedBearer(cfg.APIKey)
+		logger.Info("api key authentication enabled")
+	case cfg.AllowNoAuth:
+		authn = auth.AlwaysAllow{}
+		logger.Warn("CARP_API_KEY not set and CARP_DEV_NO_AUTH=true — HTTP transports are UNAUTHENTICATED")
+	default:
+		return fmt.Errorf("CARP_API_KEY is not set: refusing to start the HTTP transports unauthenticated. " +
+			"Set CARP_API_KEY=<token> to enable bearer-token auth, or CARP_DEV_NO_AUTH=true to run without auth (local/dev only)")
 	}
 
 	// --- HTTP server (Open WebUI loader + MCP HTTP) ---
@@ -154,7 +167,6 @@ func run(cfg config.Config, logger *slog.Logger) error {
 	obsMux := http.NewServeMux()
 	health := observability.NewHealth(5*time.Second, crawl4aiReady(httpClient, cfg.Crawl4AIURL))
 	health.Register(obsMux)
-	health.Register(mainMux) // also expose on the main listener for convenience
 	metrics.RegisterMetrics(obsMux)
 	if cfg.EnablePprof {
 		observability.RegisterPprof(obsMux)
@@ -201,11 +213,12 @@ func runServers(ctx context.Context, logger *slog.Logger, health *observability.
 			continue
 		}
 		srv := &http.Server{
-			Addr:         sp.addr,
-			Handler:      sp.handler,
-			ReadTimeout:  30 * time.Second,
-			WriteTimeout: sp.writeTimeout,
-			IdleTimeout:  120 * time.Second,
+			Addr:              sp.addr,
+			Handler:           sp.handler,
+			ReadHeaderTimeout: 10 * time.Second,
+			ReadTimeout:       30 * time.Second,
+			WriteTimeout:      sp.writeTimeout,
+			IdleTimeout:       120 * time.Second,
 		}
 		servers[i] = srv
 		wg.Add(1)

@@ -76,6 +76,18 @@ Then point Open WebUI at `http://localhost:8080` as `WEB_LOADER_ENGINE=external`
 
 Tools exposed: `crawl(url, format?, expand?)` and `reddit_get_post(url, expand?)`.
 
+### Authentication
+
+The HTTP transports (`/crawl`, `/mcp`) are guarded by a shared bearer token. Set **`CARP_API_KEY`** and send it as `Authorization: Bearer <token>`:
+
+```bash
+docker run -e CARP_API_KEY="$(openssl rand -hex 32)" \
+  -e CARP_CRAWL4AI_URL=http://crawl4ai:11235/crawl \
+  kinorai/crawl4ai-reddit-proxy
+```
+
+Without a key the proxy **refuses to start**, so it can't be left open by accident. For a throwaway local run, opt out explicitly with **`CARP_DEV_NO_AUTH=true`** (the bundled compose files already do). Stdio MCP doesn't use the token — it inherits the trust of the process that spawned it.
+
 ## Configuration
 
 All knobs are CARP_-prefixed environment variables.
@@ -86,7 +98,8 @@ All knobs are CARP_-prefixed environment variables.
 | `CARP_MCP_LISTEN_ADDR` | `:8081` | MCP HTTP/SSE listen address |
 | `CARP_MCP_STDIO` | `false` | Run MCP over stdio (also via `--mcp-stdio` flag) |
 | `CARP_METRICS_ADDR` | `:9090` | Prometheus + health listen address |
-| `CARP_API_KEY` | _(unset)_ | Bearer token for `/crawl` and `/mcp` (HTTP transport); empty disables auth (dev mode). Stdio MCP is unaffected. |
+| `CARP_API_KEY` | _(unset)_ | Bearer token for `/crawl` and `/mcp` (HTTP transport). If unset, the proxy refuses to start unless `CARP_DEV_NO_AUTH=true`. Stdio MCP is unaffected. |
+| `CARP_DEV_NO_AUTH` | `false` | Explicitly run the HTTP transports with **no** auth when `CARP_API_KEY` is unset (local/dev only). Ignored if a key is set. |
 | `CARP_CRAWL4AI_URL` | _(required)_ | Upstream crawl4ai endpoint. **Required** — every engine (Reddit + fallback) fetches through crawl4ai; if empty, the proxy exits at startup. |
 | `CARP_CRAWL4AI_TIMEOUT` | `90s` | Per-call timeout to crawl4ai |
 | `CARP_REDDIT_TIMEOUT` | `4m` | Wall-clock cap for a Reddit thread expansion |

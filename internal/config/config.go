@@ -27,7 +27,8 @@ type Config struct {
 	EnablePprof bool
 
 	// Auth.
-	APIKey string
+	APIKey      string
+	AllowNoAuth bool
 
 	// Upstream crawl4ai.
 	Crawl4AIURL     string
@@ -64,6 +65,9 @@ func Load() (Config, error) {
 		return c, err
 	}
 	if c.EnablePprof, err = envBool("CARP_ENABLE_PPROF", false); err != nil {
+		return c, err
+	}
+	if c.AllowNoAuth, err = envBool("CARP_DEV_NO_AUTH", false); err != nil {
 		return c, err
 	}
 	if c.BlockPrivateIPs, err = envBool("CARP_BLOCK_PRIVATE_IPS", true); err != nil {

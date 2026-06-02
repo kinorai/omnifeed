@@ -30,6 +30,9 @@ services:
       CARP_CRAWL4AI_URL: http://crawl4ai:11235/crawl
       # Set CARP_API_KEY to require Authorization: Bearer ... on /crawl.
       # CARP_API_KEY: changeme
+      # Without CARP_API_KEY the proxy refuses to start; this is the explicit
+      # local opt-out (production must set CARP_API_KEY instead).
+      CARP_DEV_NO_AUTH: "true"
       CARP_LOG_LEVEL: info
       CARP_LOG_FORMAT: json
     depends_on:

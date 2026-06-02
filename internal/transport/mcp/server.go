@@ -276,7 +276,8 @@ func (s *Server) handleToolsCall(ctx context.Context, req rpcRequest) rpcRespons
 
 	doc, err := s.registry.Crawl(ctx, url, opts)
 	if err != nil {
-		return errorResp(req.ID, codeInternalError, err.Error())
+		s.logger.Warn("mcp crawl failed", "tool", p.Name, "url", url, "err", err)
+		return errorResp(req.ID, codeInternalError, "crawl failed")
 	}
 
 	return ok(req.ID, map[string]any{

@@ -11,6 +11,9 @@ services:
       - "8081:8081"
       - "9090:9090"
     environment:
+      # Local tryout only — no auth. The proxy refuses to start without either
+      # CARP_API_KEY or this explicit opt-out.
+      CARP_DEV_NO_AUTH: "true"
       CARP_LOG_LEVEL: info
       CARP_LOG_FORMAT: json
     restart: unless-stopped

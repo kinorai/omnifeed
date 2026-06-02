@@ -8,13 +8,15 @@ import (
 	"fmt"
 
 	"github.com/kinorai/crawl4ai-reddit-proxy/internal/domain"
+	"github.com/kinorai/crawl4ai-reddit-proxy/internal/httpx"
 )
 
 // Registry holds an ordered list of engines and a fallback. Lookup is
 // first-match-wins; the fallback handles anything no engine claimed.
 type Registry struct {
-	engines  []domain.Engine
-	fallback domain.Engine
+	engines      []domain.Engine
+	fallback     domain.Engine
+	blockPrivate bool
 }
 
 // New returns an empty Registry. Use Register and Fallback to populate it.
@@ -33,6 +35,15 @@ func (r *Registry) Fallback(e domain.Engine) *Registry {
 	return r
 }
 
+// BlockPrivateIPs configures the SSRF choke point. Crawl validates every URL
+// before dispatch, so no transport (HTTP loader, MCP HTTP, MCP stdio) can
+// forget the check. The http(s)-scheme and non-empty-host checks always run;
+// the private/reserved-IP rejection is gated on block.
+func (r *Registry) BlockPrivateIPs(block bool) *Registry {
+	r.blockPrivate = block
+	return r
+}
+
 // Resolve returns the engine that should handle rawURL.
 func (r *Registry) Resolve(rawURL string) domain.Engine {
 	for _, e := range r.engines {
@@ -43,8 +54,13 @@ func (r *Registry) Resolve(rawURL string) domain.Engine {
 	return r.fallback
 }
 
-// Crawl dispatches rawURL to the resolved engine.
+// Crawl dispatches rawURL to the resolved engine, after validating it at the
+// SSRF choke point (see BlockPrivateIPs). Validating here — rather than in each
+// transport — guarantees every inbound path is covered.
 func (r *Registry) Crawl(ctx context.Context, rawURL string, opts domain.EngineOptions) (domain.Document, error) {
+	if err := httpx.ValidateURL(rawURL, r.blockPrivate); err != nil {
+		return domain.Document{}, fmt.Errorf("url rejected: %w", err)
+	}
 	e := r.Resolve(rawURL)
 	if e == nil {
 		return domain.Document{}, fmt.Errorf("no engine available for %s and no fallback configured", rawURL)

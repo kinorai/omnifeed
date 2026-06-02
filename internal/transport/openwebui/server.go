@@ -118,7 +118,7 @@ func (s *Server) crawl(w http.ResponseWriter, r *http.Request) {
 
 	for _, u := range req.URLs {
 		if err := httpx.ValidateURL(u, s.blockPrivate); err != nil {
-			writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid URL %q: %v", u, err))
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid URL %q", u))
 			return
 		}
 	}
@@ -158,7 +158,7 @@ func (s *Server) crawlOne(ctx context.Context, rawURL string, opts domain.Engine
 			s.metrics.Observe(engName, string(tenant), status, time.Since(start))
 		}
 		return loaderDocument{
-			PageContent: fmt.Sprintf("Error crawling URL: %v", err),
+			PageContent: "Error crawling URL (see server logs for details)",
 			Metadata:    map[string]string{"source": rawURL, "error": "true"},
 		}
 	}
