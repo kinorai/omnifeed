@@ -32,11 +32,11 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name != 'pull_request' || (github.event.pull_request.head.ref != 'develop' && github.event.pull_request.head.ref != 'main')
     steps:
-      - uses: actions/checkout@v6.0.3
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-go@v6.4.0
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
@@ -53,7 +53,7 @@ jobs:
       # Install golangci-lint via the action (handles caching + binary
       # download). Then run via `make lint` to keep the contract local.
       - name: Install golangci-lint
-        uses: golangci/golangci-lint-action@v9.2.1
+        uses: golangci/golangci-lint-action@82606bf257cbaff209d206a39f5134f0cfbfd2ee # v9.2.1
         with:
           version: latest
           install-only: true
@@ -68,7 +68,7 @@ jobs:
         run: make tidy-check
 
       - name: Validate goreleaser config
-        uses: goreleaser/goreleaser-action@v7.2.2
+        uses: goreleaser/goreleaser-action@5daf1e915a5f0af01ddbcd89a43b8061ff4f1a89 # v7.2.2
         with:
           distribution: goreleaser
           version: "~> v2"
@@ -79,14 +79,14 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name != 'pull_request' || (github.event.pull_request.head.ref != 'develop' && github.event.pull_request.head.ref != 'main')
     steps:
-      - uses: actions/checkout@v6.0.3
-      - uses: actions/setup-go@v6.4.0
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
       - name: Run tests with race detector and coverage
         run: go test -race -coverprofile=coverage.txt -covermode=atomic ./...
-      - uses: actions/upload-artifact@v7.0.1
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: coverage
           path: coverage.txt
@@ -99,21 +99,21 @@ jobs:
     needs: [lint, test]
     if: github.event_name == 'pull_request'
     steps:
-      - uses: actions/checkout@v6.0.3
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           fetch-depth: 0
-      - uses: actions/setup-go@v6.4.0
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
-      - uses: docker/setup-qemu-action@v4.1.0
-      - uses: docker/setup-buildx-action@v4.1.0
+      - uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4.1.0
+      - uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
       # syft is required by the goreleaser `sboms` stage. The snapshot is a
       # dry-run of the real release (see release job), so it must run the same
       # SBOM cataloging — skipping it would let a broken sboms config reach main.
-      - uses: anchore/sbom-action/download-syft@v0.24.0
+      - uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
       - name: GoReleaser snapshot
-        uses: goreleaser/goreleaser-action@v7.2.2
+        uses: goreleaser/goreleaser-action@5daf1e915a5f0af01ddbcd89a43b8061ff4f1a89 # v7.2.2
         with:
           distribution: goreleaser
           version: "~> v2"
@@ -137,16 +137,16 @@ jobs:
     env:
       CAN_PUSH: ${{ github.event.pull_request.head.repo.fork == false && github.actor != 'dependabot[bot]' }}
     steps:
-      - uses: actions/checkout@v6.0.3
-      - uses: docker/setup-qemu-action@v4.1.0
-      - uses: docker/setup-buildx-action@v4.1.0
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4.1.0
+      - uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
       - if: env.CAN_PUSH == 'true'
-        uses: docker/login-action@v4.2.0
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
       - name: Build and push :edge
-        uses: docker/build-push-action@v7.2.0
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
         with:
           context: .
           file: Dockerfile
@@ -164,21 +164,21 @@ jobs:
     needs: [lint, test]
     if: github.ref == 'refs/heads/develop' && github.event_name == 'push'
     steps:
-      - uses: actions/checkout@v6.0.3
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           fetch-depth: 0
-      - uses: actions/setup-go@v6.4.0
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
-      - uses: docker/setup-qemu-action@v4.1.0
-      - uses: docker/setup-buildx-action@v4.1.0
+      - uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4.1.0
+      - uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
       # syft is required by the goreleaser `sboms` stage. The snapshot is a
       # dry-run of the real release (see release job), so it must run the same
       # SBOM cataloging — skipping it would let a broken sboms config reach main.
-      - uses: anchore/sbom-action/download-syft@v0.24.0
+      - uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
       - name: GoReleaser snapshot
-        uses: goreleaser/goreleaser-action@v7.2.2
+        uses: goreleaser/goreleaser-action@5daf1e915a5f0af01ddbcd89a43b8061ff4f1a89 # v7.2.2
         with:
           distribution: goreleaser
           version: "~> v2"
@@ -194,15 +194,15 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v6.0.3
-      - uses: docker/setup-qemu-action@v4.1.0
-      - uses: docker/setup-buildx-action@v4.1.0
-      - uses: docker/login-action@v4.2.0
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4.1.0
+      - uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
+      - uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
       - name: Build and push :dev
-        uses: docker/build-push-action@v7.2.0
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
         with:
           context: .
           file: Dockerfile
@@ -236,7 +236,7 @@ jobs:
       skipped: ${{ steps.decide.outputs.skipped }}
       tag: ${{ steps.decide.outputs.tag }}
     steps:
-      - uses: actions/checkout@v6.0.3
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           ref: main
           fetch-depth: 0
@@ -247,7 +247,7 @@ jobs:
       - name: Compute next version
         id: bump
         if: github.event_name == 'push'
-        uses: orhun/git-cliff-action@v4.8.0
+        uses: orhun/git-cliff-action@f50e11560dce63f7c33227798f90b924471a88b5 # v4.8.0
         with:
           config: cliff.toml
           args: --bumped-version
@@ -293,7 +293,7 @@ jobs:
       # self-heals on the next auto release.
       - name: Generate changelog
         if: steps.decide.outputs.skipped != 'true' && github.event_name == 'push'
-        uses: orhun/git-cliff-action@v4.8.0
+        uses: orhun/git-cliff-action@f50e11560dce63f7c33227798f90b924471a88b5 # v4.8.0
         with:
           config: cliff.toml
           args: --bump -o CHANGELOG.md
@@ -321,23 +321,23 @@ jobs:
     needs: versioning
     if: needs.versioning.outputs.skipped != 'true'
     steps:
-      - uses: actions/checkout@v6.0.3
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           ref: ${{ needs.versioning.outputs.tag }}
           fetch-depth: 0
-      - uses: actions/setup-go@v6.4.0
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
-      - uses: docker/setup-qemu-action@v4.1.0
-      - uses: docker/setup-buildx-action@v4.1.0
-      - uses: docker/login-action@v4.2.0
+      - uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4.1.0
+      - uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
+      - uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
-      - uses: anchore/sbom-action/download-syft@v0.24.0
+      - uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
       - name: GoReleaser release
-        uses: goreleaser/goreleaser-action@v7.2.2
+        uses: goreleaser/goreleaser-action@5daf1e915a5f0af01ddbcd89a43b8061ff4f1a89 # v7.2.2
         with:
           distribution: goreleaser
           version: "~> v2"
