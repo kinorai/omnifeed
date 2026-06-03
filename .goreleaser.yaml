@@ -91,7 +91,13 @@ source:
   name_template: "{{ .ProjectName }}_{{ .Version }}_source"
 
 snapshot:
-  version_template: "{{ incpatch .Version }}-dev+{{ .ShortCommit }}"
+  # Use '-' not '+' before the commit: this version is used as a Docker tag in
+  # the snapshot build (dockers_v2), and '+' (SemVer build metadata) is an
+  # invalid Docker tag character — `docker buildx build` rejects it with
+  # "invalid reference format". '-dev-<sha>' is both a valid SemVer prerelease
+  # and a valid Docker tag. Real releases use the clean git-tag version, so this
+  # only affects snapshot/PR-validation builds.
+  version_template: "{{ incpatch .Version }}-dev-{{ .ShortCommit }}"
 
 changelog:
   use: git
