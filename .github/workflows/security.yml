@@ -20,7 +20,7 @@ jobs:
     if: github.actor != 'dependabot[bot]'
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6.0.2
+        uses: actions/checkout@v6.0.3
       - name: Setup Go
         uses: actions/setup-go@v6.4.0
         with:
@@ -41,13 +41,13 @@ jobs:
       contents: read
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6.0.2
+        uses: actions/checkout@v6.0.3
       - name: Run gosec
-        uses: securego/gosec@v2.26.1
+        uses: securego/gosec@v2.27.1
         with:
           args: '-no-fail -fmt sarif -out gosec.sarif ./...'
       - name: Upload SARIF
-        uses: github/codeql-action/upload-sarif@v4.36.0
+        uses: github/codeql-action/upload-sarif@v4.36.1
         with:
           sarif_file: gosec.sarif
           wait-for-processing: true
@@ -61,9 +61,9 @@ jobs:
       contents: read
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6.0.2
+        uses: actions/checkout@v6.0.3
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v4.36.0
+        uses: github/codeql-action/init@v4.36.1
         with:
           languages: go
       - name: Setup Go
@@ -72,9 +72,9 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: true
       - name: Autobuild
-        uses: github/codeql-action/autobuild@v4.36.0
+        uses: github/codeql-action/autobuild@v4.36.1
       - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v4.36.0
+        uses: github/codeql-action/analyze@v4.36.1
 
   trivy-fs:
     name: Trivy Filesystem Scan
@@ -86,7 +86,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6.0.2
+        uses: actions/checkout@v6.0.3
       - name: Run Trivy filesystem scan
         uses: aquasecurity/trivy-action@v0.36.0
         with:
@@ -96,7 +96,7 @@ jobs:
           output: 'trivy-fs-results.sarif'
           severity: 'CRITICAL,HIGH'
       - name: Upload SARIF
-        uses: github/codeql-action/upload-sarif@v4.36.0
+        uses: github/codeql-action/upload-sarif@v4.36.1
         if: always()
         with:
           sarif_file: 'trivy-fs-results.sarif'
@@ -115,7 +115,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6.0.2
+        uses: actions/checkout@v6.0.3
       - name: Login to Docker Hub
         uses: docker/login-action@v4.2.0
         with:
@@ -131,7 +131,7 @@ jobs:
           output: 'trivy-image-results.sarif'
           severity: 'CRITICAL,HIGH'
       - name: Upload SARIF
-        uses: github/codeql-action/upload-sarif@v4.36.0
+        uses: github/codeql-action/upload-sarif@v4.36.1
         if: always() && hashFiles('trivy-image-results.sarif') != ''
         with:
           sarif_file: 'trivy-image-results.sarif'
@@ -141,7 +141,7 @@ jobs:
       # and remediation recommendations. Runs on the same release/schedule
       # cadence as the Trivy image scan above.
       - name: Run Docker Scout
-        uses: docker/scout-action@v1.18.1
+        uses: docker/scout-action@v1.21.0
         with:
           command: quickview,cves,recommendations
           image: kinorai/crawl4ai-reddit-proxy:latest
