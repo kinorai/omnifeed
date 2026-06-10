@@ -1,0 +1,20 @@
+# SearXNG settings for the local docker-compose stack.
+#
+# Production (Kubernetes) renders its own settings.yml — this file is only
+# mounted by docker-compose.yml. Two things matter for the proxy:
+#   - search.formats must include "json" or /search?format=json returns 403
+#   - server.limiter stays false: the instance is private (only the proxy
+#     reaches it), so bot detection would only add a Valkey dependency
+use_default_settings: true
+
+server:
+  # Overridden by the SEARXNG_SECRET env var in compose; never used as-is.
+  secret_key: "dev-only-change-me"
+  limiter: false
+  image_proxy: false
+  public_instance: false
+
+search:
+  formats:
+    - html
+    - json

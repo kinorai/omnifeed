@@ -1,4 +1,4 @@
-// Package config loads all runtime configuration from CARP_-prefixed
+// Package config loads all runtime configuration from SCRM_-prefixed
 // environment variables. Every knob the binary respects is declared here in
 // one place so operators have a single source of truth.
 package config
@@ -34,6 +34,13 @@ type Config struct {
 	Crawl4AIURL     string
 	Crawl4AITimeout time.Duration
 
+	// Upstream SearXNG (optional). Empty disables the `search` MCP tool.
+	SearXNGURL     string
+	SearXNGTimeout time.Duration
+
+	// Search tool limits.
+	SearchMaxResults int
+
 	// Reddit engine defaults.
 	RedditTimeout   time.Duration
 	RedditMaxRounds int
@@ -46,55 +53,66 @@ type Config struct {
 	BlockPrivateIPs      bool
 }
 
-// Load reads CARP_* env vars and returns a populated Config, or an error if a
+// Load reads SCRM_* env vars and returns a populated Config, or an error if a
 // required variable is malformed. Defaults are documented inline.
 func Load() (Config, error) {
 	c := Config{
-		ListenAddr:    env("CARP_LISTEN_ADDR", ":8080"),
-		MCPListenAddr: env("CARP_MCP_LISTEN_ADDR", ":8081"),
-		MetricsAddr:   env("CARP_METRICS_ADDR", ":9090"),
-		LogLevel:      env("CARP_LOG_LEVEL", "info"),
-		LogFormat:     env("CARP_LOG_FORMAT", "json"),
-		APIKey:        os.Getenv("CARP_API_KEY"),
-		Crawl4AIURL:   env("CARP_CRAWL4AI_URL", ""),
-		RedditFormat:  env("CARP_REDDIT_FORMAT", "toon"),
+		ListenAddr:    env("SCRM_LISTEN_ADDR", ":8080"),
+		MCPListenAddr: env("SCRM_MCP_LISTEN_ADDR", ":8081"),
+		MetricsAddr:   env("SCRM_METRICS_ADDR", ":9090"),
+		LogLevel:      env("SCRM_LOG_LEVEL", "info"),
+		LogFormat:     env("SCRM_LOG_FORMAT", "json"),
+		APIKey:        os.Getenv("SCRM_API_KEY"),
+		Crawl4AIURL:   env("SCRM_CRAWL4AI_URL", ""),
+		SearXNGURL:    env("SCRM_SEARXNG_URL", ""),
+		RedditFormat:  env("SCRM_REDDIT_FORMAT", "toon"),
 	}
 
 	var err error
-	if c.MCPStdio, err = envBool("CARP_MCP_STDIO", false); err != nil {
+	if c.MCPStdio, err = envBool("SCRM_MCP_STDIO", false); err != nil {
 		return c, err
 	}
-	if c.EnablePprof, err = envBool("CARP_ENABLE_PPROF", false); err != nil {
+	if c.EnablePprof, err = envBool("SCRM_ENABLE_PPROF", false); err != nil {
 		return c, err
 	}
-	if c.AllowNoAuth, err = envBool("CARP_DEV_NO_AUTH", false); err != nil {
+	if c.AllowNoAuth, err = envBool("SCRM_DEV_NO_AUTH", false); err != nil {
 		return c, err
 	}
-	if c.BlockPrivateIPs, err = envBool("CARP_BLOCK_PRIVATE_IPS", true); err != nil {
+	if c.BlockPrivateIPs, err = envBool("SCRM_BLOCK_PRIVATE_IPS", true); err != nil {
 		return c, err
 	}
-	if c.Crawl4AITimeout, err = envDuration("CARP_CRAWL4AI_TIMEOUT", 90*time.Second); err != nil {
+	if c.Crawl4AITimeout, err = envDuration("SCRM_CRAWL4AI_TIMEOUT", 90*time.Second); err != nil {
 		return c, err
 	}
-	if c.RedditTimeout, err = envDuration("CARP_REDDIT_TIMEOUT", 4*time.Minute); err != nil {
+	if c.SearXNGTimeout, err = envDuration("SCRM_SEARXNG_TIMEOUT", 15*time.Second); err != nil {
 		return c, err
 	}
-	if c.RedditMaxRounds, err = envInt("CARP_REDDIT_MAX_ROUNDS", 3); err != nil {
+	if c.SearchMaxResults, err = envInt("SCRM_SEARCH_MAX_RESULTS", 25); err != nil {
 		return c, err
 	}
-	if c.MaxURLsPerRequest, err = envInt("CARP_MAX_URLS_PER_REQUEST", 30); err != nil {
+	if c.RedditTimeout, err = envDuration("SCRM_REDDIT_TIMEOUT", 4*time.Minute); err != nil {
 		return c, err
 	}
-	if c.PerDomainConcurrency, err = envInt("CARP_PER_DOMAIN_CONCURRENCY", 2); err != nil {
+	if c.RedditMaxRounds, err = envInt("SCRM_REDDIT_MAX_ROUNDS", 3); err != nil {
 		return c, err
 	}
-	if c.PerDomainDelay, err = envDuration("CARP_PER_DOMAIN_DELAY", 1500*time.Millisecond); err != nil {
+	if c.MaxURLsPerRequest, err = envInt("SCRM_MAX_URLS_PER_REQUEST", 30); err != nil {
+		return c, err
+	}
+	if c.PerDomainConcurrency, err = envInt("SCRM_PER_DOMAIN_CONCURRENCY", 2); err != nil {
+		return c, err
+	}
+	if c.PerDomainDelay, err = envDuration("SCRM_PER_DOMAIN_DELAY", 1500*time.Millisecond); err != nil {
 		return c, err
 	}
 
 	c.RedditFormat = strings.ToLower(c.RedditFormat)
 	if c.RedditFormat != "toon" && c.RedditFormat != "json" {
-		return c, fmt.Errorf("CARP_REDDIT_FORMAT must be 'toon' or 'json', got %q", c.RedditFormat)
+		return c, fmt.Errorf("SCRM_REDDIT_FORMAT must be 'toon' or 'json', got %q", c.RedditFormat)
+	}
+
+	if c.SearchMaxResults < 1 || c.SearchMaxResults > 100 {
+		return c, fmt.Errorf("SCRM_SEARCH_MAX_RESULTS must be between 1 and 100, got %d", c.SearchMaxResults)
 	}
 
 	// crawl4ai is required for ALL engines now: the Reddit engine fetches
@@ -102,7 +120,7 @@ func Load() (Config, error) {
 	// and the generic fallback obviously needs it too. Fail fast rather than
 	// reporting healthy while every crawl errors.
 	if c.Crawl4AIURL == "" {
-		return c, fmt.Errorf("CARP_CRAWL4AI_URL is required: every engine (Reddit and the generic fallback) fetches through crawl4ai")
+		return c, fmt.Errorf("SCRM_CRAWL4AI_URL is required: every engine (Reddit and the generic fallback) fetches through crawl4ai")
 	}
 
 	return c, nil

@@ -7,7 +7,7 @@
 #   goreleaser release --clean
 version: 2
 
-project_name: crawl4ai-reddit-proxy
+project_name: search-crawl-reddit-proxy
 
 before:
   hooks:
@@ -15,9 +15,9 @@ before:
     - go mod verify
 
 builds:
-  - id: crawl4ai-reddit-proxy
-    main: ./cmd/crawl4ai-reddit-proxy
-    binary: crawl4ai-reddit-proxy
+  - id: search-crawl-reddit-proxy
+    main: ./cmd/search-crawl-reddit-proxy
+    binary: search-crawl-reddit-proxy
     env:
       - CGO_ENABLED=0
     goos:
@@ -31,9 +31,9 @@ builds:
       - -trimpath
     ldflags:
       - -s -w
-      - -X github.com/kinorai/crawl4ai-reddit-proxy/internal/version.Version={{ .Version }}
-      - -X github.com/kinorai/crawl4ai-reddit-proxy/internal/version.Commit={{ .FullCommit }}
-      - -X github.com/kinorai/crawl4ai-reddit-proxy/internal/version.Date={{ .Date }}
+      - -X github.com/kinorai/search-crawl-reddit-proxy/internal/version.Version={{ .Version }}
+      - -X github.com/kinorai/search-crawl-reddit-proxy/internal/version.Commit={{ .FullCommit }}
+      - -X github.com/kinorai/search-crawl-reddit-proxy/internal/version.Date={{ .Date }}
     mod_timestamp: "{{ .CommitTimestamp }}"
 
 archives:
@@ -55,12 +55,12 @@ checksum:
 # Requires DOCKERHUB_USERNAME + DOCKERHUB_TOKEN in CI; goreleaser does the
 # `docker buildx` manifest build using the pre-built binaries above.
 dockers_v2:
-  - id: crawl4ai-reddit-proxy
+  - id: search-crawl-reddit-proxy
     ids:
-      - crawl4ai-reddit-proxy
+      - search-crawl-reddit-proxy
     dockerfile: goreleaser.Dockerfile
     images:
-      - kinorai/crawl4ai-reddit-proxy
+      - kinorai/search-crawl-reddit-proxy
     tags:
       - "{{ .Version }}"
       - "v{{ .Version }}"
@@ -72,9 +72,9 @@ dockers_v2:
       - linux/arm64
     labels:
       org.opencontainers.image.title: "{{ .ProjectName }}"
-      org.opencontainers.image.description: "LLM-friendly web crawler & scraper with a dedicated Reddit engine, built on Crawl4AI — Open WebUI compatible"
-      org.opencontainers.image.url: "https://github.com/kinorai/crawl4ai-reddit-proxy"
-      org.opencontainers.image.source: "https://github.com/kinorai/crawl4ai-reddit-proxy"
+      org.opencontainers.image.description: "Self-hosted web search (SearXNG) + LLM-friendly crawling with a dedicated Reddit engine — MCP server, Open WebUI compatible"
+      org.opencontainers.image.url: "https://github.com/kinorai/search-crawl-reddit-proxy"
+      org.opencontainers.image.source: "https://github.com/kinorai/search-crawl-reddit-proxy"
       org.opencontainers.image.version: "{{ .Version }}"
       org.opencontainers.image.revision: "{{ .FullCommit }}"
       org.opencontainers.image.created: "{{ .Date }}"
@@ -138,19 +138,19 @@ changelog:
 release:
   github:
     owner: kinorai
-    name: crawl4ai-reddit-proxy
+    name: search-crawl-reddit-proxy
   draft: false
   prerelease: auto
   mode: replace
   header: |
-    ## crawl4ai-reddit-proxy {{ .Tag }}
+    ## search-crawl-reddit-proxy {{ .Tag }}
 
-    LLM-friendly web crawler & scraper with a dedicated Reddit engine — Open WebUI compatible.
+    Self-hosted web search (SearXNG) + LLM-friendly crawling with a dedicated Reddit engine — MCP server, Open WebUI compatible.
   footer: |
     ## Docker
 
     ```
-    docker pull kinorai/crawl4ai-reddit-proxy:{{ .Version }}
+    docker pull kinorai/search-crawl-reddit-proxy:{{ .Version }}
     ```
 
     ## Verify

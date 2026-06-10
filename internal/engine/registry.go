@@ -7,8 +7,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/kinorai/crawl4ai-reddit-proxy/internal/domain"
-	"github.com/kinorai/crawl4ai-reddit-proxy/internal/httpx"
+	"github.com/kinorai/search-crawl-reddit-proxy/internal/domain"
+	"github.com/kinorai/search-crawl-reddit-proxy/internal/httpx"
 )
 
 // Registry holds an ordered list of engines and a fallback. Lookup is

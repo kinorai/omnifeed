@@ -7,10 +7,10 @@ FROM gcr.io/distroless/static-debian13:nonroot
 
 ARG TARGETPLATFORM
 
-COPY $TARGETPLATFORM/crawl4ai-reddit-proxy /usr/local/bin/crawl4ai-reddit-proxy
+COPY $TARGETPLATFORM/search-crawl-reddit-proxy /usr/local/bin/search-crawl-reddit-proxy
 
 USER 65532:65532
 
 EXPOSE 8080 8081 9090
 
-ENTRYPOINT ["/usr/local/bin/crawl4ai-reddit-proxy"]
+ENTRYPOINT ["/usr/local/bin/search-crawl-reddit-proxy"]

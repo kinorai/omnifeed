@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kinorai/crawl4ai-reddit-proxy/internal/httpx"
+	"github.com/kinorai/search-crawl-reddit-proxy/internal/httpx"
 )
 
 func mustJSON(v interface{}) []byte { b, _ := json.Marshal(v); return b }

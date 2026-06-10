@@ -15,10 +15,10 @@
 // should target /mcp; /mcp/sse is preserved for compat and may eventually
 // be removed.
 //
-// Exposed tools:
-//
-//	crawl(url string) → page_content + metadata (uses the engine registry)
-//	reddit_get_post(url string) → TOON-encoded Reddit thread
+// The server is a pure transport: it owns JSON-RPC framing, auth, and SSE
+// keepalive, and dispatches tools/list and tools/call against the Tool slice
+// it was configured with. The tools themselves (crawl, reddit_get_post,
+// search) live in the tools subpackage and are wired in by main.
 package mcp
 
 import (
@@ -33,11 +33,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/kinorai/crawl4ai-reddit-proxy/internal/auth"
-	"github.com/kinorai/crawl4ai-reddit-proxy/internal/domain"
-	"github.com/kinorai/crawl4ai-reddit-proxy/internal/engine"
-	"github.com/kinorai/crawl4ai-reddit-proxy/internal/engine/reddit"
-	"github.com/kinorai/crawl4ai-reddit-proxy/internal/version"
+	"github.com/kinorai/search-crawl-reddit-proxy/internal/auth"
+	"github.com/kinorai/search-crawl-reddit-proxy/internal/version"
 )
 
 // ProtocolVersion is the MCP version this server speaks.
@@ -45,22 +42,23 @@ const ProtocolVersion = "2024-11-05"
 
 // Server is a JSON-RPC 2.0 MCP server.
 type Server struct {
-	registry       *engine.Registry
-	auth           auth.Authenticator
-	logger         *slog.Logger
-	redditDefaults reddit.Options
+	tools  []Tool
+	byName map[string]Tool
+	auth   auth.Authenticator
+	logger *slog.Logger
 }
 
 // Config configures the Server.
 //
-// Authenticator gates the HTTP transport (POST /mcp and GET /mcp/sse). The
-// stdio transport is unaffected because it runs as a local subprocess and
-// inherits trust from its parent. If nil, auth.AlwaysAllow is used.
+// Tools is the ordered list surfaced by tools/list and dispatched by
+// tools/call. Authenticator gates the HTTP transport (POST /mcp and GET
+// /mcp/sse). The stdio transport is unaffected because it runs as a local
+// subprocess and inherits trust from its parent. If nil, auth.AlwaysAllow
+// is used.
 type Config struct {
-	Registry       *engine.Registry
-	Authenticator  auth.Authenticator
-	Logger         *slog.Logger
-	RedditDefaults reddit.Options
+	Tools         []Tool
+	Authenticator auth.Authenticator
+	Logger        *slog.Logger
 }
 
 // New constructs the server.
@@ -71,11 +69,15 @@ func New(cfg Config) *Server {
 	if cfg.Authenticator == nil {
 		cfg.Authenticator = auth.AlwaysAllow{}
 	}
+	byName := make(map[string]Tool, len(cfg.Tools))
+	for _, t := range cfg.Tools {
+		byName[t.Name] = t
+	}
 	return &Server{
-		registry:       cfg.Registry,
-		auth:           cfg.Authenticator,
-		logger:         cfg.Logger,
-		redditDefaults: cfg.RedditDefaults,
+		tools:  cfg.Tools,
+		byName: byName,
+		auth:   cfg.Authenticator,
+		logger: cfg.Logger,
 	}
 }
 
@@ -181,7 +183,7 @@ func (s *Server) handleInitialize(req rpcRequest) rpcResponse {
 	return ok(req.ID, map[string]any{
 		"protocolVersion": ProtocolVersion,
 		"serverInfo": map[string]string{
-			"name":    "crawl4ai-reddit-proxy",
+			"name":    "search-crawl-reddit-proxy",
 			"version": version.Version,
 		},
 		"capabilities": map[string]any{
@@ -199,48 +201,13 @@ type toolSchema struct {
 }
 
 func (s *Server) handleToolsList(req rpcRequest) rpcResponse {
-	tools := []toolSchema{
-		{
-			Name:        "crawl",
-			Description: "Fetch a URL and return LLM-friendly content. Reddit URLs return TOON-encoded comment trees with full /api/morechildren expansion. Other URLs are routed through the upstream crawl4ai instance and returned as filtered markdown.",
-			InputSchema: map[string]any{
-				"type":     "object",
-				"required": []string{"url"},
-				"properties": map[string]any{
-					"url": map[string]any{
-						"type":        "string",
-						"description": "Absolute http(s) URL to crawl.",
-					},
-					"format": map[string]any{
-						"type":        "string",
-						"description": "Reddit-only: 'toon' (default, token-efficient) or 'json'.",
-						"enum":        []string{"toon", "json"},
-					},
-					"expand": map[string]any{
-						"type":        "integer",
-						"description": "Reddit-only: number of /api/morechildren expansion rounds (0-40).",
-					},
-				},
-			},
-		},
-		{
-			Name:        "reddit_get_post",
-			Description: "Reddit-only: fetch a thread by permalink and return the full comment tree as TOON. Equivalent to `crawl` on a reddit.com URL.",
-			InputSchema: map[string]any{
-				"type":     "object",
-				"required": []string{"url"},
-				"properties": map[string]any{
-					"url": map[string]any{
-						"type":        "string",
-						"description": "Reddit post URL or /r/.../comments/... permalink.",
-					},
-					"expand": map[string]any{
-						"type":        "integer",
-						"description": "Number of expansion rounds (default 3, max 40).",
-					},
-				},
-			},
-		},
+	tools := make([]toolSchema, 0, len(s.tools))
+	for _, t := range s.tools {
+		tools = append(tools, toolSchema{
+			Name:        t.Name,
+			Description: t.Description,
+			InputSchema: t.InputSchema,
+		})
 	}
 	return ok(req.ID, map[string]any{"tools": tools})
 }
@@ -256,35 +223,26 @@ func (s *Server) handleToolsCall(ctx context.Context, req rpcRequest) rpcRespons
 		return errorResp(req.ID, codeInvalidParams, "invalid params: "+err.Error())
 	}
 
-	url, _ := p.Arguments["url"].(string)
-	if url == "" {
-		return errorResp(req.ID, codeInvalidParams, "missing required argument: url")
+	tool, found := s.byName[p.Name]
+	if !found {
+		return errorResp(req.ID, codeInvalidParams, "unknown tool: "+p.Name)
 	}
 
-	opts := domain.EngineOptions{
-		RedditFormat:      s.redditDefaults.Format,
-		RedditKeepDepth:   s.redditDefaults.KeepDepth,
-		RedditKeepCreated: s.redditDefaults.KeepCreated,
-		RedditMaxRounds:   s.redditDefaults.MaxRounds,
-	}
-	if f, ok := p.Arguments["format"].(string); ok && (f == "toon" || f == "json") {
-		opts.RedditFormat = f
-	}
-	if ex, ok := p.Arguments["expand"].(float64); ok && ex >= 0 {
-		opts.RedditMaxRounds = int(ex)
-	}
-
-	doc, err := s.registry.Crawl(ctx, url, opts)
+	res, err := tool.Handle(ctx, p.Arguments)
 	if err != nil {
-		s.logger.Warn("mcp crawl failed", "tool", p.Name, "url", url, "err", err)
-		return errorResp(req.ID, codeInternalError, "crawl failed")
+		var paramErr ParamError
+		if errors.As(err, &paramErr) {
+			return errorResp(req.ID, codeInvalidParams, paramErr.Error())
+		}
+		s.logger.Warn("mcp tool call failed", "tool", p.Name, "err", err)
+		return errorResp(req.ID, codeInternalError, p.Name+" failed")
 	}
 
 	return ok(req.ID, map[string]any{
 		"content": []map[string]any{
-			{"type": "text", "text": doc.PageContent},
+			{"type": "text", "text": res.Text},
 		},
-		"_meta": doc.Metadata,
+		"_meta": res.Meta,
 	})
 }
 
@@ -346,8 +304,8 @@ func (s *Server) serveHTTPSSE(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
-	flusher, ok := w.(http.Flusher)
-	if !ok {
+	flusher, isFlusher := w.(http.Flusher)
+	if !isFlusher {
 		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
 		return
 	}

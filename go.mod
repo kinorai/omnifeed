@@ -1,4 +1,4 @@
-module github.com/kinorai/crawl4ai-reddit-proxy
+module github.com/kinorai/search-crawl-reddit-proxy
 
 go 1.26
 

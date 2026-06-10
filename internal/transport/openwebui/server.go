@@ -19,12 +19,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/kinorai/crawl4ai-reddit-proxy/internal/auth"
-	"github.com/kinorai/crawl4ai-reddit-proxy/internal/domain"
-	"github.com/kinorai/crawl4ai-reddit-proxy/internal/engine"
-	"github.com/kinorai/crawl4ai-reddit-proxy/internal/engine/reddit"
-	"github.com/kinorai/crawl4ai-reddit-proxy/internal/httpx"
-	"github.com/kinorai/crawl4ai-reddit-proxy/internal/observability"
+	"github.com/kinorai/search-crawl-reddit-proxy/internal/auth"
+	"github.com/kinorai/search-crawl-reddit-proxy/internal/domain"
+	"github.com/kinorai/search-crawl-reddit-proxy/internal/engine"
+	"github.com/kinorai/search-crawl-reddit-proxy/internal/engine/reddit"
+	"github.com/kinorai/search-crawl-reddit-proxy/internal/httpx"
+	"github.com/kinorai/search-crawl-reddit-proxy/internal/observability"
 )
 
 const maxBodySize = 1 << 20 // 1MB request body cap

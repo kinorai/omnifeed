@@ -11,7 +11,7 @@ body:
     attributes:
       label: Version
       description: Image tag or git SHA
-      placeholder: "kinorai/crawl4ai-reddit-proxy:0.1.0"
+      placeholder: "kinorai/search-crawl-reddit-proxy:0.1.0"
     validations:
       required: true
   - type: textarea
@@ -44,5 +44,5 @@ body:
   - type: textarea
     id: config
     attributes:
-      label: Configuration (CARP_* env vars, with secrets redacted)
+      label: Configuration (SCRM_* env vars, with secrets redacted)
       render: shell

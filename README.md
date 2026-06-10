@@ -1,19 +1,25 @@
-# crawl4ai-reddit-proxy
+# search-crawl-reddit-proxy
 
-> **LLM-friendly web crawler & scraper with a dedicated Reddit engine, built on Crawl4AI — Open WebUI compatible**
+> **Self-hosted web search (SearXNG) + LLM-friendly crawling with a dedicated Reddit engine — MCP server, Open WebUI compatible**
 
-[![CI](https://github.com/kinorai/crawl4ai-reddit-proxy/actions/workflows/ci.yml/badge.svg)](https://github.com/kinorai/crawl4ai-reddit-proxy/actions/workflows/ci.yml)
-[![Security](https://github.com/kinorai/crawl4ai-reddit-proxy/actions/workflows/security.yml/badge.svg)](https://github.com/kinorai/crawl4ai-reddit-proxy/actions/workflows/security.yml)
+[![CI](https://github.com/kinorai/search-crawl-reddit-proxy/actions/workflows/ci.yml/badge.svg)](https://github.com/kinorai/search-crawl-reddit-proxy/actions/workflows/ci.yml)
+[![Security](https://github.com/kinorai/search-crawl-reddit-proxy/actions/workflows/security.yml/badge.svg)](https://github.com/kinorai/search-crawl-reddit-proxy/actions/workflows/security.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-A single Go binary that wraps [crawl4ai](https://github.com/unclecode/crawl4ai) and adds a **dedicated Reddit engine** that returns full comment trees encoded as **[TOON](https://github.com/toon-format/toon)** — typically **40% fewer tokens than JSON**, lossless. Implements both the **Open WebUI external-loader contract** and an **MCP server** (stdio + HTTP/SSE).
+A single Go binary that gives an LLM agent the full research loop — **search → URLs → content** — against self-hosted upstreams:
+
+- **`search`** queries a [SearXNG](https://github.com/searxng/searxng) instance (Google/Bing/DDG and friends, reddit.com included) and returns result URLs with titles and snippets.
+- **`crawl`** renders any URL through [crawl4ai](https://github.com/unclecode/crawl4ai) as filtered markdown — with a **dedicated Reddit engine** that returns full comment trees encoded as **[TOON](https://github.com/toon-format/toon)**, typically **40% fewer tokens than JSON**, lossless.
+
+Implements both an **MCP server** (stdio + Streamable HTTP/SSE) and the **Open WebUI external-loader contract**.
 
 Most Reddit MCP servers either ship pretty-printed JSON or "save tokens" by truncating comments. This one does neither: full `/api/morechildren` expansion, TOON encoding, deleted-comment stripping. Reddit now blocks non-browser HTTP clients at its edge, so Reddit fetches are routed through a [crawl4ai](https://github.com/unclecode/crawl4ai) headless browser — no auth or API key required.
 
 ## Why this exists
 
-| | crawl4ai-reddit-proxy | Other Reddit MCPs |
+| | search-crawl-reddit-proxy | Other Reddit MCPs |
 |---|---|---|
+| Web search → crawl in one self-hosted MCP | ✅ SearXNG + crawl4ai | ❌ search-only or crawl-only |
 | Full comment tree (`/api/morechildren` expansion) | ✅ up to 40 rounds (~4k comments) | ❌ none implement this |
 | Token-efficient output | ✅ TOON, ~40% smaller than JSON | ❌ verbose JSON or truncated bodies |
 | Strip `[deleted]` / `[removed]` stubs | ✅ | ❌ |
@@ -25,7 +31,7 @@ Most Reddit MCP servers either ship pretty-printed JSON or "save tokens" by trun
 
 ### Try it
 
-> **A crawl4ai upstream is required.** Reddit now blocks non-browser HTTP clients, so the Reddit engine — like the generic fallback — fetches through crawl4ai's headless browser. The proxy needs `CARP_CRAWL4AI_URL` set or it exits at startup; the [compose file](#full-mode-proxy--crawl4ai-upstream) below wires it for you.
+> **A crawl4ai upstream is required.** Reddit now blocks non-browser HTTP clients, so the Reddit engine — like the generic fallback — fetches through crawl4ai's headless browser. The proxy needs `SCRM_CRAWL4AI_URL` set or it exits at startup; the [compose file](#full-mode-proxy--crawl4ai-upstream) below wires it for you.
 
 Once it's running, open a Reddit thread:
 
@@ -37,14 +43,14 @@ curl -X POST http://localhost:8080/crawl \
 
 Returns the canonical Open WebUI shape: `[{"page_content": "...TOON...", "metadata": {...}}]`.
 
-### Full mode (proxy + crawl4ai upstream)
+### Full stack (proxy + searxng + crawl4ai upstreams)
 
 ```bash
-curl -O https://raw.githubusercontent.com/kinorai/crawl4ai-reddit-proxy/main/docker-compose.yml
+git clone https://github.com/kinorai/search-crawl-reddit-proxy.git && cd search-crawl-reddit-proxy
 docker compose up
 ```
 
-Then point Open WebUI at `http://localhost:8080` as `WEB_LOADER_ENGINE=external`.
+Then point Open WebUI at `http://localhost:8080` as `WEB_LOADER_ENGINE=external`. The compose file also starts SearXNG (with `searxng/settings.yml` mounted — the `json` format it enables is required for the `search` tool).
 
 ### As an MCP server (Claude Code, Cursor, Windsurf, …)
 
@@ -54,9 +60,9 @@ Then point Open WebUI at `http://localhost:8080` as `WEB_LOADER_ENGINE=external`
 // .cursor/mcp.json or Claude Code MCP config
 {
   "mcpServers": {
-    "crawl4ai-reddit-proxy": {
+    "search-crawl-reddit-proxy": {
       "command": "docker",
-      "args": ["run", "--rm", "-i", "kinorai/crawl4ai-reddit-proxy:latest", "--mcp-stdio"]
+      "args": ["run", "--rm", "-i", "kinorai/search-crawl-reddit-proxy:latest", "--mcp-stdio"]
     }
   }
 }
@@ -67,51 +73,60 @@ Then point Open WebUI at `http://localhost:8080` as `WEB_LOADER_ENGINE=external`
 ```jsonc
 {
   "mcpServers": {
-    "crawl4ai-reddit-proxy": {
+    "search-crawl-reddit-proxy": {
       "url": "http://your-host:8081/mcp"
     }
   }
 }
 ```
 
-Tools exposed: `crawl(url, format?, expand?)` and `reddit_get_post(url, expand?)`.
+Tools exposed:
+
+- `search(query, limit?, time_range?, language?)` — web search via SearXNG; returns `[{title, url, snippet, engine, published_date}]` as JSON. Only listed when `SCRM_SEARXNG_URL` is set.
+- `crawl(url, format?, expand?)` — any URL → LLM-friendly content (reddit.com → TOON comment tree, everything else → filtered markdown).
+- `reddit_get_post(url, expand?)` — Reddit permalink → full TOON comment tree.
+
+The intended loop: `search` finds URLs (reddit threads included — they surface through SearXNG's general engines), `crawl` reads them.
 
 ### Authentication
 
-The HTTP transports (`/crawl`, `/mcp`) are guarded by a shared bearer token. Set **`CARP_API_KEY`** and send it as `Authorization: Bearer <token>`:
+The HTTP transports (`/crawl`, `/mcp`) are guarded by a shared bearer token. Set **`SCRM_API_KEY`** and send it as `Authorization: Bearer <token>`:
 
 ```bash
-docker run -e CARP_API_KEY="$(openssl rand -hex 32)" \
-  -e CARP_CRAWL4AI_URL=http://crawl4ai:11235/crawl \
-  kinorai/crawl4ai-reddit-proxy
+docker run -e SCRM_API_KEY="$(openssl rand -hex 32)" \
+  -e SCRM_CRAWL4AI_URL=http://crawl4ai:11235/crawl \
+  kinorai/search-crawl-reddit-proxy
 ```
 
-Without a key the proxy **refuses to start**, so it can't be left open by accident. For a throwaway local run, opt out explicitly with **`CARP_DEV_NO_AUTH=true`** (the bundled compose files already do). Stdio MCP doesn't use the token — it inherits the trust of the process that spawned it.
+Without a key the proxy **refuses to start**, so it can't be left open by accident. For a throwaway local run, opt out explicitly with **`SCRM_DEV_NO_AUTH=true`** (the bundled compose files already do). Stdio MCP doesn't use the token — it inherits the trust of the process that spawned it.
 
 ## Configuration
 
-All knobs are CARP_-prefixed environment variables.
+All knobs are SCRM_-prefixed environment variables.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `CARP_LISTEN_ADDR` | `:8080` | HTTP loader (Open WebUI) listen address |
-| `CARP_MCP_LISTEN_ADDR` | `:8081` | MCP HTTP/SSE listen address |
-| `CARP_MCP_STDIO` | `false` | Run MCP over stdio (also via `--mcp-stdio` flag) |
-| `CARP_METRICS_ADDR` | `:9090` | Prometheus + health listen address |
-| `CARP_API_KEY` | _(unset)_ | Bearer token for `/crawl` and `/mcp` (HTTP transport). If unset, the proxy refuses to start unless `CARP_DEV_NO_AUTH=true`. Stdio MCP is unaffected. |
-| `CARP_DEV_NO_AUTH` | `false` | Explicitly run the HTTP transports with **no** auth when `CARP_API_KEY` is unset (local/dev only). Ignored if a key is set. |
-| `CARP_CRAWL4AI_URL` | _(required)_ | Upstream crawl4ai endpoint. **Required** — every engine (Reddit + fallback) fetches through crawl4ai; if empty, the proxy exits at startup. |
-| `CARP_CRAWL4AI_TIMEOUT` | `90s` | Per-call timeout to crawl4ai |
-| `CARP_REDDIT_TIMEOUT` | `4m` | Wall-clock cap for a Reddit thread expansion |
-| `CARP_REDDIT_MAX_ROUNDS` | `3` | Default `/api/morechildren` rounds (max 40 via `?expand=full`) |
-| `CARP_REDDIT_FORMAT` | `toon` | Default Reddit output: `toon` or `json` |
-| `CARP_MAX_URLS_PER_REQUEST` | `30` | Cap on `urls[]` array length |
-| `CARP_PER_DOMAIN_CONCURRENCY` | `2` | Max concurrent requests to one domain |
-| `CARP_PER_DOMAIN_DELAY` | `1500ms` | Minimum delay between same-domain requests |
-| `CARP_BLOCK_PRIVATE_IPS` | `true` | SSRF protection (always on in production) |
-| `CARP_LOG_LEVEL` | `info` | `debug`/`info`/`warn`/`error` |
-| `CARP_LOG_FORMAT` | `json` | `json` or `text` |
-| `CARP_ENABLE_PPROF` | `false` | Expose `/debug/pprof/*` (opt-in) |
+| `SCRM_LISTEN_ADDR` | `:8080` | HTTP loader (Open WebUI) listen address |
+| `SCRM_MCP_LISTEN_ADDR` | `:8081` | MCP HTTP/SSE listen address |
+| `SCRM_MCP_STDIO` | `false` | Run MCP over stdio (also via `--mcp-stdio` flag) |
+| `SCRM_METRICS_ADDR` | `:9090` | Prometheus + health listen address |
+| `SCRM_API_KEY` | _(unset)_ | Bearer token for `/crawl` and `/mcp` (HTTP transport). If unset, the proxy refuses to start unless `SCRM_DEV_NO_AUTH=true`. Stdio MCP is unaffected. |
+| `SCRM_DEV_NO_AUTH` | `false` | Explicitly run the HTTP transports with **no** auth when `SCRM_API_KEY` is unset (local/dev only). Ignored if a key is set. |
+| `SCRM_CRAWL4AI_URL` | _(required)_ | Upstream crawl4ai endpoint. **Required** — every engine (Reddit + fallback) fetches through crawl4ai; if empty, the proxy exits at startup. |
+| `SCRM_CRAWL4AI_TIMEOUT` | `90s` | Per-call timeout to crawl4ai |
+| `SCRM_SEARXNG_URL` | _(unset)_ | Upstream SearXNG base URL (e.g. `http://searxng:8080`). **Optional** — when unset, the `search` MCP tool is not exposed. The instance must enable the `json` format in `settings.yml`. |
+| `SCRM_SEARXNG_TIMEOUT` | `15s` | Per-query timeout to SearXNG |
+| `SCRM_SEARCH_MAX_RESULTS` | `25` | Hard cap on the `search` tool's `limit` argument (1–100) |
+| `SCRM_REDDIT_TIMEOUT` | `4m` | Wall-clock cap for a Reddit thread expansion |
+| `SCRM_REDDIT_MAX_ROUNDS` | `3` | Default `/api/morechildren` rounds (max 40 via `?expand=full`) |
+| `SCRM_REDDIT_FORMAT` | `toon` | Default Reddit output: `toon` or `json` |
+| `SCRM_MAX_URLS_PER_REQUEST` | `30` | Cap on `urls[]` array length |
+| `SCRM_PER_DOMAIN_CONCURRENCY` | `2` | Max concurrent requests to one domain |
+| `SCRM_PER_DOMAIN_DELAY` | `1500ms` | Minimum delay between same-domain requests |
+| `SCRM_BLOCK_PRIVATE_IPS` | `true` | SSRF protection (always on in production) |
+| `SCRM_LOG_LEVEL` | `info` | `debug`/`info`/`warn`/`error` |
+| `SCRM_LOG_FORMAT` | `json` | `json` or `text` |
+| `SCRM_ENABLE_PPROF` | `false` | Expose `/debug/pprof/*` (opt-in) |
 
 ## API
 
@@ -119,7 +134,7 @@ All knobs are CARP_-prefixed environment variables.
 
 ```http
 POST /crawl
-Authorization: Bearer $CARP_API_KEY
+Authorization: Bearer $SCRM_API_KEY
 Content-Type: application/json
 
 {"urls": ["https://www.reddit.com/r/foo/comments/.../"]}
@@ -137,43 +152,43 @@ Per-request query parameters (Reddit URLs only):
 ### Health endpoints
 
 - `GET /livez` — process liveness; always 200 unless shutting down
-- `GET /readyz` — checks crawl4ai upstream reachability when configured
+- `GET /readyz` — checks crawl4ai (and SearXNG, when configured) upstream reachability
 - `GET /healthz` — alias of `/readyz` (backwards compatibility)
-- `GET /metrics` — Prometheus format
+- `GET /metrics` — Prometheus format (`scrm_requests_total`, `scrm_request_seconds`, `scrm_reddit_expansion_rounds`, `scrm_search_requests_total`, `scrm_search_request_seconds`)
 
 ### MCP
 
 JSON-RPC 2.0 at:
 
-- `stdio` when `CARP_MCP_STDIO=true` or `--mcp-stdio`
-- Canonical: **Streamable HTTP** at `/mcp` (MCP spec 2025-03-26) on `CARP_MCP_LISTEN_ADDR` — `POST /mcp` for one-shot JSON-RPC, `GET /mcp` for the SSE event stream.
+- `stdio` when `SCRM_MCP_STDIO=true` or `--mcp-stdio`
+- Canonical: **Streamable HTTP** at `/mcp` (MCP spec 2025-03-26) on `SCRM_MCP_LISTEN_ADDR` — `POST /mcp` for one-shot JSON-RPC, `GET /mcp` for the SSE event stream.
 - Legacy: `GET /mcp/sse` is kept as an alias for older clients that only speak the deprecated dual-endpoint SSE shape. New clients should target `/mcp`.
 
 ## Architecture
 
+Two ports, two flows. The `Searcher` port answers *query → URLs*; the `Engine`
+port answers *URL → content*. MCP tools compose them; transports stay pure.
+
 ```
-                                       ┌────────────────┐
-                  /crawl   ─────────►  │  OpenWebUI     │
-                                       │  transport     │
-                                       └───────┬────────┘
-                                               ▼
-                                       ┌────────────────┐
-                       MCP stdio  ───► │     Engine     │
-                       MCP HTTP   ───► │    Registry    │
-                                       └───┬────────┬───┘
-                                           ▼        ▼
-                                    ┌────────┐ ┌────────────┐
-                                    │ reddit │ │  generic   │
-                                    │ engine │ │  fallback  │
-                                    │ (TOON) │ │ (markdown) │
-                                    └───┬────┘ └─────┬──────┘
-                                        └──────┬─────┘
-                                               ▼
-                                    ┌───────────────────────┐
-                                    │    crawl4ai upstream   │
-                                    │  (headless browser —   │
-                                    │   fetches all URLs)    │
-                                    └───────────────────────┘
+            /crawl ──► OpenWebUI transport ─────────────┐
+                                                        ▼
+   MCP stdio ──► ┌──────────────┐  crawl tools  ┌────────────────┐
+   MCP HTTP  ──► │  MCP server  │ ────────────► │     Engine     │
+                 │ (transport)  │               │    Registry    │
+                 └──────┬───────┘               └───┬────────┬───┘
+                        │ search tool               ▼        ▼
+                        ▼                    ┌────────┐ ┌────────────┐
+                 ┌──────────────┐            │ reddit │ │  generic   │
+                 │   Searcher   │            │ engine │ │  fallback  │
+                 │  (searxng)   │            │ (TOON) │ │ (markdown) │
+                 └──────┬───────┘            └───┬────┘ └─────┬──────┘
+                        ▼                        └──────┬─────┘
+              ┌──────────────────┐                      ▼
+              │ SearXNG upstream │           ┌───────────────────────┐
+              │  (meta-search:   │           │    crawl4ai upstream   │
+              │ google/bing/ddg) │           │  (headless browser —   │
+              └──────────────────┘           │   fetches all URLs)    │
+                                             └───────────────────────┘
 ```
 
 ### Reddit anti-bot handling
@@ -187,16 +202,18 @@ The browser request sets **`enable_stealth` + `override_navigator`** — fingerp
 Extensibility points:
 
 - **New engines** (HN, Stack Overflow, …): implement `domain.Engine` and register before the fallback
-- **New transports**: implement on top of `engine.Registry`
+- **New searchers** (Brave, Tavily, reddit-native, …): implement `domain.Searcher`
+- **New MCP tools**: add a constructor in `internal/transport/mcp/tools` — the MCP server is a pure transport and never changes
+- **New transports**: implement on top of `engine.Registry` / `domain.Searcher`
 - **Output encoding** (e.g. TOON rendering): `internal/domain/document.go`
 
 ## Development
 
 ```bash
-git clone https://github.com/kinorai/crawl4ai-reddit-proxy.git
-cd crawl4ai-reddit-proxy
+git clone https://github.com/kinorai/search-crawl-reddit-proxy.git
+cd search-crawl-reddit-proxy
 go test ./...
-go run ./cmd/crawl4ai-reddit-proxy
+go run ./cmd/search-crawl-reddit-proxy
 ```
 
 ## Contributing

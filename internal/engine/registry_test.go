@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/kinorai/crawl4ai-reddit-proxy/internal/domain"
+	"github.com/kinorai/search-crawl-reddit-proxy/internal/domain"
 )
 
 // stubEngine is a no-op fallback used to prove the choke point runs BEFORE

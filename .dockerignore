@@ -8,5 +8,5 @@ dist
 .DS_Store
 coverage.txt
 coverage.html
-/crawl4ai-reddit-proxy
+/search-crawl-reddit-proxy
 internal/engine/reddit/testdata

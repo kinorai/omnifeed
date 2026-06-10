@@ -17,6 +17,8 @@ type Metrics struct {
 	RequestsTotal *prometheus.CounterVec   // engine, tenant, status
 	RequestSecs   *prometheus.HistogramVec // engine, status
 	RedditRounds  prometheus.Histogram
+	SearchesTotal *prometheus.CounterVec   // searcher, status
+	SearchSecs    *prometheus.HistogramVec // searcher, status
 }
 
 // NewMetrics builds and registers all collectors.
@@ -25,21 +27,30 @@ func NewMetrics() *Metrics {
 	m := &Metrics{
 		registry: reg,
 		RequestsTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "carp_requests_total",
+			Name: "scrm_requests_total",
 			Help: "Total /crawl requests by engine, tenant, and status.",
 		}, []string{"engine", "tenant", "status"}),
 		RequestSecs: prometheus.NewHistogramVec(prometheus.HistogramOpts{
-			Name:    "carp_request_seconds",
+			Name:    "scrm_request_seconds",
 			Help:    "Crawl latency by engine and status.",
 			Buckets: prometheus.ExponentialBuckets(0.05, 2, 12),
 		}, []string{"engine", "status"}),
 		RedditRounds: prometheus.NewHistogram(prometheus.HistogramOpts{
-			Name:    "carp_reddit_expansion_rounds",
+			Name:    "scrm_reddit_expansion_rounds",
 			Help:    "Number of /api/morechildren rounds per Reddit crawl.",
 			Buckets: prometheus.LinearBuckets(0, 5, 9),
 		}),
+		SearchesTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "scrm_search_requests_total",
+			Help: "Total search queries by searcher and status.",
+		}, []string{"searcher", "status"}),
+		SearchSecs: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name:    "scrm_search_request_seconds",
+			Help:    "Search latency by searcher and status.",
+			Buckets: prometheus.ExponentialBuckets(0.05, 2, 10),
+		}, []string{"searcher", "status"}),
 	}
-	reg.MustRegister(m.RequestsTotal, m.RequestSecs, m.RedditRounds)
+	reg.MustRegister(m.RequestsTotal, m.RequestSecs, m.RedditRounds, m.SearchesTotal, m.SearchSecs)
 	reg.MustRegister(
 		collectors.NewGoCollector(),
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
@@ -53,12 +64,18 @@ func (m *Metrics) Observe(engine, tenant, status string, duration time.Duration)
 	m.RequestSecs.WithLabelValues(engine, status).Observe(duration.Seconds())
 }
 
+// ObserveSearch records a single search query result.
+func (m *Metrics) ObserveSearch(searcher, status string, duration time.Duration) {
+	m.SearchesTotal.WithLabelValues(searcher, status).Inc()
+	m.SearchSecs.WithLabelValues(searcher, status).Observe(duration.Seconds())
+}
+
 // RegisterMetrics attaches /metrics to mux.
 func (m *Metrics) RegisterMetrics(mux *http.ServeMux) {
 	mux.Handle("/metrics", promhttp.HandlerFor(m.registry, promhttp.HandlerOpts{}))
 }
 
-// RegisterPprof attaches /debug/pprof/* to mux. Opt-in via CARP_ENABLE_PPROF.
+// RegisterPprof attaches /debug/pprof/* to mux. Opt-in via SCRM_ENABLE_PPROF.
 func RegisterPprof(mux *http.ServeMux) {
 	mux.HandleFunc("/debug/pprof/", pprof.Index)
 	mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)

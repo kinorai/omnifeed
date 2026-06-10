@@ -1,4 +1,4 @@
-# Pre-commit hooks for crawl4ai-reddit-proxy.
+# Pre-commit hooks for search-crawl-reddit-proxy.
 #
 # Design: hooks shim into `make <target>` so the Makefile is the single
 # source of truth for what "clean repo" means. CI calls the same targets,

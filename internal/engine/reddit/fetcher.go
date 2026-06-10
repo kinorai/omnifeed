@@ -9,7 +9,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/kinorai/crawl4ai-reddit-proxy/internal/httpx"
+	"github.com/kinorai/search-crawl-reddit-proxy/internal/httpx"
 )
 
 // redditOrigin is the reddit.com host we navigate and fetch from. We use
@@ -20,9 +20,9 @@ import (
 const redditOrigin = "https://www.reddit.com"
 
 // browserPageTimeoutMS bounds crawl4ai's page navigation. It is kept comfortably
-// BELOW the shared HTTP client's timeout (CARP_CRAWL4AI_TIMEOUT, default 90s) so
+// BELOW the shared HTTP client's timeout (SCRM_CRAWL4AI_TIMEOUT, default 90s) so
 // the Go client doesn't cancel a still-running crawl and lose crawl4ai's precise
-// "navigation blocked" diagnostics. If you raise this, raise CARP_CRAWL4AI_TIMEOUT too.
+// "navigation blocked" diagnostics. If you raise this, raise SCRM_CRAWL4AI_TIMEOUT too.
 const browserPageTimeoutMS = 60000
 
 // Fetcher retrieves raw JSON from Reddit. Reddit's edge now hard-blocks
@@ -40,7 +40,7 @@ type Fetcher struct {
 }
 
 // NewFetcher constructs a Fetcher that drives crawl4ai's /crawl endpoint
-// (crawl4aiURL == CARP_CRAWL4AI_URL) to reach Reddit through a browser.
+// (crawl4aiURL == SCRM_CRAWL4AI_URL) to reach Reddit through a browser.
 func NewFetcher(client *httpx.Client, crawl4aiURL string) *Fetcher {
 	return &Fetcher{client: client, crawl4aiURL: crawl4aiURL}
 }
@@ -180,7 +180,7 @@ type fetchEnvelope struct {
 // re-navigation and runs js on that context.
 func (f *Fetcher) browserExec(ctx context.Context, navURL, js, sessionID string, jsOnly bool) (string, error) {
 	if f.crawl4aiURL == "" {
-		return "", fmt.Errorf("crawl4ai endpoint not configured (set CARP_CRAWL4AI_URL)")
+		return "", fmt.Errorf("crawl4ai endpoint not configured (set SCRM_CRAWL4AI_URL)")
 	}
 
 	crawler := map[string]interface{}{
