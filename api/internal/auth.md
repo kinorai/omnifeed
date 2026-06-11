@@ -3,7 +3,7 @@
 # auth
 
 ```go
-import "github.com/kinorai/crawl4ai-reddit-proxy/internal/auth"
+import "github.com/kinorai/search-crawl-reddit-proxy/internal/auth"
 ```
 
 Package auth defines an Authenticator interface for inbound transports. v0.1 ships a single shared bearer\-token implementation, but the interface leaves room for multi\-key, JWT, or DB\-backed implementations later without touching transport code.

@@ -3,7 +3,7 @@
 # version
 
 ```go
-import "github.com/kinorai/crawl4ai-reddit-proxy/internal/version"
+import "github.com/kinorai/search-crawl-reddit-proxy/internal/version"
 ```
 
 Package version exposes build\-time version metadata.

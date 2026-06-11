@@ -3,7 +3,7 @@
 # domain
 
 ```go
-import "github.com/kinorai/crawl4ai-reddit-proxy/internal/domain"
+import "github.com/kinorai/search-crawl-reddit-proxy/internal/domain"
 ```
 
 Package domain holds the core types exchanged between transports and engines. It has no external dependencies and no I/O.
@@ -13,6 +13,9 @@ Package domain holds the core types exchanged between transports and engines. It
 - [type Document](<#Document>)
 - [type Engine](<#Engine>)
 - [type EngineOptions](<#EngineOptions>)
+- [type SearchOptions](<#SearchOptions>)
+- [type SearchResult](<#SearchResult>)
+- [type Searcher](<#Searcher>)
 
 
 <a name="Document"></a>
@@ -52,6 +55,46 @@ type EngineOptions struct {
     RedditKeepCreated bool   // include created field on comments
     RedditMaxRounds   int    // /api/morechildren expansion budget
     RedditFormat      string // "toon" | "json"
+}
+```
+
+<a name="SearchOptions"></a>
+## type SearchOptions
+
+SearchOptions carries per\-query knobs a Searcher may honor.
+
+```go
+type SearchOptions struct {
+    Limit     int    // max results to return; <= 0 means no clamp
+    TimeRange string // "", "day", "week", "month", "year"
+    Language  string // e.g. "en", "fr"; empty = upstream default
+}
+```
+
+<a name="SearchResult"></a>
+## type SearchResult
+
+SearchResult is a single hit returned by a Searcher.
+
+```go
+type SearchResult struct {
+    Title         string `json:"title"`
+    URL           string `json:"url"`
+    Snippet       string `json:"snippet,omitempty"`
+    Engine        string `json:"engine,omitempty"`
+    PublishedDate string `json:"published_date,omitempty"`
+}
+```
+
+<a name="Searcher"></a>
+## type Searcher
+
+Searcher turns a query into ranked result URLs. It is the discovery counterpart of Engine: a Searcher finds URLs \(query → results\), Engine implementations then render them \(URL → content\).
+
+```go
+type Searcher interface {
+    Name() string
+    Search(ctx context.Context, query string, opts SearchOptions) ([]SearchResult, error)
 }
 ```
 

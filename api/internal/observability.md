@@ -3,7 +3,7 @@
 # observability
 
 ```go
-import "github.com/kinorai/crawl4ai-reddit-proxy/internal/observability"
+import "github.com/kinorai/search-crawl-reddit-proxy/internal/observability"
 ```
 
 Package observability wires structured logging, Prometheus metrics, and Kubernetes\-style health endpoints.
@@ -19,6 +19,7 @@ Package observability wires structured logging, Prometheus metrics, and Kubernet
 - [type Metrics](<#Metrics>)
   - [func NewMetrics\(\) \*Metrics](<#NewMetrics>)
   - [func \(m \*Metrics\) Observe\(engine, tenant, status string, duration time.Duration\)](<#Metrics.Observe>)
+  - [func \(m \*Metrics\) ObserveSearch\(searcher, status string, duration time.Duration\)](<#Metrics.ObserveSearch>)
   - [func \(m \*Metrics\) RegisterMetrics\(mux \*http.ServeMux\)](<#Metrics.RegisterMetrics>)
 - [type ReadyCheck](<#ReadyCheck>)
 
@@ -39,7 +40,7 @@ NewLogger returns a slog.Logger configured per the given level and format. Level
 func RegisterPprof(mux *http.ServeMux)
 ```
 
-RegisterPprof attaches /debug/pprof/\* to mux. Opt\-in via CARP\_ENABLE\_PPROF.
+RegisterPprof attaches /debug/pprof/\* to mux. Opt\-in via SCRM\_ENABLE\_PPROF.
 
 <a name="Health"></a>
 ## type Health
@@ -95,6 +96,8 @@ type Metrics struct {
     RequestsTotal *prometheus.CounterVec   // engine, tenant, status
     RequestSecs   *prometheus.HistogramVec // engine, status
     RedditRounds  prometheus.Histogram
+    SearchesTotal *prometheus.CounterVec   // searcher, status
+    SearchSecs    *prometheus.HistogramVec // searcher, status
     // contains filtered or unexported fields
 }
 ```
@@ -116,6 +119,15 @@ func (m *Metrics) Observe(engine, tenant, status string, duration time.Duration)
 ```
 
 Observe records a single crawl result.
+
+<a name="Metrics.ObserveSearch"></a>
+### func \(\*Metrics\) ObserveSearch
+
+```go
+func (m *Metrics) ObserveSearch(searcher, status string, duration time.Duration)
+```
+
+ObserveSearch records a single search query result.
 
 <a name="Metrics.RegisterMetrics"></a>
 ### func \(\*Metrics\) RegisterMetrics
