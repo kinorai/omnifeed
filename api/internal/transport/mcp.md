@@ -15,7 +15,7 @@ The server speaks JSON\-RPC 2.0 over two transports:
 
 For backwards compatibility with older clients that only speak the deprecated dual\-endpoint SSE shape, the server also exposes /mcp/sse as a legacy alias — same handler as the GET path of /mcp. New clients should target /mcp; /mcp/sse is preserved for compat and may eventually be removed.
 
-The server is a pure transport: it owns JSON\-RPC framing, auth, and SSE keepalive, and dispatches tools/list and tools/call against the Tool slice it was configured with. The tools themselves \(crawl, reddit\_get\_post, search\) live in the tools subpackage and are wired in by main.
+The server is a pure transport: it owns JSON\-RPC framing, auth, and SSE keepalive, and dispatches tools/list and tools/call against the Tool slice it was configured with. The tools themselves \(fetch\_url, web\_search\) live in the tools subpackage and are wired in by main.
 
 ## Index
 
