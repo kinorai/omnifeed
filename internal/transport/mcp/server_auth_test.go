@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kinorai/search-crawl-reddit-proxy/internal/auth"
+	"github.com/kinorai/omnifeed/internal/auth"
 )
 
 // HTTP transport must reject requests without a valid bearer token when a

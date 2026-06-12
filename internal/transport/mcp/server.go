@@ -33,8 +33,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/kinorai/search-crawl-reddit-proxy/internal/auth"
-	"github.com/kinorai/search-crawl-reddit-proxy/internal/version"
+	"github.com/kinorai/omnifeed/internal/auth"
+	"github.com/kinorai/omnifeed/internal/version"
 )
 
 // ProtocolVersion is the MCP version this server speaks.
@@ -183,7 +183,7 @@ func (s *Server) handleInitialize(req rpcRequest) rpcResponse {
 	return ok(req.ID, map[string]any{
 		"protocolVersion": ProtocolVersion,
 		"serverInfo": map[string]string{
-			"name":    "search-crawl-reddit-proxy",
+			"name":    "omnifeed",
 			"version": version.Version,
 		},
 		"capabilities": map[string]any{

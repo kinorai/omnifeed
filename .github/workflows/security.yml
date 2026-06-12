@@ -122,11 +122,11 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
       - name: Pull image
-        run: docker pull kinorai/search-crawl-reddit-proxy:latest
+        run: docker pull kinorai/omnifeed:latest
       - name: Run Trivy image scan
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
-          image-ref: kinorai/search-crawl-reddit-proxy:latest
+          image-ref: kinorai/omnifeed:latest
           format: 'sarif'
           output: 'trivy-image-results.sarif'
           severity: 'CRITICAL,HIGH'
@@ -144,6 +144,6 @@ jobs:
         uses: docker/scout-action@cd72f264beff1cd72735de31148b9d3244a0234a # v1.21.0
         with:
           command: quickview,cves,recommendations
-          image: kinorai/search-crawl-reddit-proxy:latest
+          image: kinorai/omnifeed:latest
           dockerhub-user: ${{ secrets.DOCKERHUB_USERNAME }}
           dockerhub-password: ${{ secrets.DOCKERHUB_TOKEN }}

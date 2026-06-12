@@ -27,25 +27,25 @@ func NewMetrics() *Metrics {
 	m := &Metrics{
 		registry: reg,
 		RequestsTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "scrm_requests_total",
+			Name: "omnifeed_requests_total",
 			Help: "Total /crawl requests by engine, tenant, and status.",
 		}, []string{"engine", "tenant", "status"}),
 		RequestSecs: prometheus.NewHistogramVec(prometheus.HistogramOpts{
-			Name:    "scrm_request_seconds",
+			Name:    "omnifeed_request_seconds",
 			Help:    "Crawl latency by engine and status.",
 			Buckets: prometheus.ExponentialBuckets(0.05, 2, 12),
 		}, []string{"engine", "status"}),
 		RedditRounds: prometheus.NewHistogram(prometheus.HistogramOpts{
-			Name:    "scrm_reddit_expansion_rounds",
+			Name:    "omnifeed_reddit_expansion_rounds",
 			Help:    "Number of /api/morechildren rounds per Reddit crawl.",
 			Buckets: prometheus.LinearBuckets(0, 5, 9),
 		}),
 		SearchesTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "scrm_search_requests_total",
+			Name: "omnifeed_search_requests_total",
 			Help: "Total search queries by searcher and status.",
 		}, []string{"searcher", "status"}),
 		SearchSecs: prometheus.NewHistogramVec(prometheus.HistogramOpts{
-			Name:    "scrm_search_request_seconds",
+			Name:    "omnifeed_search_request_seconds",
 			Help:    "Search latency by searcher and status.",
 			Buckets: prometheus.ExponentialBuckets(0.05, 2, 10),
 		}, []string{"searcher", "status"}),
@@ -75,7 +75,7 @@ func (m *Metrics) RegisterMetrics(mux *http.ServeMux) {
 	mux.Handle("/metrics", promhttp.HandlerFor(m.registry, promhttp.HandlerOpts{}))
 }
 
-// RegisterPprof attaches /debug/pprof/* to mux. Opt-in via SCRM_ENABLE_PPROF.
+// RegisterPprof attaches /debug/pprof/* to mux. Opt-in via OMNIFEED_ENABLE_PPROF.
 func RegisterPprof(mux *http.ServeMux) {
 	mux.HandleFunc("/debug/pprof/", pprof.Index)
 	mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)

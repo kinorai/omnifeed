@@ -152,7 +152,7 @@ jobs:
           file: Dockerfile
           platforms: linux/amd64,linux/arm64
           push: ${{ env.CAN_PUSH }}
-          tags: kinorai/search-crawl-reddit-proxy:edge
+          tags: kinorai/omnifeed:edge
           cache-from: type=gha,scope=edge
           cache-to: type=gha,mode=max,scope=edge
 
@@ -208,7 +208,7 @@ jobs:
           file: Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: kinorai/search-crawl-reddit-proxy:dev
+          tags: kinorai/omnifeed:dev
           cache-from: type=gha,scope=dev
           cache-to: type=gha,mode=max,scope=dev
 

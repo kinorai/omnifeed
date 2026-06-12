@@ -1,4 +1,4 @@
-// Command search-crawl-reddit-proxy is the entry point. It loads SCRM_*
+// Command omnifeed is the entry point. It loads OMNIFEED_*
 // environment variables, wires the engine registry, searcher, and MCP tools
 // into the transports, and runs everything until SIGINT/SIGTERM.
 package main
@@ -16,24 +16,24 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/kinorai/search-crawl-reddit-proxy/internal/auth"
-	"github.com/kinorai/search-crawl-reddit-proxy/internal/config"
-	"github.com/kinorai/search-crawl-reddit-proxy/internal/domain"
-	"github.com/kinorai/search-crawl-reddit-proxy/internal/engine"
-	"github.com/kinorai/search-crawl-reddit-proxy/internal/engine/crawl4ai"
-	"github.com/kinorai/search-crawl-reddit-proxy/internal/engine/reddit"
-	"github.com/kinorai/search-crawl-reddit-proxy/internal/httpx"
-	"github.com/kinorai/search-crawl-reddit-proxy/internal/observability"
-	"github.com/kinorai/search-crawl-reddit-proxy/internal/search/searxng"
-	"github.com/kinorai/search-crawl-reddit-proxy/internal/transport/mcp"
-	"github.com/kinorai/search-crawl-reddit-proxy/internal/transport/mcp/tools"
-	"github.com/kinorai/search-crawl-reddit-proxy/internal/transport/openwebui"
-	"github.com/kinorai/search-crawl-reddit-proxy/internal/version"
+	"github.com/kinorai/omnifeed/internal/auth"
+	"github.com/kinorai/omnifeed/internal/config"
+	"github.com/kinorai/omnifeed/internal/domain"
+	"github.com/kinorai/omnifeed/internal/engine"
+	"github.com/kinorai/omnifeed/internal/engine/crawl4ai"
+	"github.com/kinorai/omnifeed/internal/engine/reddit"
+	"github.com/kinorai/omnifeed/internal/httpx"
+	"github.com/kinorai/omnifeed/internal/observability"
+	"github.com/kinorai/omnifeed/internal/search/searxng"
+	"github.com/kinorai/omnifeed/internal/transport/mcp"
+	"github.com/kinorai/omnifeed/internal/transport/mcp/tools"
+	"github.com/kinorai/omnifeed/internal/transport/openwebui"
+	"github.com/kinorai/omnifeed/internal/version"
 )
 
 func main() {
 	var mcpStdio bool
-	flag.BoolVar(&mcpStdio, "mcp-stdio", false, "Run MCP over stdio (alternative to SCRM_MCP_STDIO=true)")
+	flag.BoolVar(&mcpStdio, "mcp-stdio", false, "Run MCP over stdio (alternative to OMNIFEED_MCP_STDIO=true)")
 	flag.Parse()
 
 	cfg, err := config.Load()
@@ -100,7 +100,7 @@ func run(cfg config.Config, logger *slog.Logger) error {
 			Client:   searxngClient,
 		})
 	} else {
-		logger.Info("search tool disabled (SCRM_SEARXNG_URL not set)")
+		logger.Info("search tool disabled (OMNIFEED_SEARXNG_URL not set)")
 	}
 
 	// --- Metrics ---
@@ -134,22 +134,22 @@ func run(cfg config.Config, logger *slog.Logger) error {
 	// trust). Fail closed: refuse to start the internet-facing transports
 	// without a token rather than silently allowing every request. The
 	// Cloudflare tunnel bypasses the nginx RFC1918 whitelist, so an empty key
-	// would mean a fully unauthenticated public proxy. SCRM_DEV_NO_AUTH=true is
+	// would mean a fully unauthenticated public proxy. OMNIFEED_DEV_NO_AUTH=true is
 	// the explicit local-development opt-out.
 	var authn auth.Authenticator
 	switch {
 	case cfg.APIKey != "":
 		if cfg.AllowNoAuth {
-			logger.Warn("SCRM_DEV_NO_AUTH=true ignored because SCRM_API_KEY is set — authentication is enabled")
+			logger.Warn("OMNIFEED_DEV_NO_AUTH=true ignored because OMNIFEED_API_KEY is set — authentication is enabled")
 		}
 		authn = auth.NewSharedBearer(cfg.APIKey)
 		logger.Info("api key authentication enabled")
 	case cfg.AllowNoAuth:
 		authn = auth.AlwaysAllow{}
-		logger.Warn("SCRM_API_KEY not set and SCRM_DEV_NO_AUTH=true — HTTP transports are UNAUTHENTICATED")
+		logger.Warn("OMNIFEED_API_KEY not set and OMNIFEED_DEV_NO_AUTH=true — HTTP transports are UNAUTHENTICATED")
 	default:
-		return fmt.Errorf("SCRM_API_KEY is not set: refusing to start the HTTP transports unauthenticated. " +
-			"Set SCRM_API_KEY=<token> to enable bearer-token auth, or SCRM_DEV_NO_AUTH=true to run without auth (local/dev only)")
+		return fmt.Errorf("OMNIFEED_API_KEY is not set: refusing to start the HTTP transports unauthenticated. " +
+			"Set OMNIFEED_API_KEY=<token> to enable bearer-token auth, or OMNIFEED_DEV_NO_AUTH=true to run without auth (local/dev only)")
 	}
 
 	// --- HTTP server (Open WebUI loader + MCP HTTP) ---

@@ -1,9 +1,9 @@
-# search-crawl-reddit-proxy
+# omnifeed
 
 > **Self-hosted web search (SearXNG) + LLM-friendly crawling with a dedicated Reddit engine — MCP server, Open WebUI compatible**
 
-[![CI](https://github.com/kinorai/search-crawl-reddit-proxy/actions/workflows/ci.yml/badge.svg)](https://github.com/kinorai/search-crawl-reddit-proxy/actions/workflows/ci.yml)
-[![Security](https://github.com/kinorai/search-crawl-reddit-proxy/actions/workflows/security.yml/badge.svg)](https://github.com/kinorai/search-crawl-reddit-proxy/actions/workflows/security.yml)
+[![CI](https://github.com/kinorai/omnifeed/actions/workflows/ci.yml/badge.svg)](https://github.com/kinorai/omnifeed/actions/workflows/ci.yml)
+[![Security](https://github.com/kinorai/omnifeed/actions/workflows/security.yml/badge.svg)](https://github.com/kinorai/omnifeed/actions/workflows/security.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 A single Go binary that gives an LLM agent the full research loop — **search → URLs → content** — against self-hosted upstreams:
@@ -17,7 +17,7 @@ Most Reddit MCP servers either ship pretty-printed JSON or "save tokens" by trun
 
 ## Why this exists
 
-| | search-crawl-reddit-proxy | Other Reddit MCPs |
+| | omnifeed | Other Reddit MCPs |
 |---|---|---|
 | Web search → crawl in one self-hosted MCP | ✅ SearXNG + crawl4ai | ❌ search-only or crawl-only |
 | Full comment tree (`/api/morechildren` expansion) | ✅ up to 40 rounds (~4k comments) | ❌ none implement this |
@@ -31,7 +31,7 @@ Most Reddit MCP servers either ship pretty-printed JSON or "save tokens" by trun
 
 ### Try it
 
-> **A crawl4ai upstream is required.** Reddit now blocks non-browser HTTP clients, so the Reddit engine — like the generic fallback — fetches through crawl4ai's headless browser. The proxy needs `SCRM_CRAWL4AI_URL` set or it exits at startup; the [compose file](#full-mode-proxy--crawl4ai-upstream) below wires it for you.
+> **A crawl4ai upstream is required.** Reddit now blocks non-browser HTTP clients, so the Reddit engine — like the generic fallback — fetches through crawl4ai's headless browser. The proxy needs `OMNIFEED_CRAWL4AI_URL` set or it exits at startup; the [compose file](#full-mode-proxy--crawl4ai-upstream) below wires it for you.
 
 Once it's running, open a Reddit thread:
 
@@ -46,7 +46,7 @@ Returns the canonical Open WebUI shape: `[{"page_content": "...TOON...", "metada
 ### Full stack (proxy + searxng + crawl4ai upstreams)
 
 ```bash
-git clone https://github.com/kinorai/search-crawl-reddit-proxy.git && cd search-crawl-reddit-proxy
+git clone https://github.com/kinorai/omnifeed.git && cd omnifeed
 docker compose up
 ```
 
@@ -60,9 +60,9 @@ Then point Open WebUI at `http://localhost:8080` as `WEB_LOADER_ENGINE=external`
 // .cursor/mcp.json or Claude Code MCP config
 {
   "mcpServers": {
-    "search-crawl-reddit-proxy": {
+    "omnifeed": {
       "command": "docker",
-      "args": ["run", "--rm", "-i", "kinorai/search-crawl-reddit-proxy:latest", "--mcp-stdio"]
+      "args": ["run", "--rm", "-i", "kinorai/omnifeed:latest", "--mcp-stdio"]
     }
   }
 }
@@ -73,7 +73,7 @@ Then point Open WebUI at `http://localhost:8080` as `WEB_LOADER_ENGINE=external`
 ```jsonc
 {
   "mcpServers": {
-    "search-crawl-reddit-proxy": {
+    "omnifeed": {
       "url": "http://your-host:8081/mcp"
     }
   }
@@ -82,7 +82,7 @@ Then point Open WebUI at `http://localhost:8080` as `WEB_LOADER_ENGINE=external`
 
 Tools exposed:
 
-- `search(query, limit?, time_range?, language?)` — web search via SearXNG; returns `[{title, url, snippet, engine, published_date}]` as JSON. Only listed when `SCRM_SEARXNG_URL` is set.
+- `search(query, limit?, time_range?, language?)` — web search via SearXNG; returns `[{title, url, snippet, engine, published_date}]` as JSON. Only listed when `OMNIFEED_SEARXNG_URL` is set.
 - `crawl(url, format?, expand?)` — any URL → LLM-friendly content (reddit.com → TOON comment tree, everything else → filtered markdown).
 - `reddit_get_post(url, expand?)` — Reddit permalink → full TOON comment tree.
 
@@ -90,43 +90,43 @@ The intended loop: `search` finds URLs (reddit threads included — they surface
 
 ### Authentication
 
-The HTTP transports (`/crawl`, `/mcp`) are guarded by a shared bearer token. Set **`SCRM_API_KEY`** and send it as `Authorization: Bearer <token>`:
+The HTTP transports (`/crawl`, `/mcp`) are guarded by a shared bearer token. Set **`OMNIFEED_API_KEY`** and send it as `Authorization: Bearer <token>`:
 
 ```bash
-docker run -e SCRM_API_KEY="$(openssl rand -hex 32)" \
-  -e SCRM_CRAWL4AI_URL=http://crawl4ai:11235/crawl \
-  kinorai/search-crawl-reddit-proxy
+docker run -e OMNIFEED_API_KEY="$(openssl rand -hex 32)" \
+  -e OMNIFEED_CRAWL4AI_URL=http://crawl4ai:11235/crawl \
+  kinorai/omnifeed
 ```
 
-Without a key the proxy **refuses to start**, so it can't be left open by accident. For a throwaway local run, opt out explicitly with **`SCRM_DEV_NO_AUTH=true`** (the bundled compose files already do). Stdio MCP doesn't use the token — it inherits the trust of the process that spawned it.
+Without a key the proxy **refuses to start**, so it can't be left open by accident. For a throwaway local run, opt out explicitly with **`OMNIFEED_DEV_NO_AUTH=true`** (the bundled compose files already do). Stdio MCP doesn't use the token — it inherits the trust of the process that spawned it.
 
 ## Configuration
 
-All knobs are SCRM_-prefixed environment variables.
+All knobs are OMNIFEED_-prefixed environment variables.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `SCRM_LISTEN_ADDR` | `:8080` | HTTP loader (Open WebUI) listen address |
-| `SCRM_MCP_LISTEN_ADDR` | `:8081` | MCP HTTP/SSE listen address |
-| `SCRM_MCP_STDIO` | `false` | Run MCP over stdio (also via `--mcp-stdio` flag) |
-| `SCRM_METRICS_ADDR` | `:9090` | Prometheus + health listen address |
-| `SCRM_API_KEY` | _(unset)_ | Bearer token for `/crawl` and `/mcp` (HTTP transport). If unset, the proxy refuses to start unless `SCRM_DEV_NO_AUTH=true`. Stdio MCP is unaffected. |
-| `SCRM_DEV_NO_AUTH` | `false` | Explicitly run the HTTP transports with **no** auth when `SCRM_API_KEY` is unset (local/dev only). Ignored if a key is set. |
-| `SCRM_CRAWL4AI_URL` | _(required)_ | Upstream crawl4ai endpoint. **Required** — every engine (Reddit + fallback) fetches through crawl4ai; if empty, the proxy exits at startup. |
-| `SCRM_CRAWL4AI_TIMEOUT` | `90s` | Per-call timeout to crawl4ai |
-| `SCRM_SEARXNG_URL` | _(unset)_ | Upstream SearXNG base URL (e.g. `http://searxng:8080`). **Optional** — when unset, the `search` MCP tool is not exposed. The instance must enable the `json` format in `settings.yml`. |
-| `SCRM_SEARXNG_TIMEOUT` | `15s` | Per-query timeout to SearXNG |
-| `SCRM_SEARCH_MAX_RESULTS` | `25` | Hard cap on the `search` tool's `limit` argument (1–100) |
-| `SCRM_REDDIT_TIMEOUT` | `4m` | Wall-clock cap for a Reddit thread expansion |
-| `SCRM_REDDIT_MAX_ROUNDS` | `3` | Default `/api/morechildren` rounds (max 40 via `?expand=full`) |
-| `SCRM_REDDIT_FORMAT` | `toon` | Default Reddit output: `toon` or `json` |
-| `SCRM_MAX_URLS_PER_REQUEST` | `30` | Cap on `urls[]` array length |
-| `SCRM_PER_DOMAIN_CONCURRENCY` | `2` | Max concurrent requests to one domain |
-| `SCRM_PER_DOMAIN_DELAY` | `1500ms` | Minimum delay between same-domain requests |
-| `SCRM_BLOCK_PRIVATE_IPS` | `true` | SSRF protection (always on in production) |
-| `SCRM_LOG_LEVEL` | `info` | `debug`/`info`/`warn`/`error` |
-| `SCRM_LOG_FORMAT` | `json` | `json` or `text` |
-| `SCRM_ENABLE_PPROF` | `false` | Expose `/debug/pprof/*` (opt-in) |
+| `OMNIFEED_LISTEN_ADDR` | `:8080` | HTTP loader (Open WebUI) listen address |
+| `OMNIFEED_MCP_LISTEN_ADDR` | `:8081` | MCP HTTP/SSE listen address |
+| `OMNIFEED_MCP_STDIO` | `false` | Run MCP over stdio (also via `--mcp-stdio` flag) |
+| `OMNIFEED_METRICS_ADDR` | `:9090` | Prometheus + health listen address |
+| `OMNIFEED_API_KEY` | _(unset)_ | Bearer token for `/crawl` and `/mcp` (HTTP transport). If unset, the proxy refuses to start unless `OMNIFEED_DEV_NO_AUTH=true`. Stdio MCP is unaffected. |
+| `OMNIFEED_DEV_NO_AUTH` | `false` | Explicitly run the HTTP transports with **no** auth when `OMNIFEED_API_KEY` is unset (local/dev only). Ignored if a key is set. |
+| `OMNIFEED_CRAWL4AI_URL` | _(required)_ | Upstream crawl4ai endpoint. **Required** — every engine (Reddit + fallback) fetches through crawl4ai; if empty, the proxy exits at startup. |
+| `OMNIFEED_CRAWL4AI_TIMEOUT` | `90s` | Per-call timeout to crawl4ai |
+| `OMNIFEED_SEARXNG_URL` | _(unset)_ | Upstream SearXNG base URL (e.g. `http://searxng:8080`). **Optional** — when unset, the `search` MCP tool is not exposed. The instance must enable the `json` format in `settings.yml`. |
+| `OMNIFEED_SEARXNG_TIMEOUT` | `15s` | Per-query timeout to SearXNG |
+| `OMNIFEED_SEARCH_MAX_RESULTS` | `25` | Hard cap on the `search` tool's `limit` argument (1–100) |
+| `OMNIFEED_REDDIT_TIMEOUT` | `4m` | Wall-clock cap for a Reddit thread expansion |
+| `OMNIFEED_REDDIT_MAX_ROUNDS` | `3` | Default `/api/morechildren` rounds (max 40 via `?expand=full`) |
+| `OMNIFEED_REDDIT_FORMAT` | `toon` | Default Reddit output: `toon` or `json` |
+| `OMNIFEED_MAX_URLS_PER_REQUEST` | `30` | Cap on `urls[]` array length |
+| `OMNIFEED_PER_DOMAIN_CONCURRENCY` | `2` | Max concurrent requests to one domain |
+| `OMNIFEED_PER_DOMAIN_DELAY` | `1500ms` | Minimum delay between same-domain requests |
+| `OMNIFEED_BLOCK_PRIVATE_IPS` | `true` | SSRF protection (always on in production) |
+| `OMNIFEED_LOG_LEVEL` | `info` | `debug`/`info`/`warn`/`error` |
+| `OMNIFEED_LOG_FORMAT` | `json` | `json` or `text` |
+| `OMNIFEED_ENABLE_PPROF` | `false` | Expose `/debug/pprof/*` (opt-in) |
 
 ## API
 
@@ -134,7 +134,7 @@ All knobs are SCRM_-prefixed environment variables.
 
 ```http
 POST /crawl
-Authorization: Bearer $SCRM_API_KEY
+Authorization: Bearer $OMNIFEED_API_KEY
 Content-Type: application/json
 
 {"urls": ["https://www.reddit.com/r/foo/comments/.../"]}
@@ -154,14 +154,14 @@ Per-request query parameters (Reddit URLs only):
 - `GET /livez` — process liveness; always 200 unless shutting down
 - `GET /readyz` — checks crawl4ai (and SearXNG, when configured) upstream reachability
 - `GET /healthz` — alias of `/readyz` (backwards compatibility)
-- `GET /metrics` — Prometheus format (`scrm_requests_total`, `scrm_request_seconds`, `scrm_reddit_expansion_rounds`, `scrm_search_requests_total`, `scrm_search_request_seconds`)
+- `GET /metrics` — Prometheus format (`omnifeed_requests_total`, `omnifeed_request_seconds`, `omnifeed_reddit_expansion_rounds`, `omnifeed_search_requests_total`, `omnifeed_search_request_seconds`)
 
 ### MCP
 
 JSON-RPC 2.0 at:
 
-- `stdio` when `SCRM_MCP_STDIO=true` or `--mcp-stdio`
-- Canonical: **Streamable HTTP** at `/mcp` (MCP spec 2025-03-26) on `SCRM_MCP_LISTEN_ADDR` — `POST /mcp` for one-shot JSON-RPC, `GET /mcp` for the SSE event stream.
+- `stdio` when `OMNIFEED_MCP_STDIO=true` or `--mcp-stdio`
+- Canonical: **Streamable HTTP** at `/mcp` (MCP spec 2025-03-26) on `OMNIFEED_MCP_LISTEN_ADDR` — `POST /mcp` for one-shot JSON-RPC, `GET /mcp` for the SSE event stream.
 - Legacy: `GET /mcp/sse` is kept as an alias for older clients that only speak the deprecated dual-endpoint SSE shape. New clients should target `/mcp`.
 
 ## Architecture
@@ -210,10 +210,10 @@ Extensibility points:
 ## Development
 
 ```bash
-git clone https://github.com/kinorai/search-crawl-reddit-proxy.git
-cd search-crawl-reddit-proxy
+git clone https://github.com/kinorai/omnifeed.git
+cd omnifeed
 go test ./...
-go run ./cmd/search-crawl-reddit-proxy
+go run ./cmd/omnifeed
 ```
 
 ## Contributing

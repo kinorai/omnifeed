@@ -6,8 +6,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/kinorai/search-crawl-reddit-proxy/internal/domain"
-	"github.com/kinorai/search-crawl-reddit-proxy/internal/httpx"
+	"github.com/kinorai/omnifeed/internal/domain"
+	"github.com/kinorai/omnifeed/internal/httpx"
 )
 
 const fixture = `{

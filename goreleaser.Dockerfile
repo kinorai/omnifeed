@@ -7,10 +7,10 @@ FROM gcr.io/distroless/static-debian13:nonroot
 
 ARG TARGETPLATFORM
 
-COPY $TARGETPLATFORM/search-crawl-reddit-proxy /usr/local/bin/search-crawl-reddit-proxy
+COPY $TARGETPLATFORM/omnifeed /usr/local/bin/omnifeed
 
 USER 65532:65532
 
 EXPOSE 8080 8081 9090
 
-ENTRYPOINT ["/usr/local/bin/search-crawl-reddit-proxy"]
+ENTRYPOINT ["/usr/local/bin/omnifeed"]

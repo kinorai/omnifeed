@@ -21,8 +21,8 @@
 
 ## Decisions resolved (2026-06-10)
 
-1. **New name** — `search-crawl-reddit-proxy`, env prefix `SCRM_`, metrics
-   `scrm_*`. ✅ shipped.
+1. **New name** — `omnifeed`, env prefix `OMNIFEED_`, metrics
+   `omnifeed_*`. ✅ shipped.
 2. **Rebrand depth** — **full** (module path, binary, image, env, metrics,
    Helm release, Terraform dir, ingress host). ✅ shipped.
 3. **SearXNG deploy** — app-template controller, in-cluster. ✅ shipped.
@@ -34,7 +34,7 @@
 ### A. Web search via SearXNG — `Searcher` port + `search` MCP tool ✅
 - `domain.Searcher` port + `internal/search/searxng` adapter (JSON API,
   requires `search.formats: [json]` in settings.yml). Tested.
-- `search` MCP tool exposed only when `SCRM_SEARXNG_URL` is set; `crawl`
+- `search` MCP tool exposed only when `OMNIFEED_SEARXNG_URL` is set; `crawl`
   untouched. Pipeline: `search → URLs → crawl`.
 
 ### B. Full rebrand ✅
@@ -43,7 +43,7 @@
 
 ### C. SearXNG in-cluster ✅
 - App-template controller in the same Helm release (official chart is
-  archived). URL stays configurable via `SCRM_SEARXNG_URL`.
+  archived). URL stays configurable via `OMNIFEED_SEARXNG_URL`.
 
 ### D. Clean-architecture pass ✅ (partial)
 - MCP server is now a **pure JSON-RPC transport**: tools injected as

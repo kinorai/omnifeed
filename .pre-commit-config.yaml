@@ -1,4 +1,4 @@
-# Pre-commit hooks for search-crawl-reddit-proxy.
+# Pre-commit hooks for omnifeed.
 #
 # Design: hooks shim into `make <target>` so the Makefile is the single
 # source of truth for what "clean repo" means. CI calls the same targets,

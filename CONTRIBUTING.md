@@ -5,8 +5,8 @@ Thanks for considering a contribution!
 ## Quick start
 
 ```bash
-git clone https://github.com/kinorai/search-crawl-reddit-proxy.git
-cd search-crawl-reddit-proxy
+git clone https://github.com/kinorai/omnifeed.git
+cd omnifeed
 make install-tools        # golangci-lint, govulncheck, gomarkdoc
 make pre-commit-install   # git hooks that mirror CI (run once per clone)
 make check                # vet + lint + test — the same targets CI runs
@@ -44,7 +44,7 @@ rebuilds and publishes the image; other types don't release.
 ## Adding a new engine (e.g. Hacker News)
 
 1. Create `internal/engine/<name>/engine.go` implementing `domain.Engine`.
-2. Wire it in `cmd/search-crawl-reddit-proxy/main.go` via `registry.Register(...)` **before** the fallback.
+2. Wire it in `cmd/omnifeed/main.go` via `registry.Register(...)` **before** the fallback.
 3. Add a `*_test.go` covering URL matching + at least one fixture.
 4. Document it in README under *Architecture* and in the supported-sources list.
 
@@ -58,7 +58,7 @@ rebuilds and publishes the image; other types don't release.
 
 Open an issue with:
 
-- Version (`docker image ls | grep search-crawl-reddit-proxy` or git SHA)
+- Version (`docker image ls | grep omnifeed` or git SHA)
 - The URL or request that triggered the issue
 - Full request and response (redact secrets)
 - Relevant logs (the proxy emits structured JSON)

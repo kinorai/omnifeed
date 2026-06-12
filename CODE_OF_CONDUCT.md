@@ -23,7 +23,7 @@ Examples of unacceptable behavior:
 
 Project maintainers are responsible for clarifying these standards and may take appropriate corrective action in response to any unacceptable behavior, including removing comments, commits, code, issues, and other contributions.
 
-Report violations by [opening a private security advisory](https://github.com/kinorai/search-crawl-reddit-proxy/security/advisories/new) or contacting the maintainers directly.
+Report violations by [opening a private security advisory](https://github.com/kinorai/omnifeed/security/advisories/new) or contacting the maintainers directly.
 
 ## Attribution
 

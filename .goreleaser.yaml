@@ -7,7 +7,7 @@
 #   goreleaser release --clean
 version: 2
 
-project_name: search-crawl-reddit-proxy
+project_name: omnifeed
 
 before:
   hooks:
@@ -15,9 +15,9 @@ before:
     - go mod verify
 
 builds:
-  - id: search-crawl-reddit-proxy
-    main: ./cmd/search-crawl-reddit-proxy
-    binary: search-crawl-reddit-proxy
+  - id: omnifeed
+    main: ./cmd/omnifeed
+    binary: omnifeed
     env:
       - CGO_ENABLED=0
     goos:
@@ -31,9 +31,9 @@ builds:
       - -trimpath
     ldflags:
       - -s -w
-      - -X github.com/kinorai/search-crawl-reddit-proxy/internal/version.Version={{ .Version }}
-      - -X github.com/kinorai/search-crawl-reddit-proxy/internal/version.Commit={{ .FullCommit }}
-      - -X github.com/kinorai/search-crawl-reddit-proxy/internal/version.Date={{ .Date }}
+      - -X github.com/kinorai/omnifeed/internal/version.Version={{ .Version }}
+      - -X github.com/kinorai/omnifeed/internal/version.Commit={{ .FullCommit }}
+      - -X github.com/kinorai/omnifeed/internal/version.Date={{ .Date }}
     mod_timestamp: "{{ .CommitTimestamp }}"
 
 archives:
@@ -55,12 +55,12 @@ checksum:
 # Requires DOCKERHUB_USERNAME + DOCKERHUB_TOKEN in CI; goreleaser does the
 # `docker buildx` manifest build using the pre-built binaries above.
 dockers_v2:
-  - id: search-crawl-reddit-proxy
+  - id: omnifeed
     ids:
-      - search-crawl-reddit-proxy
+      - omnifeed
     dockerfile: goreleaser.Dockerfile
     images:
-      - kinorai/search-crawl-reddit-proxy
+      - kinorai/omnifeed
     tags:
       - "{{ .Version }}"
       - "v{{ .Version }}"
@@ -73,8 +73,8 @@ dockers_v2:
     labels:
       org.opencontainers.image.title: "{{ .ProjectName }}"
       org.opencontainers.image.description: "Self-hosted web search (SearXNG) + LLM-friendly crawling with a dedicated Reddit engine — MCP server, Open WebUI compatible"
-      org.opencontainers.image.url: "https://github.com/kinorai/search-crawl-reddit-proxy"
-      org.opencontainers.image.source: "https://github.com/kinorai/search-crawl-reddit-proxy"
+      org.opencontainers.image.url: "https://github.com/kinorai/omnifeed"
+      org.opencontainers.image.source: "https://github.com/kinorai/omnifeed"
       org.opencontainers.image.version: "{{ .Version }}"
       org.opencontainers.image.revision: "{{ .FullCommit }}"
       org.opencontainers.image.created: "{{ .Date }}"
@@ -138,19 +138,19 @@ changelog:
 release:
   github:
     owner: kinorai
-    name: search-crawl-reddit-proxy
+    name: omnifeed
   draft: false
   prerelease: auto
   mode: replace
   header: |
-    ## search-crawl-reddit-proxy {{ .Tag }}
+    ## omnifeed {{ .Tag }}
 
     Self-hosted web search (SearXNG) + LLM-friendly crawling with a dedicated Reddit engine — MCP server, Open WebUI compatible.
   footer: |
     ## Docker
 
     ```
-    docker pull kinorai/search-crawl-reddit-proxy:{{ .Version }}
+    docker pull kinorai/omnifeed:{{ .Version }}
     ```
 
     ## Verify

@@ -1,4 +1,4 @@
-module github.com/kinorai/search-crawl-reddit-proxy
+module github.com/kinorai/omnifeed
 
 go 1.26
 

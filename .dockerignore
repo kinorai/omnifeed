@@ -8,5 +8,5 @@ dist
 .DS_Store
 coverage.txt
 coverage.html
-/search-crawl-reddit-proxy
+/omnifeed
 internal/engine/reddit/testdata

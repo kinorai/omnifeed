@@ -10,8 +10,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/kinorai/search-crawl-reddit-proxy/internal/domain"
-	"github.com/kinorai/search-crawl-reddit-proxy/internal/httpx"
+	"github.com/kinorai/omnifeed/internal/domain"
+	"github.com/kinorai/omnifeed/internal/httpx"
 	"github.com/toon-format/toon-go"
 )
 

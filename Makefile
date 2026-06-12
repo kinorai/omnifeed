@@ -3,15 +3,15 @@
 GO            := go
 GOFLAGS       := -trimpath
 BIN_DIR       := bin
-BINARY        := $(BIN_DIR)/search-crawl-reddit-proxy
-PKG           := ./cmd/search-crawl-reddit-proxy
+BINARY        := $(BIN_DIR)/omnifeed
+PKG           := ./cmd/omnifeed
 VERSION       := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 COMMIT        := $(shell git rev-parse HEAD 2>/dev/null || echo none)
 DATE          := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 LDFLAGS       := -s -w \
-                 -X github.com/kinorai/search-crawl-reddit-proxy/internal/version.Version=$(VERSION) \
-                 -X github.com/kinorai/search-crawl-reddit-proxy/internal/version.Commit=$(COMMIT) \
-                 -X github.com/kinorai/search-crawl-reddit-proxy/internal/version.Date=$(DATE)
+                 -X github.com/kinorai/omnifeed/internal/version.Version=$(VERSION) \
+                 -X github.com/kinorai/omnifeed/internal/version.Commit=$(COMMIT) \
+                 -X github.com/kinorai/omnifeed/internal/version.Date=$(DATE)
 
 .PHONY: help
 help: ## Show this help
@@ -20,7 +20,7 @@ help: ## Show this help
 ## --- Dev loop ---
 
 .PHONY: run
-run: ## Run the proxy locally (uses default SCRM_* env vars)
+run: ## Run the proxy locally (uses default OMNIFEED_* env vars)
 	$(GO) run $(GOFLAGS) -ldflags="$(LDFLAGS)" $(PKG)
 
 .PHONY: build
@@ -90,7 +90,7 @@ check: vet lint test ## Run all checks (vet + lint + test)
 
 .PHONY: docker-build
 docker-build: ## Build the local Docker image (multi-stage Dockerfile)
-	docker build -t kinorai/search-crawl-reddit-proxy:local .
+	docker build -t kinorai/omnifeed:local .
 
 .PHONY: compose-up
 compose-up: ## Start full stack (proxy + crawl4ai upstream)

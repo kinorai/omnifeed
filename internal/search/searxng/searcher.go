@@ -12,8 +12,8 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/kinorai/search-crawl-reddit-proxy/internal/domain"
-	"github.com/kinorai/search-crawl-reddit-proxy/internal/httpx"
+	"github.com/kinorai/omnifeed/internal/domain"
+	"github.com/kinorai/omnifeed/internal/httpx"
 )
 
 // maxResponseBytes caps how much of the SearXNG response is read; a JSON

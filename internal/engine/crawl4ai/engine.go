@@ -10,8 +10,8 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/kinorai/search-crawl-reddit-proxy/internal/domain"
-	"github.com/kinorai/search-crawl-reddit-proxy/internal/httpx"
+	"github.com/kinorai/omnifeed/internal/domain"
+	"github.com/kinorai/omnifeed/internal/httpx"
 )
 
 // Engine sends URLs to crawl4ai's /crawl endpoint and extracts the best-fit
@@ -72,7 +72,7 @@ type crawlMarkdown struct {
 // to avoid hammering sites that crawl4ai itself doesn't pace.
 func (e *Engine) Crawl(ctx context.Context, rawURL string, _ domain.EngineOptions) (domain.Document, error) {
 	if e.endpoint == "" {
-		return domain.Document{}, fmt.Errorf("crawl4ai endpoint not configured (set SCRM_CRAWL4AI_URL)")
+		return domain.Document{}, fmt.Errorf("crawl4ai endpoint not configured (set OMNIFEED_CRAWL4AI_URL)")
 	}
 
 	release := e.limiter.Acquire(rawURL)

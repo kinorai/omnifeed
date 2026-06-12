@@ -1,5 +1,5 @@
 # Full stack: searxng (web search) + crawl4ai (crawling) upstreams with
-# search-crawl-reddit-proxy in front of both.
+# omnifeed in front of both.
 # Use this to point Open WebUI's external loader at http://localhost:8080
 # (set WEB_LOADER_ENGINE=external and EXTERNAL_WEB_LOADER_URL=http://...).
 
@@ -36,22 +36,22 @@ services:
     restart: unless-stopped
 
   proxy:
-    image: kinorai/search-crawl-reddit-proxy:latest
-    container_name: search-crawl-reddit-proxy
+    image: kinorai/omnifeed:latest
+    container_name: omnifeed
     ports:
       - "8080:8080"   # Open WebUI loader (POST /crawl)
       - "8081:8081"   # MCP HTTP/SSE
       - "9090:9090"   # Prometheus /metrics + /livez /readyz
     environment:
-      SCRM_CRAWL4AI_URL: http://crawl4ai:11235/crawl
-      SCRM_SEARXNG_URL: http://searxng:8080
-      # Set SCRM_API_KEY to require Authorization: Bearer ... on /crawl.
-      # SCRM_API_KEY: changeme
-      # Without SCRM_API_KEY the proxy refuses to start; this is the explicit
-      # local opt-out (production must set SCRM_API_KEY instead).
-      SCRM_DEV_NO_AUTH: "true"
-      SCRM_LOG_LEVEL: info
-      SCRM_LOG_FORMAT: json
+      OMNIFEED_CRAWL4AI_URL: http://crawl4ai:11235/crawl
+      OMNIFEED_SEARXNG_URL: http://searxng:8080
+      # Set OMNIFEED_API_KEY to require Authorization: Bearer ... on /crawl.
+      # OMNIFEED_API_KEY: changeme
+      # Without OMNIFEED_API_KEY the proxy refuses to start; this is the explicit
+      # local opt-out (production must set OMNIFEED_API_KEY instead).
+      OMNIFEED_DEV_NO_AUTH: "true"
+      OMNIFEED_LOG_LEVEL: info
+      OMNIFEED_LOG_FORMAT: json
     depends_on:
       crawl4ai:
         condition: service_healthy

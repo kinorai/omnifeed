@@ -10,11 +10,11 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/kinorai/search-crawl-reddit-proxy/internal/domain"
-	"github.com/kinorai/search-crawl-reddit-proxy/internal/engine"
-	"github.com/kinorai/search-crawl-reddit-proxy/internal/engine/reddit"
-	"github.com/kinorai/search-crawl-reddit-proxy/internal/observability"
-	"github.com/kinorai/search-crawl-reddit-proxy/internal/transport/mcp"
+	"github.com/kinorai/omnifeed/internal/domain"
+	"github.com/kinorai/omnifeed/internal/engine"
+	"github.com/kinorai/omnifeed/internal/engine/reddit"
+	"github.com/kinorai/omnifeed/internal/observability"
+	"github.com/kinorai/omnifeed/internal/transport/mcp"
 )
 
 // mcpTenant labels MCP-originated calls in metrics; the MCP transport has a
