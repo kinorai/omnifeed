@@ -17,8 +17,8 @@
 //
 // The server is a pure transport: it owns JSON-RPC framing, auth, and SSE
 // keepalive, and dispatches tools/list and tools/call against the Tool slice
-// it was configured with. The tools themselves (crawl, reddit_get_post,
-// search) live in the tools subpackage and are wired in by main.
+// it was configured with. The tools themselves (fetch_url, web_search)
+// live in the tools subpackage and are wired in by main.
 package mcp
 
 import (

@@ -8,8 +8,8 @@
 
 A single Go binary that gives an LLM agent the full research loop — **search → URLs → content** — against self-hosted upstreams:
 
-- **`search`** queries a [SearXNG](https://github.com/searxng/searxng) instance (Google/Bing/DDG and friends, reddit.com included) and returns result URLs with titles and snippets.
-- **`crawl`** renders any URL through [crawl4ai](https://github.com/unclecode/crawl4ai) as filtered markdown — with a **dedicated Reddit engine** that returns full comment trees encoded as **[TOON](https://github.com/toon-format/toon)**, typically **40% fewer tokens than JSON**, lossless.
+- **`web_search`** queries a [SearXNG](https://github.com/searxng/searxng) instance (Google/Bing/DDG and friends, reddit.com included) and returns result URLs with titles and snippets.
+- **`fetch_url`** renders any URL through [crawl4ai](https://github.com/unclecode/crawl4ai) as filtered markdown — with a **dedicated Reddit engine** that returns full comment trees encoded as **[TOON](https://github.com/toon-format/toon)**, typically **40% fewer tokens than JSON**, lossless.
 
 Implements both an **MCP server** (stdio + Streamable HTTP/SSE) and the **Open WebUI external-loader contract**.
 
@@ -50,7 +50,7 @@ git clone https://github.com/kinorai/omnifeed.git && cd omnifeed
 docker compose up
 ```
 
-Then point Open WebUI at `http://localhost:8080` as `WEB_LOADER_ENGINE=external`. The compose file also starts SearXNG (with `searxng/settings.yml` mounted — the `json` format it enables is required for the `search` tool).
+Then point Open WebUI at `http://localhost:8080` as `WEB_LOADER_ENGINE=external`. The compose file also starts SearXNG (with `searxng/settings.yml` mounted — the `json` format it enables is required for the `web_search` tool).
 
 ### As an MCP server (Claude Code, Cursor, Windsurf, …)
 
@@ -82,11 +82,10 @@ Then point Open WebUI at `http://localhost:8080` as `WEB_LOADER_ENGINE=external`
 
 Tools exposed:
 
-- `search(query, limit?, time_range?, language?)` — web search via SearXNG; returns `[{title, url, snippet, engine, published_date}]` as JSON. Only listed when `OMNIFEED_SEARXNG_URL` is set.
-- `crawl(url, format?, expand?)` — any URL → LLM-friendly content (reddit.com → TOON comment tree, everything else → filtered markdown).
-- `reddit_get_post(url, expand?)` — Reddit permalink → full TOON comment tree.
+- `web_search(query, limit?, time_range?, language?)` — web search via SearXNG; returns `[{title, url, snippet, engine, published_date}]` as JSON. Only listed when `OMNIFEED_SEARXNG_URL` is set.
+- `fetch_url(url, format?, expand?)` — any URL → LLM-friendly content (reddit.com → TOON comment tree, everything else → filtered markdown).
 
-The intended loop: `search` finds URLs (reddit threads included — they surface through SearXNG's general engines), `crawl` reads them.
+The intended loop: `web_search` finds URLs (reddit threads included — they surface through SearXNG's general engines), `fetch_url` reads them.
 
 ### Authentication
 
@@ -114,9 +113,9 @@ All knobs are OMNIFEED_-prefixed environment variables.
 | `OMNIFEED_DEV_NO_AUTH` | `false` | Explicitly run the HTTP transports with **no** auth when `OMNIFEED_API_KEY` is unset (local/dev only). Ignored if a key is set. |
 | `OMNIFEED_CRAWL4AI_URL` | _(required)_ | Upstream crawl4ai endpoint. **Required** — every engine (Reddit + fallback) fetches through crawl4ai; if empty, the proxy exits at startup. |
 | `OMNIFEED_CRAWL4AI_TIMEOUT` | `90s` | Per-call timeout to crawl4ai |
-| `OMNIFEED_SEARXNG_URL` | _(unset)_ | Upstream SearXNG base URL (e.g. `http://searxng:8080`). **Optional** — when unset, the `search` MCP tool is not exposed. The instance must enable the `json` format in `settings.yml`. |
+| `OMNIFEED_SEARXNG_URL` | _(unset)_ | Upstream SearXNG base URL (e.g. `http://searxng:8080`). **Optional** — when unset, the `web_search` MCP tool is not exposed. The instance must enable the `json` format in `settings.yml`. |
 | `OMNIFEED_SEARXNG_TIMEOUT` | `15s` | Per-query timeout to SearXNG |
-| `OMNIFEED_SEARCH_MAX_RESULTS` | `25` | Hard cap on the `search` tool's `limit` argument (1–100) |
+| `OMNIFEED_SEARCH_MAX_RESULTS` | `25` | Hard cap on the `web_search` tool's `limit` argument (1–100) |
 | `OMNIFEED_REDDIT_TIMEOUT` | `4m` | Wall-clock cap for a Reddit thread expansion |
 | `OMNIFEED_REDDIT_MAX_ROUNDS` | `3` | Default `/api/morechildren` rounds (max 40 via `?expand=full`) |
 | `OMNIFEED_REDDIT_FORMAT` | `toon` | Default Reddit output: `toon` or `json` |

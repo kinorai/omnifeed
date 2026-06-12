@@ -1,7 +1,7 @@
-// Package tools defines the MCP tools this proxy exposes — crawl,
-// reddit_get_post, and search. Each constructor binds a use case (the engine
-// registry or a searcher) to an mcp.Tool, so the MCP server stays a pure
-// JSON-RPC transport and adding a tool never touches the protocol plumbing.
+// Package tools defines the MCP tools this proxy exposes — fetch_url and
+// web_search. Each constructor binds a use case (the engine registry or a
+// searcher) to an mcp.Tool, so the MCP server stays a pure JSON-RPC transport
+// and adding a tool never touches the protocol plumbing.
 package tools
 
 import (
@@ -24,11 +24,11 @@ const mcpTenant = "mcp"
 // defaultSearchLimit is the result count when the caller omits `limit`.
 const defaultSearchLimit = 10
 
-// Crawl returns the `crawl` tool: URL → LLM-friendly content via the engine
-// registry (Reddit engine for reddit.com, crawl4ai fallback for the rest).
-func Crawl(reg *engine.Registry, defaults reddit.Options, metrics *observability.Metrics) mcp.Tool {
+// FetchURL returns the `fetch_url` tool: URL → LLM-friendly content via the
+// engine registry (Reddit engine for reddit.com, crawl4ai fallback for the rest).
+func FetchURL(reg *engine.Registry, defaults reddit.Options, metrics *observability.Metrics) mcp.Tool {
 	return mcp.Tool{
-		Name:        "crawl",
+		Name:        "fetch_url",
 		Description: "Fetch a URL and return LLM-friendly content. Reddit URLs return TOON-encoded comment trees with full /api/morechildren expansion. Other URLs are routed through the upstream crawl4ai instance and returned as filtered markdown.",
 		InputSchema: map[string]any{
 			"type":     "object",
@@ -46,32 +46,6 @@ func Crawl(reg *engine.Registry, defaults reddit.Options, metrics *observability
 				"expand": map[string]any{
 					"type":        "integer",
 					"description": "Reddit-only: number of /api/morechildren expansion rounds (0-40).",
-				},
-			},
-		},
-		Handle: crawlHandler(reg, defaults, metrics),
-	}
-}
-
-// RedditGetPost returns the `reddit_get_post` tool. It shares the crawl
-// handler — the registry routes reddit.com URLs to the Reddit engine — and
-// exists as a separate tool so Reddit-focused clients get a dedicated,
-// discoverable entry point.
-func RedditGetPost(reg *engine.Registry, defaults reddit.Options, metrics *observability.Metrics) mcp.Tool {
-	return mcp.Tool{
-		Name:        "reddit_get_post",
-		Description: "Reddit-only: fetch a thread by permalink and return the full comment tree as TOON. Equivalent to `crawl` on a reddit.com URL.",
-		InputSchema: map[string]any{
-			"type":     "object",
-			"required": []string{"url"},
-			"properties": map[string]any{
-				"url": map[string]any{
-					"type":        "string",
-					"description": "Reddit post URL or /r/.../comments/... permalink.",
-				},
-				"expand": map[string]any{
-					"type":        "integer",
-					"description": "Number of expansion rounds (default 3, max 40).",
 				},
 			},
 		},
@@ -109,13 +83,13 @@ func crawlHandler(reg *engine.Registry, defaults reddit.Options, metrics *observ
 	}
 }
 
-// Search returns the `search` tool: query → result URLs via the configured
-// Searcher (SearXNG). Results feed the `crawl` tool, which renders any
+// WebSearch returns the `web_search` tool: query → result URLs via the configured
+// Searcher (SearXNG). Results feed the `fetch_url` tool, which renders any
 // returned URL — reddit.com hits come back as full TOON comment trees.
-func Search(searcher domain.Searcher, maxResults int, metrics *observability.Metrics) mcp.Tool {
+func WebSearch(searcher domain.Searcher, maxResults int, metrics *observability.Metrics) mcp.Tool {
 	return mcp.Tool{
-		Name:        "search",
-		Description: "Search the web through the self-hosted SearXNG instance and return result URLs with titles and snippets as JSON. Reddit threads surface via the general engines (Google/Bing/DDG). Follow up with `crawl` on any returned URL to read it.",
+		Name:        "web_search",
+		Description: "Search the web through the self-hosted SearXNG instance and return result URLs with titles and snippets as JSON. Reddit threads surface via the general engines (Google/Bing/DDG). Follow up with `fetch_url` on any returned URL to read it.",
 		InputSchema: map[string]any{
 			"type":     "object",
 			"required": []string{"query"},

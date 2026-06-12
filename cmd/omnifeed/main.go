@@ -110,11 +110,10 @@ func run(cfg config.Config, logger *slog.Logger) error {
 	// --- MCP tools (shared by the stdio and HTTP transports) ---
 
 	mcpTools := []mcp.Tool{
-		tools.Crawl(registry, redditDefaults, metrics),
-		tools.RedditGetPost(registry, redditDefaults, metrics),
+		tools.FetchURL(registry, redditDefaults, metrics),
 	}
 	if searcher != nil {
-		mcpTools = append(mcpTools, tools.Search(searcher, cfg.SearchMaxResults, metrics))
+		mcpTools = append(mcpTools, tools.WebSearch(searcher, cfg.SearchMaxResults, metrics))
 	}
 
 	// --- MCP stdio mode short-circuits everything else ---
