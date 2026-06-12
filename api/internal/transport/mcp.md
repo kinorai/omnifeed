@@ -3,7 +3,7 @@
 # mcp
 
 ```go
-import "github.com/kinorai/search-crawl-reddit-proxy/internal/transport/mcp"
+import "github.com/kinorai/omnifeed/internal/transport/mcp"
 ```
 
 Package mcp implements a minimal Model Context Protocol server.

@@ -3,7 +3,7 @@
 # tools
 
 ```go
-import "github.com/kinorai/search-crawl-reddit-proxy/internal/transport/mcp/tools"
+import "github.com/kinorai/omnifeed/internal/transport/mcp/tools"
 ```
 
 Package tools defines the MCP tools this proxy exposes — crawl, reddit\_get\_post, and search. Each constructor binds a use case \(the engine registry or a searcher\) to an mcp.Tool, so the MCP server stays a pure JSON\-RPC transport and adding a tool never touches the protocol plumbing.

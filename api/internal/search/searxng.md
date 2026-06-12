@@ -3,7 +3,7 @@
 # searxng
 
 ```go
-import "github.com/kinorai/search-crawl-reddit-proxy/internal/search/searxng"
+import "github.com/kinorai/omnifeed/internal/search/searxng"
 ```
 
 Package searxng implements domain.Searcher against a SearXNG instance's JSON API \(GET /search?format=json\). The instance must list \`json\` under \`search.formats\` in its settings.yml or every query returns 403.

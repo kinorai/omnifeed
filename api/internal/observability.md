@@ -3,7 +3,7 @@
 # observability
 
 ```go
-import "github.com/kinorai/search-crawl-reddit-proxy/internal/observability"
+import "github.com/kinorai/omnifeed/internal/observability"
 ```
 
 Package observability wires structured logging, Prometheus metrics, and Kubernetes\-style health endpoints.
@@ -40,7 +40,7 @@ NewLogger returns a slog.Logger configured per the given level and format. Level
 func RegisterPprof(mux *http.ServeMux)
 ```
 
-RegisterPprof attaches /debug/pprof/\* to mux. Opt\-in via SCRM\_ENABLE\_PPROF.
+RegisterPprof attaches /debug/pprof/\* to mux. Opt\-in via OMNIFEED\_ENABLE\_PPROF.
 
 <a name="Health"></a>
 ## type Health

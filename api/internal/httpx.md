@@ -3,7 +3,7 @@
 # httpx
 
 ```go
-import "github.com/kinorai/search-crawl-reddit-proxy/internal/httpx"
+import "github.com/kinorai/omnifeed/internal/httpx"
 ```
 
 Package httpx provides HTTP utilities shared across engines: a retrying HTTP client wrapper, per\-domain rate limiter, and SSRF guards.

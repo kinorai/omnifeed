@@ -3,7 +3,7 @@
 # engine
 
 ```go
-import "github.com/kinorai/search-crawl-reddit-proxy/internal/engine"
+import "github.com/kinorai/omnifeed/internal/engine"
 ```
 
 Package engine defines the dispatch mechanism that picks the right per\-URL handler. New engines \(Hacker News, Stack Overflow, …\) plug in by implementing domain.Engine and being Registered before the fallback.

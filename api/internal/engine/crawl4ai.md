@@ -3,7 +3,7 @@
 # crawl4ai
 
 ```go
-import "github.com/kinorai/search-crawl-reddit-proxy/internal/engine/crawl4ai"
+import "github.com/kinorai/omnifeed/internal/engine/crawl4ai"
 ```
 
 Package crawl4ai implements the fallback engine: dispatches generic URLs to an upstream crawl4ai instance and reshapes the response into the canonical Document.

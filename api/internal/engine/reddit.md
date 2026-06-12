@@ -3,7 +3,7 @@
 # reddit
 
 ```go
-import "github.com/kinorai/search-crawl-reddit-proxy/internal/engine/reddit"
+import "github.com/kinorai/omnifeed/internal/engine/reddit"
 ```
 
 Package reddit implements the Reddit\-specific engine: fetches threads via the public JSON API, expands collapsed reply branches with /api/morechildren, strips fields, drops deleted comments, and emits TOON or JSON.
@@ -186,7 +186,7 @@ type Fetcher struct {
 func NewFetcher(client *httpx.Client, crawl4aiURL string) *Fetcher
 ```
 
-NewFetcher constructs a Fetcher that drives crawl4ai's /crawl endpoint \(crawl4aiURL == SCRM\_CRAWL4AI\_URL\) to reach Reddit through a browser.
+NewFetcher constructs a Fetcher that drives crawl4ai's /crawl endpoint \(crawl4aiURL == OMNIFEED\_CRAWL4AI\_URL\) to reach Reddit through a browser.
 
 <a name="Fetcher.FetchMoreChildren"></a>
 ### func \(\*Fetcher\) FetchMoreChildren

@@ -3,7 +3,7 @@
 # domain
 
 ```go
-import "github.com/kinorai/search-crawl-reddit-proxy/internal/domain"
+import "github.com/kinorai/omnifeed/internal/domain"
 ```
 
 Package domain holds the core types exchanged between transports and engines. It has no external dependencies and no I/O.

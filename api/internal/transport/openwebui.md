@@ -3,7 +3,7 @@
 # openwebui
 
 ```go
-import "github.com/kinorai/search-crawl-reddit-proxy/internal/transport/openwebui"
+import "github.com/kinorai/omnifeed/internal/transport/openwebui"
 ```
 
 Package openwebui implements the HTTP transport that speaks Open WebUI's external\-loader contract.
