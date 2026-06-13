@@ -12,6 +12,8 @@ import (
 	"net/http"
 	"strconv"
 	"time"
+
+	"github.com/kinorai/omnifeed/internal/domain"
 )
 
 // RetryConfig controls per-request retry behavior. Zero values use defaults.
@@ -112,7 +114,7 @@ func (c *Client) DoRetry(
 		retryAfter := resp.Header.Get("Retry-After")
 		_, _ = io.Copy(io.Discard, resp.Body)
 		_ = resp.Body.Close()
-		lastErr = fmt.Errorf("upstream returned %d", resp.StatusCode)
+		lastErr = &StatusError{StatusCode: resp.StatusCode}
 
 		if secs, ok := parseRetryAfter(retryAfter); ok {
 			d := time.Duration(secs) * time.Second
@@ -148,4 +150,35 @@ func parseRetryAfter(s string) (int, bool) {
 		return 0, false
 	}
 	return secs, true
+}
+
+// StatusError reports a non-2xx HTTP status returned by an upstream after
+// retries were exhausted (429 / 5xx). It lets callers classify the failure by
+// code via errors.As instead of parsing error text.
+type StatusError struct {
+	StatusCode int
+}
+
+func (e *StatusError) Error() string {
+	return fmt.Sprintf("upstream returned %d", e.StatusCode)
+}
+
+// ClassifyClientError translates an error returned by DoRetry into a typed
+// domain.FetchError: a StatusError becomes the matching status kind, a context
+// deadline/cancellation becomes KindTimeout, and anything else becomes the
+// caller-supplied fallback (e.g. KindUpstreamError for a generic crawl, or
+// KindBotBlock when a Reddit navigation fails). Returns nil when err is nil.
+func ClassifyClientError(err error, fallback domain.FailureKind) *domain.FetchError {
+	if err == nil {
+		return nil
+	}
+	var se *StatusError
+	switch {
+	case errors.As(err, &se):
+		return &domain.FetchError{Kind: domain.KindForStatus(se.StatusCode), StatusCode: se.StatusCode, Err: err}
+	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
+		return &domain.FetchError{Kind: domain.KindTimeout, Err: err}
+	default:
+		return &domain.FetchError{Kind: fallback, Err: err}
+	}
 }

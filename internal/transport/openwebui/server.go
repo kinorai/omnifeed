@@ -150,20 +150,19 @@ func (s *Server) crawlOne(ctx context.Context, rawURL string, opts domain.Engine
 	}
 
 	doc, err := s.registry.Crawl(ctx, rawURL, opts)
-	status := "ok"
+	status, reason := "ok", "ok"
 	if err != nil {
-		status = "error"
-		s.logger.Warn("crawl failed", "url", rawURL, "engine", engName, "err", err)
-		if s.metrics != nil {
-			s.metrics.Observe(engName, string(tenant), status, time.Since(start))
-		}
+		status, reason = "error", observability.Reason(err)
+		s.logger.Warn("crawl failed", "url", rawURL, "engine", engName, "reason", reason, "err", err)
+	}
+	if s.metrics != nil {
+		s.metrics.Observe(engName, string(tenant), status, reason, time.Since(start))
+	}
+	if err != nil {
 		return loaderDocument{
 			PageContent: "Error crawling URL (see server logs for details)",
 			Metadata:    map[string]string{"source": rawURL, "error": "true"},
 		}
-	}
-	if s.metrics != nil {
-		s.metrics.Observe(engName, string(tenant), status, time.Since(start))
 	}
 	return loaderDocument{PageContent: doc.PageContent, Metadata: doc.Metadata}
 }

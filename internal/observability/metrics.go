@@ -14,7 +14,7 @@ import (
 type Metrics struct {
 	registry *prometheus.Registry
 
-	RequestsTotal *prometheus.CounterVec   // engine, tenant, status
+	RequestsTotal *prometheus.CounterVec   // engine, tenant, status, reason
 	RequestSecs   *prometheus.HistogramVec // engine, status
 	RedditRounds  prometheus.Histogram
 	SearchesTotal *prometheus.CounterVec   // searcher, status
@@ -28,8 +28,8 @@ func NewMetrics() *Metrics {
 		registry: reg,
 		RequestsTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "omnifeed_requests_total",
-			Help: "Total /crawl requests by engine, tenant, and status.",
-		}, []string{"engine", "tenant", "status"}),
+			Help: "Total /crawl requests by engine, tenant, status, and failure reason.",
+		}, []string{"engine", "tenant", "status", "reason"}),
 		RequestSecs: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name:    "omnifeed_request_seconds",
 			Help:    "Crawl latency by engine and status.",
@@ -58,9 +58,10 @@ func NewMetrics() *Metrics {
 	return m
 }
 
-// Observe records a single crawl result.
-func (m *Metrics) Observe(engine, tenant, status string, duration time.Duration) {
-	m.RequestsTotal.WithLabelValues(engine, tenant, status).Inc()
+// Observe records a single crawl result. reason is a bounded classification of
+// WHY a request failed (see Reason); it is "ok" on success.
+func (m *Metrics) Observe(engine, tenant, status, reason string, duration time.Duration) {
+	m.RequestsTotal.WithLabelValues(engine, tenant, status, reason).Inc()
 	m.RequestSecs.WithLabelValues(engine, status).Observe(duration.Seconds())
 }
 

@@ -167,7 +167,7 @@ func observe(metrics *observability.Metrics, engine string, err error, start tim
 	if metrics == nil {
 		return
 	}
-	metrics.Observe(engine, mcpTenant, statusOf(err), time.Since(start))
+	metrics.Observe(engine, mcpTenant, statusOf(err), observability.Reason(err), time.Since(start))
 }
 
 func engineName(reg *engine.Registry, rawURL string) string {

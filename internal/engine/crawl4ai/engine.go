@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/kinorai/omnifeed/internal/antibot"
 	"github.com/kinorai/omnifeed/internal/domain"
 	"github.com/kinorai/omnifeed/internal/httpx"
 )
@@ -122,7 +123,7 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, _ domain.EngineOption
 	resp, err := e.client.DoRetry(ctx, http.MethodPost, e.endpoint, body,
 		map[string]string{"Content-Type": "application/json"}, httpx.RetryConfig{})
 	if err != nil {
-		return domain.Document{}, fmt.Errorf("crawl4ai request: %w", err)
+		return domain.Document{}, httpx.ClassifyClientError(err, domain.KindUpstreamError)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -131,22 +132,26 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, _ domain.EngineOption
 		return domain.Document{}, fmt.Errorf("read response: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return domain.Document{}, fmt.Errorf("crawl4ai returned %d: %s", resp.StatusCode, truncate(string(respBody), 200))
+		return domain.Document{}, &domain.FetchError{
+			Kind:       domain.KindForStatus(resp.StatusCode),
+			StatusCode: resp.StatusCode,
+			Err:        fmt.Errorf("crawl4ai returned %d: %s", resp.StatusCode, truncate(string(respBody), 200)),
+		}
 	}
 
 	var cr crawlResponse
 	if err := json.Unmarshal(respBody, &cr); err != nil {
-		return domain.Document{}, fmt.Errorf("decode response: %w", err)
+		return domain.Document{}, &domain.FetchError{Kind: domain.KindBadResponse, Err: fmt.Errorf("decode response: %w", err)}
 	}
 	if !cr.Success {
 		msg := cr.Error
 		if msg == "" && len(cr.Results) > 0 {
 			msg = cr.Results[0].ErrorMessage
 		}
-		return domain.Document{}, fmt.Errorf("crawl failed: %s", msg)
+		return domain.Document{}, &domain.FetchError{Kind: domain.KindUpstreamError, Err: fmt.Errorf("crawl failed: %s", msg)}
 	}
 	if len(cr.Results) == 0 {
-		return domain.Document{}, fmt.Errorf("crawl returned no results")
+		return domain.Document{}, &domain.FetchError{Kind: domain.KindBadResponse, Err: fmt.Errorf("crawl returned no results")}
 	}
 
 	result := cr.Results[0]
@@ -156,6 +161,25 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, _ domain.EngineOption
 	}
 	if content == "" {
 		content = result.CleanedHTML
+	}
+
+	// A bot wall often arrives as a "successful" HTTP 200 whose body is a
+	// challenge page, so a crawl that succeeded can still be a block. Reclassify
+	// it as a failure instead of handing the challenge page to the caller (the
+	// LLM) — this is what surfaces Cloudflare/CAPTCHA blocks in metrics and logs.
+	scan := content
+	if result.CleanedHTML != "" && result.CleanedHTML != content {
+		scan = result.CleanedHTML + "\n" + content
+	}
+	if marker, blocked := antibot.Detect(scan); blocked {
+		return domain.Document{}, &domain.FetchError{Kind: domain.KindCaptcha, StatusCode: result.StatusCode, Marker: marker}
+	}
+	if result.StatusCode == http.StatusForbidden || result.StatusCode == http.StatusTooManyRequests {
+		return domain.Document{}, &domain.FetchError{
+			Kind:       domain.KindForStatus(result.StatusCode),
+			StatusCode: result.StatusCode,
+			Err:        fmt.Errorf("crawl4ai page returned %d (blocked)", result.StatusCode),
+		}
 	}
 
 	return domain.Document{

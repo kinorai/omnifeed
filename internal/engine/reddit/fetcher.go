@@ -9,6 +9,8 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/kinorai/omnifeed/internal/antibot"
+	"github.com/kinorai/omnifeed/internal/domain"
 	"github.com/kinorai/omnifeed/internal/httpx"
 )
 
@@ -215,7 +217,9 @@ func (f *Fetcher) browserExec(ctx context.Context, navURL, js, sessionID string,
 	resp, err := f.client.DoRetry(ctx, http.MethodPost, f.crawl4aiURL, reqBody,
 		map[string]string{"Content-Type": "application/json"}, httpx.RetryConfig{MaxAttempts: 1})
 	if err != nil {
-		return "", fmt.Errorf("crawl4ai request: %w", err)
+		// A Reddit nav that trips crawl4ai's anti-bot detector surfaces here as a
+		// 5xx (DoRetry error path); classify unmatched client errors as a block.
+		return "", httpx.ClassifyClientError(err, domain.KindBotBlock)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -224,22 +228,24 @@ func (f *Fetcher) browserExec(ctx context.Context, navURL, js, sessionID string,
 		return "", err
 	}
 	if resp.StatusCode != http.StatusOK {
-		// 3xx/4xx from crawl4ai (DoRetry passes these through). 5xx/429 surface
-		// above via the DoRetry error path — the anti-bot block on a 403 nav
-		// manifests there as a 500.
-		return "", fmt.Errorf("crawl4ai returned %d: %s", resp.StatusCode, truncate(string(body), 200))
+		// 3xx/4xx from crawl4ai (DoRetry passes these through).
+		return "", &domain.FetchError{
+			Kind:       domain.KindForStatus(resp.StatusCode),
+			StatusCode: resp.StatusCode,
+			Err:        fmt.Errorf("crawl4ai returned %d: %s", resp.StatusCode, truncate(string(body), 200)),
+		}
 	}
 
 	var cr c4aResponse
 	if err := json.Unmarshal(body, &cr); err != nil {
-		return "", fmt.Errorf("decode crawl4ai response: %w", err)
+		return "", &domain.FetchError{Kind: domain.KindBadResponse, Err: fmt.Errorf("decode crawl4ai response: %w", err)}
 	}
 	if !cr.Success || len(cr.Results) == 0 {
 		msg := cr.Error
 		if msg == "" && len(cr.Results) > 0 {
 			msg = cr.Results[0].ErrorMessage
 		}
-		return "", fmt.Errorf("crawl4ai fetch failed (reddit may have blocked the nav): %s", truncate(msg, 200))
+		return "", &domain.FetchError{Kind: domain.KindBotBlock, Err: fmt.Errorf("crawl4ai fetch failed (reddit may have blocked the nav): %s", truncate(msg, 200))}
 	}
 	res0 := cr.Results[0]
 	if !res0.Success {
@@ -247,17 +253,17 @@ func (f *Fetcher) browserExec(ctx context.Context, navURL, js, sessionID string,
 		if msg == "" {
 			msg = cr.Error
 		}
-		return "", fmt.Errorf("crawl4ai result failed (reddit may have blocked the nav): %s", truncate(msg, 200))
+		return "", &domain.FetchError{Kind: domain.KindBotBlock, Err: fmt.Errorf("crawl4ai result failed (reddit may have blocked the nav): %s", truncate(msg, 200))}
 	}
 	jsResults := res0.JSExecutionResult.Results
 	if len(jsResults) == 0 {
-		return "", fmt.Errorf("crawl4ai returned no js result (navigation blocked?)")
+		return "", &domain.FetchError{Kind: domain.KindBotBlock, Err: fmt.Errorf("crawl4ai returned no js result (navigation blocked?)")}
 	}
 
 	// jsResults[0] is the JSON-encoded string our snippet returned; unwrap it.
 	var out string
 	if err := json.Unmarshal(jsResults[0], &out); err != nil {
-		return "", fmt.Errorf("unwrap js result: %w", err)
+		return "", &domain.FetchError{Kind: domain.KindBadResponse, Err: fmt.Errorf("unwrap js result: %w", err)}
 	}
 	return out, nil
 }
@@ -275,10 +281,17 @@ func (f *Fetcher) browserFetch(ctx context.Context, navURL, js, sessionID string
 		return nil, fmt.Errorf("decode fetch envelope: %w", err)
 	}
 	if env.S != http.StatusOK {
-		return nil, fmt.Errorf("reddit returned %d via browser: %s", env.S, truncate(env.B, 200))
+		return nil, &domain.FetchError{
+			Kind:       domain.KindForStatus(env.S),
+			StatusCode: env.S,
+			Err:        fmt.Errorf("reddit returned %d via browser: %s", env.S, truncate(env.B, 200)),
+		}
 	}
 	if !json.Valid([]byte(env.B)) {
-		return nil, fmt.Errorf("reddit response not JSON (likely bot-blocked): %s", truncate(env.B, 200))
+		if marker, blocked := antibot.Detect(env.B); blocked {
+			return nil, &domain.FetchError{Kind: domain.KindCaptcha, StatusCode: env.S, Marker: marker}
+		}
+		return nil, &domain.FetchError{Kind: domain.KindBotBlock, Err: fmt.Errorf("reddit response not JSON (likely bot-blocked): %s", truncate(env.B, 200))}
 	}
 	return []byte(env.B), nil
 }
