@@ -13,6 +13,11 @@ Package domain holds the core types exchanged between transports and engines. It
 - [type Document](<#Document>)
 - [type Engine](<#Engine>)
 - [type EngineOptions](<#EngineOptions>)
+- [type FailureKind](<#FailureKind>)
+  - [func KindForStatus\(code int\) FailureKind](<#KindForStatus>)
+- [type FetchError](<#FetchError>)
+  - [func \(e \*FetchError\) Error\(\) string](<#FetchError.Error>)
+  - [func \(e \*FetchError\) Unwrap\(\) error](<#FetchError.Unwrap>)
 - [type SearchOptions](<#SearchOptions>)
 - [type SearchResult](<#SearchResult>)
 - [type Searcher](<#Searcher>)
@@ -57,6 +62,71 @@ type EngineOptions struct {
     RedditFormat      string // "toon" | "json"
 }
 ```
+
+<a name="FailureKind"></a>
+## type FailureKind
+
+FailureKind is a bounded classification of why a crawl/fetch failed. It is the single source of truth for the taxonomy that observability renders as the \`reason\` metric label — carried as data on FetchError so callers never parse error strings to recover the cause.
+
+```go
+type FailureKind string
+```
+
+<a name="KindCaptcha"></a>The complete set of failure reasons. Keep this small: every value becomes a distinct metric series and a distinct thing to alert on.
+
+```go
+const (
+    KindCaptcha       FailureKind = "captcha"        // bot wall / human-verification challenge page
+    KindHTTP403       FailureKind = "http_403"       // explicit HTTP 403
+    KindHTTP429       FailureKind = "http_429"       // rate limited
+    KindBotBlock      FailureKind = "bot_block"      // blocked with no clean status (nav blocked, non-JSON body)
+    KindTimeout       FailureKind = "timeout"        // context deadline exceeded / cancelled
+    KindUpstreamError FailureKind = "upstream_error" // upstream 5xx or unreachable
+    KindBadResponse   FailureKind = "bad_response"   // unparseable or empty upstream response
+    KindError         FailureKind = "error"          // anything else
+)
+```
+
+<a name="KindForStatus"></a>
+### func KindForStatus
+
+```go
+func KindForStatus(code int) FailureKind
+```
+
+KindForStatus maps an HTTP status code to the matching FailureKind.
+
+<a name="FetchError"></a>
+## type FetchError
+
+FetchError carries the classified cause of a failed crawl/fetch. Engines return it \(optionally wrapping the underlying error\) so observability.Reason can read Kind via errors.As instead of matching error text. StatusCode and Marker are optional context \(0 / "" when not applicable\).
+
+```go
+type FetchError struct {
+    Kind       FailureKind
+    StatusCode int
+    Marker     string // matched anti-bot marker, set when Kind == KindCaptcha
+    Err        error  // underlying error, if any
+}
+```
+
+<a name="FetchError.Error"></a>
+### func \(\*FetchError\) Error
+
+```go
+func (e *FetchError) Error() string
+```
+
+
+
+<a name="FetchError.Unwrap"></a>
+### func \(\*FetchError\) Unwrap
+
+```go
+func (e *FetchError) Unwrap() error
+```
+
+Unwrap exposes the underlying error to errors.Is / errors.As.
 
 <a name="SearchOptions"></a>
 ## type SearchOptions

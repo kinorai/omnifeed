@@ -11,6 +11,7 @@ Package observability wires structured logging, Prometheus metrics, and Kubernet
 ## Index
 
 - [func NewLogger\(level, format string\) \*slog.Logger](<#NewLogger>)
+- [func Reason\(err error\) string](<#Reason>)
 - [func RegisterPprof\(mux \*http.ServeMux\)](<#RegisterPprof>)
 - [type Health](<#Health>)
   - [func NewHealth\(cacheTTL time.Duration, checks ...ReadyCheck\) \*Health](<#NewHealth>)
@@ -18,7 +19,7 @@ Package observability wires structured logging, Prometheus metrics, and Kubernet
   - [func \(h \*Health\) Register\(mux \*http.ServeMux\)](<#Health.Register>)
 - [type Metrics](<#Metrics>)
   - [func NewMetrics\(\) \*Metrics](<#NewMetrics>)
-  - [func \(m \*Metrics\) Observe\(engine, tenant, status string, duration time.Duration\)](<#Metrics.Observe>)
+  - [func \(m \*Metrics\) Observe\(engine, tenant, status, reason string, duration time.Duration\)](<#Metrics.Observe>)
   - [func \(m \*Metrics\) ObserveSearch\(searcher, status string, duration time.Duration\)](<#Metrics.ObserveSearch>)
   - [func \(m \*Metrics\) RegisterMetrics\(mux \*http.ServeMux\)](<#Metrics.RegisterMetrics>)
 - [type ReadyCheck](<#ReadyCheck>)
@@ -32,6 +33,15 @@ func NewLogger(level, format string) *slog.Logger
 ```
 
 NewLogger returns a slog.Logger configured per the given level and format. Level: debug | info | warn | error \(default info\). Format: json | text \(default json\).
+
+<a name="Reason"></a>
+## func Reason
+
+```go
+func Reason(err error) string
+```
+
+Reason maps a crawl error to the bounded \`reason\` label recorded on omnifeed\_requests\_total, so metrics and alerts can tell a 403 from a CAPTCHA from a timeout. It reads the classified cause from a domain.FetchError that the engines attach as data — no error\-string parsing. Errors that aren't a FetchError fall back to timeout \(for context deadlines\) or "error".
 
 <a name="RegisterPprof"></a>
 ## func RegisterPprof
@@ -93,7 +103,7 @@ Metrics holds Prometheus collectors emitted by the proxy.
 
 ```go
 type Metrics struct {
-    RequestsTotal *prometheus.CounterVec   // engine, tenant, status
+    RequestsTotal *prometheus.CounterVec   // engine, tenant, status, reason
     RequestSecs   *prometheus.HistogramVec // engine, status
     RedditRounds  prometheus.Histogram
     SearchesTotal *prometheus.CounterVec   // searcher, status
@@ -115,10 +125,10 @@ NewMetrics builds and registers all collectors.
 ### func \(\*Metrics\) Observe
 
 ```go
-func (m *Metrics) Observe(engine, tenant, status string, duration time.Duration)
+func (m *Metrics) Observe(engine, tenant, status, reason string, duration time.Duration)
 ```
 
-Observe records a single crawl result.
+Observe records a single crawl result. reason is a bounded classification of WHY a request failed \(see Reason\); it is "ok" on success.
 
 <a name="Metrics.ObserveSearch"></a>
 ### func \(\*Metrics\) ObserveSearch
