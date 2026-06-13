@@ -164,10 +164,13 @@ func (e *StatusError) Error() string {
 }
 
 // ClassifyClientError translates an error returned by DoRetry into a typed
-// domain.FetchError: a StatusError becomes the matching status kind, a context
-// deadline/cancellation becomes KindTimeout, and anything else becomes the
-// caller-supplied fallback (e.g. KindUpstreamError for a generic crawl, or
-// KindBotBlock when a Reddit navigation fails). Returns nil when err is nil.
+// domain.FetchError. A StatusError carries the upstream status after retries:
+// a 429 is unambiguous and becomes KindHTTP429, but a 5xx is ambiguous — it can
+// be a genuine upstream fault OR, on the browser/anti-bot paths, the block
+// itself surfacing as a crawl4ai 5xx (see reddit.browserExec) — so the caller's
+// fallback decides (KindUpstreamError for a generic crawl, KindBotBlock for a
+// Reddit navigation). A context deadline/cancellation becomes KindTimeout, and
+// anything else becomes the fallback. Returns nil when err is nil.
 func ClassifyClientError(err error, fallback domain.FailureKind) *domain.FetchError {
 	if err == nil {
 		return nil
@@ -175,7 +178,14 @@ func ClassifyClientError(err error, fallback domain.FailureKind) *domain.FetchEr
 	var se *StatusError
 	switch {
 	case errors.As(err, &se):
-		return &domain.FetchError{Kind: domain.KindForStatus(se.StatusCode), StatusCode: se.StatusCode, Err: err}
+		// A 5xx after retry exhaustion is ambiguous (infra fault vs. an anti-bot
+		// block served as a 5xx), so let the caller's fallback classify it; a 429
+		// is unambiguous rate limiting.
+		kind := domain.KindForStatus(se.StatusCode)
+		if se.StatusCode >= 500 {
+			kind = fallback
+		}
+		return &domain.FetchError{Kind: kind, StatusCode: se.StatusCode, Err: err}
 	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
 		return &domain.FetchError{Kind: domain.KindTimeout, Err: err}
 	default:

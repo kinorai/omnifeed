@@ -3,12 +3,14 @@ package reddit
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/kinorai/omnifeed/internal/domain"
 	"github.com/kinorai/omnifeed/internal/httpx"
 )
 
@@ -39,22 +41,27 @@ func TestFetchThread(t *testing.T) {
 		httpStatus int
 		body       []byte
 		wantBody   string
-		wantErr    string // substring; "" = expect success
+		wantErr    string             // substring; "" = expect success
+		wantKind   domain.FailureKind // asserted when wantErr != ""
 	}{
-		{"success returns reddit body", 200, crawl4aiOK(200, validReddit), validReddit, ""},
-		{"reddit 403 block", 200, crawl4aiOK(403, "<html>You've been blocked</html>"), "", "reddit returned 403"},
-		{"non-JSON reddit body", 200, crawl4aiOK(200, "<html>not json</html>"), "", "not JSON"},
-		{"crawl4ai 5xx (anti-bot)", 500, []byte(`{"error":"Blocked by anti-bot protection"}`), "", "500"},
-		{"crawl4ai 4xx", 400, []byte(`{"error":"bad request"}`), "", "crawl4ai returned 400"},
+		{"success returns reddit body", 200, crawl4aiOK(200, validReddit), validReddit, "", ""},
+		{"reddit 403 block", 200, crawl4aiOK(403, "<html>You've been blocked</html>"), "", "reddit returned 403", domain.KindHTTP403},
+		{"reddit network-security wall", 200, crawl4aiOK(200, "<html>You've been blocked by network security. Please prove you're a human.</html>"), "", "captcha", domain.KindCaptcha},
+		{"non-JSON reddit body", 200, crawl4aiOK(200, "<html>not json</html>"), "", "not JSON", domain.KindBotBlock},
+		// crawl4ai's anti-bot detector hard-errors a blocked Reddit nav as a 500;
+		// it must classify as bot_block (the OmnifeedRedditBlocked alert keys on it),
+		// not upstream_error.
+		{"crawl4ai 5xx (anti-bot)", 500, []byte(`{"error":"Blocked by anti-bot protection"}`), "", "500", domain.KindBotBlock},
+		{"crawl4ai 4xx", 400, []byte(`{"error":"bad request"}`), "", "crawl4ai returned 400", domain.KindError},
 		{"crawl4ai result failed", 200, mustJSON(map[string]interface{}{
 			"success": true,
 			"results": []interface{}{map[string]interface{}{"success": false, "error_message": "nav timeout"}},
-		}), "", "result failed"},
+		}), "", "result failed", domain.KindBotBlock},
 		{"empty js result", 200, mustJSON(map[string]interface{}{
 			"success": true,
 			"results": []interface{}{map[string]interface{}{
 				"success": true, "js_execution_result": map[string]interface{}{"results": []interface{}{}}}},
-		}), "", "no js result"},
+		}), "", "no js result", domain.KindBotBlock},
 	}
 
 	for _, tc := range cases {
@@ -71,6 +78,15 @@ func TestFetchThread(t *testing.T) {
 			if tc.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 					t.Fatalf("want error containing %q, got %v", tc.wantErr, err)
+				}
+				if tc.wantKind != "" {
+					var fe *domain.FetchError
+					if !errors.As(err, &fe) {
+						t.Fatalf("want *domain.FetchError, got %T: %v", err, err)
+					}
+					if fe.Kind != tc.wantKind {
+						t.Fatalf("reason mismatch: Kind = %q, want %q", fe.Kind, tc.wantKind)
+					}
 				}
 				return
 			}
