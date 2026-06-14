@@ -28,7 +28,9 @@ services:
       CRAWL4AI_HOOKS_ENABLED: "false"
       MAX_CONCURRENT_TASKS: "25"
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:11235/health"]
+      # crawl4ai's /health only answers GET (HEAD → 405), so use a GET probe
+      # (-O /dev/null) instead of wget --spider, which sends HEAD.
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:11235/health"]
       interval: 10s
       timeout: 5s
       retries: 5
