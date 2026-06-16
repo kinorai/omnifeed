@@ -28,6 +28,7 @@ import (
 	"github.com/kinorai/omnifeed/internal/transport/mcp"
 	"github.com/kinorai/omnifeed/internal/transport/mcp/tools"
 	"github.com/kinorai/omnifeed/internal/transport/openwebui"
+	"github.com/kinorai/omnifeed/internal/transport/searchapi"
 	"github.com/kinorai/omnifeed/internal/version"
 )
 
@@ -165,6 +166,19 @@ func run(cfg config.Config, logger *slog.Logger) error {
 
 	mainMux := http.NewServeMux()
 	loaderServer.Register(mainMux)
+
+	// REST search on the same port as /crawl, mounted only when a Searcher is
+	// configured — mirrors the web_search MCP tool so non-MCP clients can search
+	// over plain HTTP.
+	if searcher != nil {
+		searchapi.New(searchapi.Config{
+			Searcher:      searcher,
+			Authenticator: authn,
+			Logger:        logger,
+			Metrics:       metrics,
+			MaxResults:    cfg.SearchMaxResults,
+		}).Register(mainMux)
+	}
 
 	// --- MCP HTTP server (separate listener) ---
 
