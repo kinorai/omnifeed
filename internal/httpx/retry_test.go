@@ -30,7 +30,7 @@ func TestClassifyClientError(t *testing.T) {
 		// errors.As must see the StatusError through a wrap.
 		{"wrapped 502 is a block", fmt.Errorf("crawl4ai request: %w", &StatusError{StatusCode: 502}), domain.KindBotBlock, domain.KindBotBlock},
 		{"deadline is timeout", context.DeadlineExceeded, domain.KindBotBlock, domain.KindTimeout},
-		{"canceled is timeout", context.Canceled, domain.KindUpstreamError, domain.KindTimeout},
+		{"canceled is its own reason", context.Canceled, domain.KindUpstreamError, domain.KindCanceled},
 		{"network error falls back", errors.New("dial tcp: connection refused"), domain.KindBotBlock, domain.KindBotBlock},
 	}
 	for _, tc := range cases {

@@ -11,7 +11,8 @@ import (
 // omnifeed_requests_total, so metrics and alerts can tell a 403 from a CAPTCHA
 // from a timeout. It reads the classified cause from a domain.FetchError that
 // the engines attach as data — no error-string parsing. Errors that aren't a
-// FetchError fall back to timeout (for context deadlines) or "error".
+// FetchError fall back to canceled (caller abort), timeout (context deadline),
+// or "error".
 func Reason(err error) string {
 	if err == nil {
 		return "ok" // success sentinel; not a FailureKind
@@ -20,7 +21,10 @@ func Reason(err error) string {
 	if errors.As(err, &fe) {
 		return string(fe.Kind)
 	}
-	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+	if errors.Is(err, context.Canceled) {
+		return string(domain.KindCanceled)
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
 		return string(domain.KindTimeout)
 	}
 	return string(domain.KindError)
