@@ -17,7 +17,7 @@ type Metrics struct {
 	RequestsTotal *prometheus.CounterVec   // engine, tenant, status, reason
 	RequestSecs   *prometheus.HistogramVec // engine, status
 	RedditRounds  prometheus.Histogram
-	SearchesTotal *prometheus.CounterVec   // searcher, status
+	SearchesTotal *prometheus.CounterVec   // searcher, status, reason
 	SearchSecs    *prometheus.HistogramVec // searcher, status
 }
 
@@ -42,8 +42,8 @@ func NewMetrics() *Metrics {
 		}),
 		SearchesTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "omnifeed_search_requests_total",
-			Help: "Total search queries by searcher and status.",
-		}, []string{"searcher", "status"}),
+			Help: "Total search queries by searcher, status, and failure reason.",
+		}, []string{"searcher", "status", "reason"}),
 		SearchSecs: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name:    "omnifeed_search_request_seconds",
 			Help:    "Search latency by searcher and status.",
@@ -65,9 +65,11 @@ func (m *Metrics) Observe(engine, tenant, status, reason string, duration time.D
 	m.RequestSecs.WithLabelValues(engine, status).Observe(duration.Seconds())
 }
 
-// ObserveSearch records a single search query result.
-func (m *Metrics) ObserveSearch(searcher, status string, duration time.Duration) {
-	m.SearchesTotal.WithLabelValues(searcher, status).Inc()
+// ObserveSearch records a single search query result. reason classifies WHY a
+// search failed (see Reason); it is "ok" on success. SearchSecs stays keyed on
+// searcher+status only — adding reason would just inflate histogram cardinality.
+func (m *Metrics) ObserveSearch(searcher, status, reason string, duration time.Duration) {
+	m.SearchesTotal.WithLabelValues(searcher, status, reason).Inc()
 	m.SearchSecs.WithLabelValues(searcher, status).Observe(duration.Seconds())
 }
 

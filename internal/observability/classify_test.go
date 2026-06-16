@@ -26,6 +26,9 @@ func TestReason(t *testing.T) {
 		{"wrapped", fmt.Errorf("fetch thread: %w", &domain.FetchError{Kind: domain.KindHTTP403}), "http_403"},
 		// Context deadlines that never became a FetchError still classify as timeout.
 		{"timeout_sentinel", fmt.Errorf("crawl4ai request: %w", context.DeadlineExceeded), "timeout"},
+		// A caller cancellation (client abort) is its own reason, not a timeout.
+		{"canceled_sentinel", fmt.Errorf("crawl4ai request: %w", context.Canceled), "canceled"},
+		{"canceled_fetcherror", &domain.FetchError{Kind: domain.KindCanceled}, "canceled"},
 		{"plain", errors.New("normalize url: bad permalink"), "error"},
 	}
 	for _, c := range cases {
