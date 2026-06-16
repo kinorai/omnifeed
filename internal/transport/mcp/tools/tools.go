@@ -29,7 +29,7 @@ const defaultSearchLimit = 10
 func FetchURL(reg *engine.Registry, defaults reddit.Options, metrics *observability.Metrics) mcp.Tool {
 	return mcp.Tool{
 		Name:        "fetch_url",
-		Description: "Fetch a URL and return LLM-friendly content. Reddit URLs return TOON-encoded comment trees with full /api/morechildren expansion. Other URLs are routed through the upstream crawl4ai instance and returned as filtered markdown.",
+		Description: "Fetch any URL and return LLM-friendly content. You MUST use it for Reddit URLs.",
 		InputSchema: map[string]any{
 			"type":     "object",
 			"required": []string{"url"},
@@ -89,7 +89,7 @@ func crawlHandler(reg *engine.Registry, defaults reddit.Options, metrics *observ
 func WebSearch(searcher domain.Searcher, maxResults int, metrics *observability.Metrics) mcp.Tool {
 	return mcp.Tool{
 		Name:        "web_search",
-		Description: "Search the web through the self-hosted SearXNG instance and return result URLs with titles and snippets as JSON. Reddit threads surface via the general engines (Google/Bing/DDG). Follow up with `fetch_url` on any returned URL to read it.",
+		Description: "Search the whole web and return result URLs with titles and snippets. You MUST use it for Reddit. Follow up with `fetch_url` to read a result.",
 		InputSchema: map[string]any{
 			"type":     "object",
 			"required": []string{"query"},

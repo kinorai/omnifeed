@@ -21,7 +21,7 @@ func TestDetectBlocked(t *testing.T) {
 }
 
 func TestDetectClean(t *testing.T) {
-	clean := "# Kubernetes monitoring\n\nVictoriaMetrics scrapes targets every 30s. " +
+	clean := "# Garden tomatoes\n\nWater deeply twice a week and stake the plants early. " +
 		"This is ordinary article content with no challenge text whatsoever."
 	if marker, ok := Detect(clean); ok {
 		t.Errorf("Detect(clean) matched %q, want no match", marker)
