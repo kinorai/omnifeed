@@ -169,8 +169,9 @@ func (e *StatusError) Error() string {
 // be a genuine upstream fault OR, on the browser/anti-bot paths, the block
 // itself surfacing as a crawl4ai 5xx (see reddit.browserExec) — so the caller's
 // fallback decides (KindUpstreamError for a generic crawl, KindBotBlock for a
-// Reddit navigation). A context deadline/cancellation becomes KindTimeout, and
-// anything else becomes the fallback. Returns nil when err is nil.
+// Reddit navigation). A context deadline becomes KindTimeout; a caller
+// cancellation (client abort) becomes KindCanceled; anything else becomes the
+// fallback. Returns nil when err is nil.
 func ClassifyClientError(err error, fallback domain.FailureKind) *domain.FetchError {
 	if err == nil {
 		return nil
@@ -186,7 +187,12 @@ func ClassifyClientError(err error, fallback domain.FailureKind) *domain.FetchEr
 			kind = fallback
 		}
 		return &domain.FetchError{Kind: kind, StatusCode: se.StatusCode, Err: err}
-	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
+	case errors.Is(err, context.Canceled):
+		// The caller (e.g. Open WebUI) hung up before the fetch finished — a client
+		// abort, not an omnifeed fault. Give it its own reason so alerts can exclude
+		// it while still firing on the genuine deadline case below.
+		return &domain.FetchError{Kind: domain.KindCanceled, Err: err}
+	case errors.Is(err, context.DeadlineExceeded):
 		return &domain.FetchError{Kind: domain.KindTimeout, Err: err}
 	default:
 		return &domain.FetchError{Kind: fallback, Err: err}
