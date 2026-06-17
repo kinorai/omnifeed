@@ -44,6 +44,7 @@ func TestClassifyClientError(t *testing.T) {
 			}
 			if fe == nil {
 				t.Fatalf("ClassifyClientError(%v) = nil, want kind %q", tc.err, tc.want)
+				return // unreachable, but staticcheck (SA5011) doesn't model t.Fatalf as terminating
 			}
 			if fe.Kind != tc.want {
 				t.Fatalf("Kind = %q, want %q", fe.Kind, tc.want)
