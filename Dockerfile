@@ -6,7 +6,9 @@
 ARG GO_VERSION=1.26
 ARG DISTROLESS_TAG=nonroot
 
-FROM golang:${GO_VERSION}-alpine AS builder
+# Pin the builder to the native build platform and cross-compile via GOARCH —
+# far faster than emulating the target arch under QEMU.
+FROM --platform=$BUILDPLATFORM golang:${GO_VERSION}-alpine AS builder
 
 WORKDIR /build
 
@@ -17,9 +19,15 @@ RUN go mod download
 COPY cmd ./cmd
 COPY internal ./internal
 
-# CGO off → pure-static binary. ldflags strip debug info for size.
-RUN CGO_ENABLED=0 GOOS=linux \
-    go build -trimpath -ldflags="-s -w" -o /out/omnifeed ./cmd/omnifeed
+# CGO off → pure-static binary. TARGETOS/TARGETARCH are injected by buildx per
+# target platform, so Go cross-compiles natively on the build host (no QEMU).
+# VERSION stamps the binary (release tag, or "edge"/"dev" for channel builds).
+ARG TARGETOS TARGETARCH
+ARG VERSION=dev
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
+    go build -trimpath \
+    -ldflags="-s -w -X github.com/kinorai/omnifeed/internal/version.Version=${VERSION}" \
+    -o /out/omnifeed ./cmd/omnifeed
 
 FROM gcr.io/distroless/static-debian13:${DISTROLESS_TAG}
 
