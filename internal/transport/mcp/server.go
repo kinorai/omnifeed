@@ -66,10 +66,10 @@ func negotiateProtocolVersion(requested string) string {
 // loaded into the model's context as soon as the server connects, making it
 // the one reliable place to steer tool selection. Keep it short and
 // behavioral; avoid implementation details that can drift.
-const serverInstructions = "omnifeed is a global web search and fetch gateway. " +
-	"You MUST use it for anything on Reddit: call `web_search` to find threads, " +
-	"then `fetch_url` on the reddit.com URL to read the full discussion. " +
-	"It also handles general web search and fetching any other URL."
+const serverInstructions = "omnifeed is a global web search and fetch gateway: " +
+	"`web_search` searches the whole web and returns result URLs; " +
+	"`fetch_url` fetches any URL as LLM-friendly content. " +
+	"You MUST use them for Reddit."
 
 // Server is a JSON-RPC 2.0 MCP server.
 type Server struct {
