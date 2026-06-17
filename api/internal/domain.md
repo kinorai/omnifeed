@@ -80,7 +80,8 @@ const (
     KindHTTP403       FailureKind = "http_403"       // explicit HTTP 403
     KindHTTP429       FailureKind = "http_429"       // rate limited
     KindBotBlock      FailureKind = "bot_block"      // blocked with no clean status (nav blocked, non-JSON body)
-    KindTimeout       FailureKind = "timeout"        // context deadline exceeded / cancelled
+    KindTimeout       FailureKind = "timeout"        // context deadline exceeded — omnifeed's own timeout budget (crawl4ai/reddit)
+    KindCanceled      FailureKind = "canceled"       // caller hung up before the fetch finished (client abort — not an omnifeed fault)
     KindUpstreamError FailureKind = "upstream_error" // upstream 5xx or unreachable
     KindBadResponse   FailureKind = "bad_response"   // unparseable or empty upstream response
     KindError         FailureKind = "error"          // anything else

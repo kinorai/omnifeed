@@ -20,7 +20,7 @@ Package observability wires structured logging, Prometheus metrics, and Kubernet
 - [type Metrics](<#Metrics>)
   - [func NewMetrics\(\) \*Metrics](<#NewMetrics>)
   - [func \(m \*Metrics\) Observe\(engine, tenant, status, reason string, duration time.Duration\)](<#Metrics.Observe>)
-  - [func \(m \*Metrics\) ObserveSearch\(searcher, status string, duration time.Duration\)](<#Metrics.ObserveSearch>)
+  - [func \(m \*Metrics\) ObserveSearch\(searcher, status, reason string, duration time.Duration\)](<#Metrics.ObserveSearch>)
   - [func \(m \*Metrics\) RegisterMetrics\(mux \*http.ServeMux\)](<#Metrics.RegisterMetrics>)
 - [type ReadyCheck](<#ReadyCheck>)
 
@@ -41,7 +41,7 @@ NewLogger returns a slog.Logger configured per the given level and format. Level
 func Reason(err error) string
 ```
 
-Reason maps a crawl error to the bounded \`reason\` label recorded on omnifeed\_requests\_total, so metrics and alerts can tell a 403 from a CAPTCHA from a timeout. It reads the classified cause from a domain.FetchError that the engines attach as data — no error\-string parsing. Errors that aren't a FetchError fall back to timeout \(for context deadlines\) or "error".
+Reason maps a crawl error to the bounded \`reason\` label recorded on omnifeed\_requests\_total, so metrics and alerts can tell a 403 from a CAPTCHA from a timeout. It reads the classified cause from a domain.FetchError that the engines attach as data — no error\-string parsing. Errors that aren't a FetchError fall back to canceled \(caller abort\), timeout \(context deadline\), or "error".
 
 <a name="RegisterPprof"></a>
 ## func RegisterPprof
@@ -106,7 +106,7 @@ type Metrics struct {
     RequestsTotal *prometheus.CounterVec   // engine, tenant, status, reason
     RequestSecs   *prometheus.HistogramVec // engine, status
     RedditRounds  prometheus.Histogram
-    SearchesTotal *prometheus.CounterVec   // searcher, status
+    SearchesTotal *prometheus.CounterVec   // searcher, status, reason
     SearchSecs    *prometheus.HistogramVec // searcher, status
     // contains filtered or unexported fields
 }
@@ -134,10 +134,10 @@ Observe records a single crawl result. reason is a bounded classification of WHY
 ### func \(\*Metrics\) ObserveSearch
 
 ```go
-func (m *Metrics) ObserveSearch(searcher, status string, duration time.Duration)
+func (m *Metrics) ObserveSearch(searcher, status, reason string, duration time.Duration)
 ```
 
-ObserveSearch records a single search query result.
+ObserveSearch records a single search query result. reason classifies WHY a search failed \(see Reason\); it is "ok" on success. SearchSecs stays keyed on searcher\+status only — adding reason would just inflate histogram cardinality.
 
 <a name="Metrics.RegisterMetrics"></a>
 ### func \(\*Metrics\) RegisterMetrics
