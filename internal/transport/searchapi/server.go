@@ -115,7 +115,7 @@ func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	results, err := s.searcher.Search(r.Context(), req.Query, opts)
 	if s.metrics != nil {
-		s.metrics.ObserveSearch(s.searcher.Name(), statusOf(err), observability.Reason(err), time.Since(start))
+		s.metrics.ObserveSearch(s.searcher.Name(), observability.StatusOf(err), observability.Reason(err), time.Since(start))
 	}
 	if err != nil {
 		s.logger.Warn("search failed", "query", req.Query, "reason", observability.Reason(err), "err", err)
@@ -132,11 +132,4 @@ func writeError(w http.ResponseWriter, code int, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
-}
-
-func statusOf(err error) string {
-	if err != nil {
-		return "error"
-	}
-	return "ok"
 }

@@ -37,8 +37,39 @@ import (
 	"github.com/kinorai/omnifeed/internal/version"
 )
 
-// ProtocolVersion is the MCP version this server speaks.
-const ProtocolVersion = "2024-11-05"
+// ProtocolVersion is the latest MCP revision this server speaks. It's the
+// version returned when the client requests one we don't recognize.
+const ProtocolVersion = "2025-06-18"
+
+// supportedVersions lists the MCP revisions this server speaks, newest first.
+// On initialize we echo the client's requested version when it's one of these
+// (the MCP lifecycle negotiation rule) and otherwise fall back to the latest,
+// ProtocolVersion.
+var supportedVersions = []string{ProtocolVersion, "2025-03-26", "2024-11-05"}
+
+// negotiateProtocolVersion implements the initialize version handshake: return
+// the client's requested version if we support it, otherwise our latest.
+func negotiateProtocolVersion(requested string) string {
+	for _, v := range supportedVersions {
+		if v == requested {
+			return requested
+		}
+	}
+	return ProtocolVersion
+}
+
+// serverInstructions is returned in the initialize response's optional
+// `instructions` field (MCP spec, InitializeResult). It matters because some
+// clients — notably Claude Code — defer-load per-tool descriptions and only
+// surface tool *names* up-front, so a description never reaches the model
+// until it explicitly searches for the tool. This string, by contrast, is
+// loaded into the model's context as soon as the server connects, making it
+// the one reliable place to steer tool selection. Keep it short and
+// behavioral; avoid implementation details that can drift.
+const serverInstructions = "omnifeed is a global web search and fetch gateway. " +
+	"You MUST use it for anything on Reddit: call `web_search` to find threads, " +
+	"then `fetch_url` on the reddit.com URL to read the full discussion. " +
+	"It also handles general web search and fetching any other URL."
 
 // Server is a JSON-RPC 2.0 MCP server.
 type Server struct {
@@ -180,8 +211,19 @@ func (s *Server) dispatch(ctx context.Context, req rpcRequest) rpcResponse {
 }
 
 func (s *Server) handleInitialize(req rpcRequest) rpcResponse {
+	// Negotiate the protocol version against what the client asked for. Parsing
+	// is best-effort: absent/malformed params fall through to our latest
+	// version. We never reject initialize over this — the client drives
+	// compatibility and disconnects if it can't speak what we return.
+	var params struct {
+		ProtocolVersion string `json:"protocolVersion"`
+	}
+	if len(req.Params) > 0 {
+		_ = json.Unmarshal(req.Params, &params)
+	}
+
 	return ok(req.ID, map[string]any{
-		"protocolVersion": ProtocolVersion,
+		"protocolVersion": negotiateProtocolVersion(params.ProtocolVersion),
 		"serverInfo": map[string]string{
 			"name":    "omnifeed",
 			"version": version.Version,
@@ -191,6 +233,7 @@ func (s *Server) handleInitialize(req rpcRequest) rpcResponse {
 				"listChanged": false,
 			},
 		},
+		"instructions": serverInstructions,
 	})
 }
 
@@ -198,6 +241,7 @@ type toolSchema struct {
 	Name        string         `json:"name"`
 	Description string         `json:"description"`
 	InputSchema map[string]any `json:"inputSchema"`
+	Annotations map[string]any `json:"annotations,omitempty"`
 }
 
 func (s *Server) handleToolsList(req rpcRequest) rpcResponse {
@@ -207,6 +251,7 @@ func (s *Server) handleToolsList(req rpcRequest) rpcResponse {
 			Name:        t.Name,
 			Description: t.Description,
 			InputSchema: t.InputSchema,
+			Annotations: t.Annotations,
 		})
 	}
 	return ok(req.ID, map[string]any{"tools": tools})

@@ -29,3 +29,12 @@ func Reason(err error) string {
 	}
 	return string(domain.KindError)
 }
+
+// StatusOf reports the coarse request status recorded alongside Reason on the
+// crawl/search metrics: "ok" when err is nil, "error" otherwise.
+func StatusOf(err error) string {
+	if err != nil {
+		return "error"
+	}
+	return "ok"
+}

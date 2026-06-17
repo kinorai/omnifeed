@@ -139,3 +139,12 @@ func TestSearch_Unauthorized(t *testing.T) {
 		t.Fatalf("status: got %d, want 401", rec.Code)
 	}
 }
+
+// New defaults MaxResults to 25 when unset. Note this guard is unreachable from
+// main: config.Load already clamps OMNIFEED_SEARCH_MAX_RESULTS to 1-100, so the
+// value handed to New is always positive (item 4).
+func TestNew_DefaultMaxResults(t *testing.T) {
+	if got := New(Config{}).maxResults; got != 25 {
+		t.Fatalf("default maxResults: got %d, want 25", got)
+	}
+}

@@ -32,8 +32,6 @@ builds:
     ldflags:
       - -s -w
       - -X github.com/kinorai/omnifeed/internal/version.Version={{ .Version }}
-      - -X github.com/kinorai/omnifeed/internal/version.Commit={{ .FullCommit }}
-      - -X github.com/kinorai/omnifeed/internal/version.Date={{ .Date }}
     mod_timestamp: "{{ .CommitTimestamp }}"
 
 archives:
