@@ -12,10 +12,10 @@ package openwebui
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 
@@ -199,8 +199,7 @@ func (s *Server) buildEngineOptions(r *http.Request) domain.EngineOptions {
 }
 
 func parseIntDefault(s string, fallback int) int {
-	var n int
-	_, err := fmt.Sscanf(s, "%d", &n)
+	n, err := strconv.Atoi(s)
 	if err != nil || n < 0 {
 		return fallback
 	}
@@ -212,6 +211,3 @@ func writeError(w http.ResponseWriter, code int, msg string) {
 	w.WriteHeader(code)
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
 }
-
-// ErrServer is returned when the Server itself fails (vs a single URL).
-var ErrServer = errors.New("openwebui server error")

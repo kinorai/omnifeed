@@ -60,6 +60,7 @@ func run(cfg config.Config, logger *slog.Logger) error {
 
 	httpClient := httpx.New(&http.Client{Timeout: cfg.Crawl4AITimeout})
 	limiter := httpx.NewDomainLimiter(cfg.PerDomainConcurrency, cfg.PerDomainDelay)
+	metrics := observability.NewMetrics()
 
 	// --- Engines ---
 
@@ -78,6 +79,7 @@ func run(cfg config.Config, logger *slog.Logger) error {
 		Timeout:     cfg.RedditTimeout,
 		DefaultOpts: redditDefaults,
 		Logger:      logger,
+		Metrics:     metrics,
 	})
 	crawl4aiEngine := crawl4ai.New(crawl4ai.Config{
 		Endpoint: cfg.Crawl4AIURL,
@@ -103,10 +105,6 @@ func run(cfg config.Config, logger *slog.Logger) error {
 	} else {
 		logger.Info("search tool disabled (OMNIFEED_SEARXNG_URL not set)")
 	}
-
-	// --- Metrics ---
-
-	metrics := observability.NewMetrics()
 
 	// --- MCP tools (shared by the stdio and HTTP transports) ---
 
