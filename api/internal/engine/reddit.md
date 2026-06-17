@@ -30,7 +30,6 @@ Package reddit implements the Reddit\-specific engine: fetches threads via the p
   - [func \(f \*Fetcher\) ResolveShareURL\(ctx context.Context, shareURL string\) \(string, error\)](<#Fetcher.ResolveShareURL>)
 - [type Gap](<#Gap>)
 - [type Options](<#Options>)
-  - [func OptionsFromQuery\(q url.Values, opts Options\) Options](<#OptionsFromQuery>)
 - [type Post](<#Post>)
 - [type Thread](<#Thread>)
   - [func ParseThread\(raw \[\]byte, opts Options\) \(Thread, error\)](<#ParseThread>)
@@ -118,6 +117,7 @@ type Config struct {
     Timeout     time.Duration
     DefaultOpts Options
     Logger      *slog.Logger
+    Metrics     *observability.Metrics
 }
 ```
 
@@ -243,15 +243,6 @@ type Options struct {
     Format      string // "toon" or "json"
 }
 ```
-
-<a name="OptionsFromQuery"></a>
-### func OptionsFromQuery
-
-```go
-func OptionsFromQuery(q url.Values, opts Options) Options
-```
-
-OptionsFromQuery parses ?format=, ?depth=, ?nocreated=, ?expand= from a query string. Unknown values fall back to opts unchanged.
 
 <a name="Post"></a>
 ## type Post

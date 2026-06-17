@@ -13,6 +13,7 @@ Package observability wires structured logging, Prometheus metrics, and Kubernet
 - [func NewLogger\(level, format string\) \*slog.Logger](<#NewLogger>)
 - [func Reason\(err error\) string](<#Reason>)
 - [func RegisterPprof\(mux \*http.ServeMux\)](<#RegisterPprof>)
+- [func StatusOf\(err error\) string](<#StatusOf>)
 - [type Health](<#Health>)
   - [func NewHealth\(cacheTTL time.Duration, checks ...ReadyCheck\) \*Health](<#NewHealth>)
   - [func \(h \*Health\) MarkShuttingDown\(\)](<#Health.MarkShuttingDown>)
@@ -51,6 +52,15 @@ func RegisterPprof(mux *http.ServeMux)
 ```
 
 RegisterPprof attaches /debug/pprof/\* to mux. Opt\-in via OMNIFEED\_ENABLE\_PPROF.
+
+<a name="StatusOf"></a>
+## func StatusOf
+
+```go
+func StatusOf(err error) string
+```
+
+StatusOf reports the coarse request status recorded alongside Reason on the crawl/search metrics: "ok" when err is nil, "error" otherwise.
 
 <a name="Health"></a>
 ## type Health

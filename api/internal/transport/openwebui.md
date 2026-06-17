@@ -19,20 +19,11 @@ Resp:    [{"page_content": "...", "metadata": {...}}, ...]
 
 ## Index
 
-- [Variables](<#variables>)
 - [type Config](<#Config>)
 - [type Server](<#Server>)
   - [func New\(cfg Config\) \*Server](<#New>)
   - [func \(s \*Server\) Register\(mux \*http.ServeMux\)](<#Server.Register>)
 
-
-## Variables
-
-<a name="ErrServer"></a>ErrServer is returned when the Server itself fails \(vs a single URL\).
-
-```go
-var ErrServer = errors.New("openwebui server error")
-```
 
 <a name="Config"></a>
 ## type Config
