@@ -10,6 +10,11 @@ type Tool struct {
 	Name        string
 	Description string
 	InputSchema map[string]any
+	// Annotations are optional MCP ToolAnnotations surfaced in tools/list —
+	// behavioral hints like readOnlyHint and openWorldHint that let clients
+	// decide how much friction to put in front of a call (a read-only tool can
+	// be auto-approved). nil sends no annotations.
+	Annotations map[string]any
 	Handle      func(ctx context.Context, args map[string]any) (ToolResult, error)
 }
 

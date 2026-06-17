@@ -30,6 +30,12 @@ func FetchURL(reg *engine.Registry, defaults reddit.Options, metrics *observabil
 	return mcp.Tool{
 		Name:        "fetch_url",
 		Description: "Fetch any URL and return LLM-friendly content. You MUST use it for Reddit URLs.",
+		// Read-only and open-world: fetches external pages without mutating
+		// anything, so clients can auto-approve it.
+		Annotations: map[string]any{
+			"readOnlyHint":  true,
+			"openWorldHint": true,
+		},
 		InputSchema: map[string]any{
 			"type":     "object",
 			"required": []string{"url"},
@@ -90,6 +96,11 @@ func WebSearch(searcher domain.Searcher, maxResults int, metrics *observability.
 	return mcp.Tool{
 		Name:        "web_search",
 		Description: "Search the whole web and return result URLs with titles and snippets. You MUST use it for Reddit. Follow up with `fetch_url` to read a result.",
+		// Read-only and open-world (see fetch_url).
+		Annotations: map[string]any{
+			"readOnlyHint":  true,
+			"openWorldHint": true,
+		},
 		InputSchema: map[string]any{
 			"type":     "object",
 			"required": []string{"query"},
@@ -141,7 +152,7 @@ func WebSearch(searcher domain.Searcher, maxResults int, metrics *observability.
 			start := time.Now()
 			results, err := searcher.Search(ctx, query, opts)
 			if metrics != nil {
-				metrics.ObserveSearch(searcher.Name(), statusOf(err), observability.Reason(err), time.Since(start))
+				metrics.ObserveSearch(searcher.Name(), observability.StatusOf(err), observability.Reason(err), time.Since(start))
 			}
 			if err != nil {
 				return mcp.ToolResult{}, err
@@ -167,7 +178,7 @@ func observe(metrics *observability.Metrics, engine string, err error, start tim
 	if metrics == nil {
 		return
 	}
-	metrics.Observe(engine, mcpTenant, statusOf(err), observability.Reason(err), time.Since(start))
+	metrics.Observe(engine, mcpTenant, observability.StatusOf(err), observability.Reason(err), time.Since(start))
 }
 
 func engineName(reg *engine.Registry, rawURL string) string {
@@ -175,11 +186,4 @@ func engineName(reg *engine.Registry, rawURL string) string {
 		return e.Name()
 	}
 	return "unknown"
-}
-
-func statusOf(err error) string {
-	if err != nil {
-		return "error"
-	}
-	return "ok"
 }

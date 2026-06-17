@@ -12,6 +12,7 @@ import (
 
 	"github.com/kinorai/omnifeed/internal/domain"
 	"github.com/kinorai/omnifeed/internal/httpx"
+	"github.com/kinorai/omnifeed/internal/observability"
 	"github.com/toon-format/toon-go"
 )
 
@@ -31,6 +32,7 @@ type Engine struct {
 	timeout     time.Duration
 	defaultOpts Options
 	logger      *slog.Logger
+	metrics     *observability.Metrics
 }
 
 // Config configures a Reddit Engine.
@@ -40,6 +42,7 @@ type Config struct {
 	Timeout     time.Duration
 	DefaultOpts Options
 	Logger      *slog.Logger
+	Metrics     *observability.Metrics
 }
 
 // New returns a Reddit Engine configured per cfg.
@@ -56,6 +59,7 @@ func New(cfg Config) *Engine {
 		timeout:     cfg.Timeout,
 		defaultOpts: cfg.DefaultOpts,
 		logger:      cfg.Logger,
+		metrics:     cfg.Metrics,
 	}
 }
 
@@ -116,6 +120,9 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, eo domain.EngineOptio
 	}
 
 	rounds := e.expandGaps(ctx, &thread, opts)
+	if e.metrics != nil {
+		e.metrics.RedditRounds.Observe(float64(rounds))
+	}
 
 	// Strip the per-gap child-ID lists from the output — they were only
 	// needed internally for /api/morechildren expansion.
@@ -232,32 +239,4 @@ func encode(thread *Thread, format string) ([]byte, error) {
 		return json.Marshal(thread)
 	}
 	return toon.Marshal(thread, toon.WithLengthMarkers(true))
-}
-
-// OptionsFromQuery parses ?format=, ?depth=, ?nocreated=, ?expand= from a
-// query string. Unknown values fall back to opts unchanged.
-func OptionsFromQuery(q url.Values, opts Options) Options {
-	if f := q.Get("format"); f == "json" || f == "toon" {
-		opts.Format = f
-	}
-	if q.Get("depth") == "1" {
-		opts.KeepDepth = true
-	}
-	if q.Get("nocreated") == "1" {
-		opts.KeepCreated = false
-	}
-	if ex := q.Get("expand"); ex != "" {
-		switch ex {
-		case "full", "all", "max":
-			opts.MaxRounds = MaxExpansionRounds
-		default:
-			if n, err := strconv.Atoi(ex); err == nil && n >= 0 {
-				if n > MaxExpansionRounds {
-					n = MaxExpansionRounds
-				}
-				opts.MaxRounds = n
-			}
-		}
-	}
-	return opts
 }
