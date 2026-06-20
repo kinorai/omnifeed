@@ -4,35 +4,13 @@
 </p>
 
 <p align="center">
-  <img src="https://readme-typing-svg.demolab.com?font=Fira+Code&weight=600&size=22&pause=1000&color=F97316&center=true&vCenter=true&width=820&height=45&lines=search+%E2%86%92+URLs+%E2%86%92+content%2C+in+one+gateway;Full+Reddit+comment+trees+as+TOON+%E2%80%94+no+API+key;MCP+%2B+Open+WebUI+%2B+REST%2C+one+Go+binary;~40%25+fewer+tokens+than+JSON%2C+lossless" alt="search → URLs → content"/>
+  <img src="https://readme-typing-svg.demolab.com?font=Fira+Code&weight=700&size=27&color=F97316&center=true&vCenter=true&repeat=false&width=820&height=50&lines=search+%E2%86%92+URLs+%E2%86%92+content%2C+in+one+gateway" alt="search → URLs → content, in one gateway"/>
 </p>
 
 <p align="center">
-  <a href="https://github.com/kinorai/omnifeed/actions/workflows/ci.yml"><img src="https://github.com/kinorai/omnifeed/actions/workflows/ci.yml/badge.svg" alt="CI"/></a>
-  <a href="https://github.com/kinorai/omnifeed/actions/workflows/security.yml"><img src="https://github.com/kinorai/omnifeed/actions/workflows/security.yml/badge.svg" alt="Security"/></a>
+  <a href="https://github.com/kinorai/omnifeed/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/kinorai/omnifeed/ci.yml?branch=main&label=CI&style=flat-square" alt="CI"/></a>
   <a href="https://github.com/kinorai/omnifeed/releases"><img src="https://img.shields.io/github/v/release/kinorai/omnifeed?style=flat-square&color=F97316" alt="Release"/></a>
-  <img src="https://img.shields.io/github/go-mod/go-version/kinorai/omnifeed?style=flat-square&logo=go&logoColor=white&color=00ADD8" alt="Go"/>
   <a href="https://hub.docker.com/r/kinorai/omnifeed"><img src="https://img.shields.io/docker/pulls/kinorai/omnifeed?style=flat-square&logo=docker&logoColor=white&color=2496ED" alt="Docker pulls"/></a>
-  <a href="LICENSE"><img src="https://img.shields.io/github/license/kinorai/omnifeed?style=flat-square&color=7C3AED" alt="License"/></a>
-  <a href="https://github.com/kinorai/omnifeed/stargazers"><img src="https://img.shields.io/github/stars/kinorai/omnifeed?style=flat-square&color=F97316" alt="Stars"/></a>
-</p>
-
-<p align="center">
-  <img src="https://img.shields.io/badge/MCP-server-7C3AED?style=for-the-badge" alt="MCP server"/>
-  <img src="https://img.shields.io/badge/Open_WebUI-loader-F97316?style=for-the-badge" alt="Open WebUI loader"/>
-  <img src="https://img.shields.io/badge/REST-API-06B6D4?style=for-the-badge" alt="REST API"/>
-  <img src="https://img.shields.io/badge/Reddit-TOON-FF4500?style=for-the-badge&logo=reddit&logoColor=white" alt="Reddit TOON"/>
-  <img src="https://img.shields.io/badge/crawl4ai-engine-10B981?style=for-the-badge" alt="crawl4ai"/>
-  <img src="https://img.shields.io/badge/SearXNG-search-3050FF?style=for-the-badge" alt="SearXNG"/>
-</p>
-
-<p align="center">
-  <a href="#-quick-start"><b>Quick start</b></a> ·
-  <a href="#-demo"><b>Demo</b></a> ·
-  <a href="#-configuration"><b>Configuration</b></a> ·
-  <a href="#-api"><b>API</b></a> ·
-  <a href="#-architecture"><b>Architecture</b></a> ·
-  <a href="openapi.yaml"><b>OpenAPI</b></a>
 </p>
 
 <p align="center">
@@ -78,11 +56,35 @@ curl -fsSL --create-dirs https://raw.githubusercontent.com/kinorai/omnifeed/main
 docker compose up
 ```
 
-Starts omnifeed + SearXNG + crawl4ai. Point Open WebUI at `http://localhost:8080` with `WEB_LOADER_ENGINE=external`. (SearXNG is mounted with `searxng/settings.yml`, which enables the `json` format the `web_search` tool needs.)
+Starts omnifeed + SearXNG + crawl4ai — **tokenless out of the box** (the compose file sets `OMNIFEED_DEV_NO_AUTH=true`), so `docker compose up` just works. Point Open WebUI at `http://localhost:8080` with `WEB_LOADER_ENGINE=external`. (SearXNG is mounted with `searxng/settings.yml`, which enables the `json` format `web_search` needs.) See **Authentication** below to require a bearer token.
 
 ### <img src="https://raw.githubusercontent.com/Tarikul-Islam-Anik/Animated-Fluent-Emojis/master/Emojis/Objects/Electric%20Plug.png" width="22" height="22" /> As an MCP server (Claude Code, Cursor, Windsurf, …)
 
-Stdio — most clients. omnifeed always fetches through crawl4ai (and SearXNG, if you want `web_search`), so the container your client spawns must be told where they are. The simplest setup joins the network from `docker compose up` and uses the service names:
+**HTTP — recommended.** `docker compose up` already runs the MCP server on `:8081` (tokenless in dev mode), so the simplest setup is no extra container at all — point your client at the URL:
+
+```jsonc
+{ "mcpServers": { "omnifeed": { "url": "http://localhost:8081/mcp" } } }
+```
+
+**Stdio — for clients that only speak stdio.** A stdio server is spawned and owned by your client (it pipes JSON-RPC over the process's stdin/stdout), so it can't be a long-running compose service — but you can launch the `mcp` profile from this compose file, which keeps every setting (upstreams, network, image) in one place:
+
+```jsonc
+{
+  "mcpServers": {
+    "omnifeed": {
+      "command": "docker",
+      "args": ["compose", "-f", "/abs/path/to/docker-compose.yml", "run", "-T", "--rm", "mcp"]
+    }
+  }
+}
+```
+
+`run -T` disables the TTY so JSON-RPC pipes cleanly; the container joins the stack's network and reuses crawl4ai/SearXNG. Bring the stack up first (`docker compose up -d`) so the upstreams are healthy.
+
+<details>
+<summary><b>Standalone stdio — without the compose stack</b></summary>
+
+Spawn the container directly and tell it where crawl4ai/SearXNG are reachable (omnifeed exits at startup without `OMNIFEED_CRAWL4AI_URL`):
 
 ```jsonc
 {
@@ -91,9 +93,8 @@ Stdio — most clients. omnifeed always fetches through crawl4ai (and SearXNG, i
       "command": "docker",
       "args": [
         "run", "--rm", "-i",
-        "--network", "omnifeed_default",
-        "-e", "OMNIFEED_CRAWL4AI_URL=http://crawl4ai:11235/crawl",
-        "-e", "OMNIFEED_SEARXNG_URL=http://searxng:8080",
+        "-e", "OMNIFEED_CRAWL4AI_URL=http://host.docker.internal:11235/crawl",
+        "-e", "OMNIFEED_SEARXNG_URL=http://host.docker.internal:8080",
         "kinorai/omnifeed:latest", "--mcp-stdio"
       ]
     }
@@ -101,13 +102,8 @@ Stdio — most clients. omnifeed always fetches through crawl4ai (and SearXNG, i
 }
 ```
 
-Without `OMNIFEED_CRAWL4AI_URL` the container exits at startup. If crawl4ai/SearXNG run elsewhere, point the URLs there (e.g. `http://host.docker.internal:11235/crawl`, adding `--add-host=host.docker.internal:host-gateway` on Linux).
-
-HTTP — remote clients, or the simplest option when the `docker compose up` stack is already running (no second container, no networking to wire up):
-
-```jsonc
-{ "mcpServers": { "omnifeed": { "url": "http://your-host:8081/mcp" } } }
-```
+On Linux, add `"--add-host=host.docker.internal:host-gateway"` to the args so `host.docker.internal` resolves.
+</details>
 
 Tools: **`fetch_url`** (always) and **`web_search`** (only when `OMNIFEED_SEARXNG_URL` is set). The intended loop is `web_search` → pick URLs → `fetch_url`.
 
@@ -115,20 +111,13 @@ Tools: **`fetch_url`** (always) and **`web_search`** (only when `OMNIFEED_SEARXN
 
 ### <img src="https://raw.githubusercontent.com/Tarikul-Islam-Anik/Animated-Fluent-Emojis/master/Emojis/Objects/Locked%20with%20Key.png" width="22" height="22" /> Authentication
 
-The HTTP transports (`/crawl`, `/search`, `/mcp`) share one bearer token. Set **`OMNIFEED_API_KEY`** and send `Authorization: Bearer <token>`:
+The compose stack runs **tokenless** for local use (`OMNIFEED_DEV_NO_AUTH=true`). To require a bearer token instead, generate one — this is the value clients send as `Authorization: Bearer <token>`, so copy it:
 
 ```bash
-# Generate a key and print it — clients send it as the bearer token, so save it somewhere.
-export OMNIFEED_API_KEY="$(openssl rand -hex 32)"
-echo "OMNIFEED_API_KEY=$OMNIFEED_API_KEY"
-
-# `-e OMNIFEED_API_KEY` (no value) forwards the variable from your shell.
-docker run -e OMNIFEED_API_KEY \
-  -e OMNIFEED_CRAWL4AI_URL=http://crawl4ai:11235/crawl \
-  kinorai/omnifeed
+openssl rand -hex 32        # ← your token; copy this
 ```
 
-Without a key the proxy **refuses to start**, so it can't be left open by accident. For a throwaway local run, opt out with **`OMNIFEED_DEV_NO_AUTH=true`** (the compose files already do). Stdio MCP needs no token — it inherits the trust of the process that spawned it.
+Then in `docker-compose.yml` set `OMNIFEED_API_KEY` to that value and remove `OMNIFEED_DEV_NO_AUTH`. Without a key (and without `OMNIFEED_DEV_NO_AUTH=true`) the proxy **refuses to start**, so it can't be left open by accident. Stdio MCP needs no token — it inherits the trust of the process that spawned it.
 
 <img src="https://user-images.githubusercontent.com/74038190/212284100-561aa473-3905-4a80-b561-0d28506553ee.gif" width="100%">
 
@@ -175,38 +164,6 @@ A Reddit thread's comment tree can be huge. The size knobs come in two kinds —
 - **omnifeed engine caps** — our own, applied *after* fetch + expansion, so they're **exact and independent of Reddit**: `OMNIFEED_REDDIT_MAX_COMMENTS` (truncate the flat comment list) and `OMNIFEED_REDDIT_MAX_TOP_LEVEL` (keep the first N top-level threads, in `sort` order, with their replies).
 
 Rule of thumb: reach for the **upstream params** to fetch less from Reddit; reach for the **engine caps** when you need a guaranteed ceiling — `OMNIFEED_REDDIT_MAX_ROUNDS` expansion adds comments on top of `limit`, so only the caps bound the final total. All five are also per-request on the `fetch_url` MCP tool (`limit`, `depth`, `sort`, `max_comments`, `max_top_level`); a positive value overrides the env default.
-
-<img src="https://user-images.githubusercontent.com/74038190/212284100-561aa473-3905-4a80-b561-0d28506553ee.gif" width="100%">
-
-## <img src="https://raw.githubusercontent.com/Tarikul-Islam-Anik/Animated-Fluent-Emojis/master/Emojis/Objects/Satellite%20Antenna.png" width="26" height="26" /> API
-
-Two bearer-authenticated JSON endpoints on the loader port (`:8080`). The full reference — request/response schemas, query params, and error codes — lives in **[`openapi.yaml`](openapi.yaml)** (paste it into [editor.swagger.io](https://editor.swagger.io/) or any OpenAPI viewer).
-
-- **`POST /crawl`** — URL → content (Open WebUI external-loader contract). Body `{"urls": [...]}` → `[{"page_content", "metadata"}, ...]`. Reddit-only query params: `format=toon|json`, `expand=N|full`, `depth=1`, `nocreated=1`.
-- **`POST /search`** — query → ranked result URLs. Exposed only when `OMNIFEED_SEARXNG_URL` is set. Body `{"query", "limit", "time_range", "language"}`.
-
-```bash
-curl -s http://localhost:8080/crawl \
-  -H "Authorization: Bearer $OMNIFEED_API_KEY" \
-  -H 'Content-Type: application/json' \
-  -d '{"urls": ["https://www.reddit.com/r/golang/comments/.../"]}'
-```
-
-### <img src="https://raw.githubusercontent.com/Tarikul-Islam-Anik/Animated-Fluent-Emojis/master/Emojis/Objects/Bar%20Chart.png" width="22" height="22" /> Health & metrics
-
-- `GET /livez` — liveness; 200 unless shutting down
-- `GET /readyz` — checks crawl4ai (and SearXNG, when configured); `GET /healthz` is an alias
-- `GET /metrics` — Prometheus (`omnifeed_requests_total`, `omnifeed_request_seconds`, `omnifeed_reddit_expansion_rounds`, `omnifeed_search_requests_total`, `omnifeed_search_request_seconds`)
-
-Health and metrics listen on `OMNIFEED_METRICS_ADDR` (default `:9090`), separate from the API (`:8080`) and MCP (`:8081`) ports.
-
-### MCP
-
-JSON-RPC 2.0 at:
-
-- **stdio** when `OMNIFEED_MCP_STDIO=true` or `--mcp-stdio`
-- **Streamable HTTP** at `/mcp` (spec 2025-03-26) on `OMNIFEED_MCP_LISTEN_ADDR` — `POST /mcp` for one-shot calls, `GET /mcp` for the SSE stream
-- `GET /mcp/sse` is a legacy alias for older dual-endpoint SSE clients; new clients target `/mcp`
 
 <img src="https://user-images.githubusercontent.com/74038190/212284100-561aa473-3905-4a80-b561-0d28506553ee.gif" width="100%">
 
@@ -257,8 +214,8 @@ New engines (Hacker News, Stack Overflow, …), searchers (Brave, Tavily, …), 
 
 ```bash
 git clone https://github.com/kinorai/omnifeed.git && cd omnifeed
-make check        # vet + lint + test (what CI runs)
-go run ./cmd/omnifeed
+make check        # vet + lint + test — hermetic, no upstreams or token needed
+docker compose up # run the full stack locally (tokenless: ports 8080 / 8081 / 9090)
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the full workflow, [SECURITY.md](SECURITY.md) for vulnerability reporting, and [AGENTS.md](AGENTS.md) if you're a coding agent working in this repo.
