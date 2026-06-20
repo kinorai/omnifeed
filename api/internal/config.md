@@ -50,9 +50,16 @@ type Config struct {
     SearchMaxResults int
 
     // Reddit engine defaults.
-    RedditTimeout   time.Duration
-    RedditMaxRounds int
-    RedditFormat    string
+    RedditTimeout     time.Duration
+    RedditMaxRounds   int
+    RedditFormat      string
+    RedditFetchLimit  int    // Reddit `limit` query param: max comments in initial fetch
+    RedditDepth       int    // Reddit `depth` query param: max comment-tree nesting
+    RedditSort        string // Reddit `sort` query param: comment sort order
+    RedditMaxComments int    // hard cap on total comments emitted (0 = unlimited)
+    RedditMaxTopLevel int    // hard cap on top-level comment threads (0 = unlimited)
+    RedditKeepCreated bool   // include the per-comment `created` timestamp
+    RedditKeepDepth   bool   // include the per-comment `depth` field
 
     // Limits and rate control.
     MaxURLsPerRequest    int
