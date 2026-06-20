@@ -10,6 +10,10 @@ Package domain holds the core types exchanged between transports and engines. It
 
 ## Index
 
+- [Constants](<#constants>)
+- [Variables](<#variables>)
+- [func ValidRedditSort\(s string\) bool](<#ValidRedditSort>)
+- [func ValidTimeRange\(s string\) bool](<#ValidTimeRange>)
 - [type Document](<#Document>)
 - [type Engine](<#Engine>)
 - [type EngineOptions](<#EngineOptions>)
@@ -22,6 +26,50 @@ Package domain holds the core types exchanged between transports and engines. It
 - [type SearchResult](<#SearchResult>)
 - [type Searcher](<#Searcher>)
 
+
+## Constants
+
+<a name="DefaultRedditFetchLimit"></a>Reddit comment\-fetch defaults are defined here so config \(env fallback\) and the reddit engine \(zero\-Options floor\) share one source instead of each duplicating the literals. https://www.reddit.com/dev/api/#GET_comments_{article}
+
+```go
+const (
+    DefaultRedditFetchLimit = 500   // Reddit `limit`
+    DefaultRedditDepth      = 20    // Reddit `depth`
+    DefaultRedditSort       = "top" // Reddit `sort`
+)
+```
+
+## Variables
+
+<a name="ValidRedditSorts"></a>ValidRedditSorts are the comment sort orders Reddit's comments endpoint accepts; "confidence" is what the Reddit UI labels "best". Kept here so config and the reddit engine validate against one list. https://www.reddit.com/dev/api/#GET_comments_{article}
+
+```go
+var ValidRedditSorts = []string{"confidence", "top", "new", "controversial", "old", "random", "qa", "live"}
+```
+
+<a name="ValidTimeRanges"></a>ValidTimeRanges are the recency\-window filters the web\_search front\-ends accept \(forwarded to SearXNG\); "" means no filter. Kept here so the MCP and REST transports validate against one list.
+
+```go
+var ValidTimeRanges = []string{"day", "week", "month", "year"}
+```
+
+<a name="ValidRedditSort"></a>
+## func ValidRedditSort
+
+```go
+func ValidRedditSort(s string) bool
+```
+
+ValidRedditSort reports whether s is an accepted Reddit comment sort order.
+
+<a name="ValidTimeRange"></a>
+## func ValidTimeRange
+
+```go
+func ValidTimeRange(s string) bool
+```
+
+ValidTimeRange reports whether s is an accepted search recency window.
 
 <a name="Document"></a>
 ## type Document
@@ -60,6 +108,11 @@ type EngineOptions struct {
     RedditKeepCreated bool   // include created field on comments
     RedditMaxRounds   int    // /api/morechildren expansion budget
     RedditFormat      string // "toon" | "json"
+    RedditFetchLimit  int    // Reddit `limit`: max comments in initial fetch (0 = engine default)
+    RedditDepth       int    // Reddit `depth`: max nesting depth (0 = engine default)
+    RedditSort        string // Reddit `sort`: comment sort order ("" = engine default)
+    RedditMaxComments int    // hard cap on total comments emitted (0 = unlimited)
+    RedditMaxTopLevel int    // hard cap on top-level threads (0 = unlimited)
 }
 ```
 

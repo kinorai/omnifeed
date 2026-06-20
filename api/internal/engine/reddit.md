@@ -25,8 +25,8 @@ Package reddit implements the Reddit\-specific engine: fetches threads via the p
   - [func \(\*Engine\) Name\(\) string](<#Engine.Name>)
 - [type Fetcher](<#Fetcher>)
   - [func NewFetcher\(client \*httpx.Client, crawl4aiURL string\) \*Fetcher](<#NewFetcher>)
-  - [func \(f \*Fetcher\) FetchMoreChildren\(ctx context.Context, linkID string, childIDs \[\]string\) \(\[\]byte, error\)](<#Fetcher.FetchMoreChildren>)
-  - [func \(f \*Fetcher\) FetchThread\(ctx context.Context, permalink string\) \(\[\]byte, error\)](<#Fetcher.FetchThread>)
+  - [func \(f \*Fetcher\) FetchMoreChildren\(ctx context.Context, linkID string, childIDs \[\]string, sort string\) \(\[\]byte, error\)](<#Fetcher.FetchMoreChildren>)
+  - [func \(f \*Fetcher\) FetchThread\(ctx context.Context, permalink string, limit, depth int, sort string\) \(\[\]byte, error\)](<#Fetcher.FetchThread>)
   - [func \(f \*Fetcher\) ResolveShareURL\(ctx context.Context, shareURL string\) \(string, error\)](<#Fetcher.ResolveShareURL>)
 - [type Gap](<#Gap>)
 - [type Options](<#Options>)
@@ -157,7 +157,7 @@ Crawl fetches a Reddit thread, expands gaps up to the configured budget, and ret
 func (*Engine) Matches(rawURL string) bool
 ```
 
-Matches returns true for reddit.com URLs \(any subdomain\).
+Matches claims only the reddit.com URLs this engine can actually render: a comments permalink, or a share link \(/r/\{sub\}/s/\{code\}\) that resolves to one. Other reddit.com URLs — profiles, wikis, search pages, /dev/api — fall through to the generic fallback engine instead of hard\-failing in NormalizePermalink.
 
 <a name="Engine.Name"></a>
 ### func \(\*Engine\) Name
@@ -192,7 +192,7 @@ NewFetcher constructs a Fetcher that drives crawl4ai's /crawl endpoint \(crawl4a
 ### func \(\*Fetcher\) FetchMoreChildren
 
 ```go
-func (f *Fetcher) FetchMoreChildren(ctx context.Context, linkID string, childIDs []string) ([]byte, error)
+func (f *Fetcher) FetchMoreChildren(ctx context.Context, linkID string, childIDs []string, sort string) ([]byte, error)
 ```
 
 FetchMoreChildren expands collapsed reply branches via /api/morechildren. linkID must include the t3\_ prefix; childIDs are bare IDs \(no prefix\). It reuses the thread's warmed browser session \(js\_only: no re\-navigation\).
@@ -201,10 +201,10 @@ FetchMoreChildren expands collapsed reply branches via /api/morechildren. linkID
 ### func \(\*Fetcher\) FetchThread
 
 ```go
-func (f *Fetcher) FetchThread(ctx context.Context, permalink string) ([]byte, error)
+func (f *Fetcher) FetchThread(ctx context.Context, permalink string, limit, depth int, sort string) ([]byte, error)
 ```
 
-FetchThread retrieves a thread via the .json endpoint with a generous limit and depth, fetched from inside a real browser on the reddit.com origin. This call navigates the page, creating/warming the per\-thread crawl4ai session that subsequent FetchMoreChildren calls reuse.
+FetchThread retrieves a thread via the .json endpoint, fetched from inside a real browser on the reddit.com origin. This call navigates the page, creating/warming the per\-thread crawl4ai session that subsequent FetchMoreChildren calls reuse. limit/depth/sort map directly onto Reddit's comments\-endpoint query params \(limit = max comments, depth = max subtree nesting\): https://www.reddit.com/dev/api/#GET_comments_{article}
 
 <a name="Fetcher.ResolveShareURL"></a>
 ### func \(\*Fetcher\) ResolveShareURL
@@ -241,6 +241,16 @@ type Options struct {
     KeepCreated bool   // include created field on each comment
     MaxRounds   int    // hard cap on /api/morechildren expansion rounds
     Format      string // "toon" or "json"
+
+    // Size controls. FetchLimit/Depth/Sort map 1:1 onto Reddit's
+    // comments-endpoint query params; MaxComments/MaxTopLevel are enforced by
+    // omnifeed after fetching + expansion. Param semantics:
+    // https://www.reddit.com/dev/api/#GET_comments_{article}
+    FetchLimit  int    // Reddit `limit`: max comments in the initial tree
+    Depth       int    // Reddit `depth`: max nesting depth of the initial tree
+    Sort        string // Reddit `sort`: comment sort order
+    MaxComments int    // hard cap on total comments emitted (0 = unlimited)
+    MaxTopLevel int    // hard cap on top-level comment threads (0 = unlimited)
 }
 ```
 
