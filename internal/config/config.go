@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/kinorai/omnifeed/internal/domain"
 )
 
 // Config is the fully-resolved runtime configuration.
@@ -42,9 +44,16 @@ type Config struct {
 	SearchMaxResults int
 
 	// Reddit engine defaults.
-	RedditTimeout   time.Duration
-	RedditMaxRounds int
-	RedditFormat    string
+	RedditTimeout     time.Duration
+	RedditMaxRounds   int
+	RedditFormat      string
+	RedditFetchLimit  int    // Reddit `limit` query param: max comments in initial fetch
+	RedditDepth       int    // Reddit `depth` query param: max comment-tree nesting
+	RedditSort        string // Reddit `sort` query param: comment sort order
+	RedditMaxComments int    // hard cap on total comments emitted (0 = unlimited)
+	RedditMaxTopLevel int    // hard cap on top-level comment threads (0 = unlimited)
+	RedditKeepCreated bool   // include the per-comment `created` timestamp
+	RedditKeepDepth   bool   // include the per-comment `depth` field
 
 	// Limits and rate control.
 	MaxURLsPerRequest    int
@@ -66,6 +75,7 @@ func Load() (Config, error) {
 		Crawl4AIURL:   env("OMNIFEED_CRAWL4AI_URL", ""),
 		SearXNGURL:    env("OMNIFEED_SEARXNG_URL", ""),
 		RedditFormat:  env("OMNIFEED_REDDIT_FORMAT", "toon"),
+		RedditSort:    env("OMNIFEED_REDDIT_SORT", domain.DefaultRedditSort),
 	}
 
 	var err error
@@ -96,6 +106,24 @@ func Load() (Config, error) {
 	if c.RedditMaxRounds, err = envInt("OMNIFEED_REDDIT_MAX_ROUNDS", 3); err != nil {
 		return c, err
 	}
+	if c.RedditFetchLimit, err = envInt("OMNIFEED_REDDIT_FETCH_LIMIT", domain.DefaultRedditFetchLimit); err != nil {
+		return c, err
+	}
+	if c.RedditDepth, err = envInt("OMNIFEED_REDDIT_DEPTH", domain.DefaultRedditDepth); err != nil {
+		return c, err
+	}
+	if c.RedditMaxComments, err = envInt("OMNIFEED_REDDIT_MAX_COMMENTS", 0); err != nil {
+		return c, err
+	}
+	if c.RedditMaxTopLevel, err = envInt("OMNIFEED_REDDIT_MAX_TOP_LEVEL", 0); err != nil {
+		return c, err
+	}
+	if c.RedditKeepCreated, err = envBool("OMNIFEED_REDDIT_KEEP_CREATED", true); err != nil {
+		return c, err
+	}
+	if c.RedditKeepDepth, err = envBool("OMNIFEED_REDDIT_KEEP_DEPTH", false); err != nil {
+		return c, err
+	}
 	if c.MaxURLsPerRequest, err = envInt("OMNIFEED_MAX_URLS_PER_REQUEST", 30); err != nil {
 		return c, err
 	}
@@ -109,6 +137,23 @@ func Load() (Config, error) {
 	c.RedditFormat = strings.ToLower(c.RedditFormat)
 	if c.RedditFormat != "toon" && c.RedditFormat != "json" {
 		return c, fmt.Errorf("OMNIFEED_REDDIT_FORMAT must be 'toon' or 'json', got %q", c.RedditFormat)
+	}
+
+	c.RedditSort = strings.ToLower(c.RedditSort)
+	if !domain.ValidRedditSort(c.RedditSort) {
+		return c, fmt.Errorf("OMNIFEED_REDDIT_SORT must be one of %s, got %q", strings.Join(domain.ValidRedditSorts, ", "), c.RedditSort)
+	}
+	if c.RedditFetchLimit < 1 {
+		return c, fmt.Errorf("OMNIFEED_REDDIT_FETCH_LIMIT must be >= 1, got %d", c.RedditFetchLimit)
+	}
+	if c.RedditDepth < 1 {
+		return c, fmt.Errorf("OMNIFEED_REDDIT_DEPTH must be >= 1, got %d", c.RedditDepth)
+	}
+	if c.RedditMaxComments < 0 {
+		return c, fmt.Errorf("OMNIFEED_REDDIT_MAX_COMMENTS must be >= 0 (0 = unlimited), got %d", c.RedditMaxComments)
+	}
+	if c.RedditMaxTopLevel < 0 {
+		return c, fmt.Errorf("OMNIFEED_REDDIT_MAX_TOP_LEVEL must be >= 0 (0 = unlimited), got %d", c.RedditMaxTopLevel)
 	}
 
 	if c.SearchMaxResults < 1 || c.SearchMaxResults > 100 {

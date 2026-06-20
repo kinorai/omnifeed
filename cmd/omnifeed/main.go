@@ -65,10 +65,15 @@ func run(cfg config.Config, logger *slog.Logger) error {
 	// --- Engines ---
 
 	redditDefaults := reddit.Options{
-		KeepDepth:   false,
-		KeepCreated: true,
+		KeepDepth:   cfg.RedditKeepDepth,
+		KeepCreated: cfg.RedditKeepCreated,
 		MaxRounds:   cfg.RedditMaxRounds,
 		Format:      cfg.RedditFormat,
+		FetchLimit:  cfg.RedditFetchLimit,
+		Depth:       cfg.RedditDepth,
+		Sort:        cfg.RedditSort,
+		MaxComments: cfg.RedditMaxComments,
+		MaxTopLevel: cfg.RedditMaxTopLevel,
 	}
 
 	// The Reddit engine fetches through crawl4ai (a real browser) because

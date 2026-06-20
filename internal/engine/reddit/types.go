@@ -125,4 +125,14 @@ type Options struct {
 	KeepCreated bool   // include created field on each comment
 	MaxRounds   int    // hard cap on /api/morechildren expansion rounds
 	Format      string // "toon" or "json"
+
+	// Size controls. FetchLimit/Depth/Sort map 1:1 onto Reddit's
+	// comments-endpoint query params; MaxComments/MaxTopLevel are enforced by
+	// omnifeed after fetching + expansion. Param semantics:
+	// https://www.reddit.com/dev/api/#GET_comments_{article}
+	FetchLimit  int    // Reddit `limit`: max comments in the initial tree
+	Depth       int    // Reddit `depth`: max nesting depth of the initial tree
+	Sort        string // Reddit `sort`: comment sort order
+	MaxComments int    // hard cap on total comments emitted (0 = unlimited)
+	MaxTopLevel int    // hard cap on top-level comment threads (0 = unlimited)
 }

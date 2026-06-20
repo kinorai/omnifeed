@@ -3,6 +3,10 @@
 # Use this to point Open WebUI's external loader at http://localhost:8080
 # (set WEB_LOADER_ENGINE=external and EXTERNAL_WEB_LOADER_URL=http://...).
 
+# Pin the project name so the network is always `omnifeed_default`, regardless of
+# the directory you run this from — the stdio MCP example in the README joins it.
+name: omnifeed
+
 services:
   searxng:
     image: searxng/searxng:2026.6.2-e964708c0

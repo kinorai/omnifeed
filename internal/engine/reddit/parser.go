@@ -209,6 +209,73 @@ func MergeExpanded(thread *Thread, newC []Comment, newG []Gap, requestedIDs []st
 	thread.Gaps = append(thread.Gaps, newG...)
 }
 
+// capComments truncates the comment list to at most n entries, preserving order
+// (0 = unlimited). The list is depth-first pre-order for the initial fetch, so
+// ancestors precede their descendants and a prefix cut never orphans a kept
+// reply from a dropped parent; expansion appends deeper comments at the tail, so
+// those — the least central — are dropped first.
+func capComments(t *Thread, n int) {
+	if n > 0 && len(t.Comments) > n {
+		t.Comments = t.Comments[:n]
+	}
+}
+
+// capTopLevel keeps only the first n top-level comment threads (in Reddit's sort
+// order) and every reply beneath them, dropping the rest (0 = unlimited). A
+// comment is top-level when its parent is the post itself. Comments whose parent
+// chain can't be resolved to a top-level root (e.g. a deleted parent was skipped
+// during parsing) are kept rather than risk dropping live content.
+func capTopLevel(t *Thread, n int) {
+	if n <= 0 {
+		return
+	}
+	postID := t.Post.ID
+	parent := make(map[string]string, len(t.Comments))
+	for _, c := range t.Comments {
+		parent[c.ID] = c.ParentID
+	}
+
+	kept := make(map[string]bool)
+	roots := 0
+	for _, c := range t.Comments {
+		if c.ParentID == postID {
+			if roots < n {
+				kept[c.ID] = true
+			}
+			roots++
+		}
+	}
+	if roots <= n {
+		return // fewer top-level threads than the cap — nothing to drop
+	}
+
+	// rootKept walks up to the top-level ancestor and reports whether it
+	// survived the cut. A broken chain (parent absent) or a cycle keeps the
+	// comment.
+	rootKept := func(id string) bool {
+		cur := id
+		for hops := 0; hops <= len(t.Comments); hops++ {
+			p, ok := parent[cur]
+			if !ok {
+				return true
+			}
+			if p == postID {
+				return kept[cur]
+			}
+			cur = p
+		}
+		return true
+	}
+
+	filtered := t.Comments[:0]
+	for _, c := range t.Comments {
+		if rootKept(c.ID) {
+			filtered = append(filtered, c)
+		}
+	}
+	t.Comments = filtered
+}
+
 func stripFullnamePrefix(s string) string {
 	if strings.HasPrefix(s, kindCommentPrefix) || strings.HasPrefix(s, kindPostPrefix) {
 		return s[3:]
