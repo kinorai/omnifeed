@@ -66,8 +66,20 @@ func New(cfg Config) *Engine {
 // Name returns the engine identifier.
 func (*Engine) Name() string { return "reddit" }
 
-// Matches returns true for reddit.com URLs (any subdomain).
-func (*Engine) Matches(rawURL string) bool { return IsRedditURL(rawURL) }
+// Matches claims only the reddit.com URLs this engine can actually render: a
+// comments permalink, or a share link (/r/{sub}/s/{code}) that resolves to one.
+// Other reddit.com URLs — profiles, wikis, search pages, /dev/api — fall through
+// to the generic fallback engine instead of hard-failing in NormalizePermalink.
+func (*Engine) Matches(rawURL string) bool {
+	if !IsRedditURL(rawURL) {
+		return false
+	}
+	if IsShareURL(rawURL) {
+		return true
+	}
+	_, err := NormalizePermalink(rawURL)
+	return err == nil
+}
 
 // IsRedditURL is the package-level matcher used by Engine.Matches; exported so
 // callers (and tests) can detect Reddit URLs without instantiating an Engine.
@@ -109,7 +121,7 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, eo domain.EngineOptio
 	release := e.limiter.Acquire("https://reddit.com" + permalink)
 	defer release()
 
-	threadJSON, err := e.fetcher.FetchThread(ctx, permalink)
+	threadJSON, err := e.fetcher.FetchThread(ctx, permalink, opts.FetchLimit, opts.Depth, opts.Sort)
 	if err != nil {
 		return domain.Document{}, fmt.Errorf("fetch thread: %w", err)
 	}
@@ -122,6 +134,16 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, eo domain.EngineOptio
 	rounds := e.expandGaps(ctx, &thread, opts)
 	if e.metrics != nil {
 		e.metrics.RedditRounds.Observe(float64(rounds))
+	}
+
+	// Post-fetch size caps: applied after expansion so they bound the final
+	// output regardless of how much expansion produced. Top-level cap first
+	// (structural — keeps whole threads), then the absolute comment ceiling.
+	if opts.MaxTopLevel > 0 {
+		capTopLevel(&thread, opts.MaxTopLevel)
+	}
+	if opts.MaxComments > 0 {
+		capComments(&thread, opts.MaxComments)
 	}
 
 	// Strip the per-gap child-ID lists from the output — they were only
@@ -172,17 +194,40 @@ func (e *Engine) resolveOptions(eo domain.EngineOptions) Options {
 		opts.KeepCreated = true
 	}
 	if eo.RedditMaxRounds > 0 {
-		if eo.RedditMaxRounds > MaxExpansionRounds {
-			opts.MaxRounds = MaxExpansionRounds
-		} else {
-			opts.MaxRounds = eo.RedditMaxRounds
-		}
+		opts.MaxRounds = min(eo.RedditMaxRounds, MaxExpansionRounds)
 	}
 	if opts.MaxRounds == 0 {
 		opts.MaxRounds = 3
 	}
 	if opts.Format == "" {
 		opts.Format = "toon"
+	}
+
+	// Size knobs: a positive per-request value overrides the engine default.
+	if eo.RedditFetchLimit > 0 {
+		opts.FetchLimit = eo.RedditFetchLimit
+	}
+	if eo.RedditDepth > 0 {
+		opts.Depth = eo.RedditDepth
+	}
+	if eo.RedditSort != "" && domain.ValidRedditSort(eo.RedditSort) {
+		opts.Sort = eo.RedditSort
+	}
+	if eo.RedditMaxComments > 0 {
+		opts.MaxComments = eo.RedditMaxComments
+	}
+	if eo.RedditMaxTopLevel > 0 {
+		opts.MaxTopLevel = eo.RedditMaxTopLevel
+	}
+	// Hard fallbacks for the Reddit-side params, which must always be valid.
+	if opts.FetchLimit <= 0 {
+		opts.FetchLimit = domain.DefaultRedditFetchLimit
+	}
+	if opts.Depth <= 0 {
+		opts.Depth = domain.DefaultRedditDepth
+	}
+	if opts.Sort == "" {
+		opts.Sort = domain.DefaultRedditSort
 	}
 	return opts
 }
@@ -214,7 +259,7 @@ func (e *Engine) expandGaps(ctx context.Context, thread *Thread, opts Options) i
 		if len(batchIDs) == 0 {
 			break
 		}
-		moreJSON, err := e.fetcher.FetchMoreChildren(ctx, linkFullID, batchIDs)
+		moreJSON, err := e.fetcher.FetchMoreChildren(ctx, linkFullID, batchIDs, opts.Sort)
 		if err != nil {
 			e.logger.Warn("morechildren round failed", "round", round, "err", err)
 			break

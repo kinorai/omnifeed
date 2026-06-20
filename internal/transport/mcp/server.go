@@ -30,6 +30,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"slices"
 	"sync"
 	"time"
 
@@ -50,10 +51,8 @@ var supportedVersions = []string{ProtocolVersion, "2025-03-26", "2024-11-05"}
 // negotiateProtocolVersion implements the initialize version handshake: return
 // the client's requested version if we support it, otherwise our latest.
 func negotiateProtocolVersion(requested string) string {
-	for _, v := range supportedVersions {
-		if v == requested {
-			return requested
-		}
+	if slices.Contains(supportedVersions, requested) {
+		return requested
 	}
 	return ProtocolVersion
 }

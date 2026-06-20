@@ -1,0 +1,238 @@
+# OpenAPI description of omnifeed's REST API — the bearer-authenticated JSON
+# endpoints on the loader port. Hand-maintained: keep in sync with
+# internal/transport/openwebui and internal/transport/searchapi.
+#
+# The MCP transport (JSON-RPC) and the health/metrics endpoints are documented
+# in the README, not here.
+openapi: 3.0.3
+info:
+  title: omnifeed
+  version: 0.10.1
+  description: |
+    Self-hosted web search + LLM-friendly crawling with a dedicated Reddit engine.
+
+    This spec covers the two bearer-authenticated JSON endpoints served on the
+    loader port (`OMNIFEED_LISTEN_ADDR`, default `:8080`):
+
+    - `POST /crawl` — URL → content (Open WebUI external-loader contract)
+    - `POST /search` — query → ranked result URLs (only when SearXNG is configured)
+
+    The MCP transport (JSON-RPC at `/mcp`, default `:8081`) and the health/metrics
+    endpoints (`/livez`, `/readyz`, `/metrics`, default `:9090`) are documented in
+    the README.
+  license:
+    name: MIT
+    url: https://github.com/kinorai/omnifeed/blob/main/LICENSE
+servers:
+  - url: http://localhost:8080
+    description: Loader port (OMNIFEED_LISTEN_ADDR)
+security:
+  - bearerAuth: []
+paths:
+  /crawl:
+    post:
+      operationId: crawl
+      summary: URL → content (Open WebUI external-loader contract)
+      description: |
+        Fetches each URL and returns LLM-friendly content. Reddit URLs come back as
+        the full comment tree encoded in TOON (or JSON); every other URL renders to
+        markdown via crawl4ai. The response shape matches a LangChain / LlamaIndex
+        `Document`.
+
+        URLs are fetched concurrently. A per-URL failure does not fail the request:
+        that element is returned with `metadata.error = "true"` and an error marker
+        in `page_content`.
+
+        The query parameters affect Reddit URLs only.
+      parameters:
+        - name: format
+          in: query
+          required: false
+          description: Reddit output encoding.
+          schema:
+            type: string
+            enum: [toon, json]
+        - name: expand
+          in: query
+          required: false
+          description: >-
+            Reddit comment-tree expansion rounds (`/api/morechildren`): an integer
+            `0`–`40`, or `full` (aliases `all`, `max`) for the maximum.
+          schema:
+            type: string
+          example: full
+        - name: depth
+          in: query
+          required: false
+          description: Set to `1` to include each comment's `depth` field.
+          schema:
+            type: string
+            enum: ["1"]
+        - name: nocreated
+          in: query
+          required: false
+          description: Set to `1` to drop each comment's `created` timestamp (~7% fewer tokens).
+          schema:
+            type: string
+            enum: ["1"]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CrawlRequest"
+            example:
+              urls:
+                - https://www.reddit.com/r/golang/comments/abc123/
+      responses:
+        "200":
+          description: One document per requested URL, in request order.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Document"
+              example:
+                - page_content: "# r/golang ..."
+                  metadata:
+                    source: https://www.reddit.com/r/golang/comments/abc123/
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+  /search:
+    post:
+      operationId: search
+      summary: query → ranked result URLs
+      description: |
+        Runs a web search via the configured SearXNG upstream and returns ranked
+        result URLs. Exposed only when `OMNIFEED_SEARXNG_URL` is set; otherwise the
+        route is not mounted and requests get a 404.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SearchRequest"
+            example:
+              query: go generics
+              limit: 10
+              time_range: week
+              language: en
+      responses:
+        "200":
+          description: Ranked search results.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SearchResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "502":
+          description: The SearXNG upstream failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: >-
+        Bearer token from `OMNIFEED_API_KEY`. Required unless the server runs with
+        `OMNIFEED_DEV_NO_AUTH=true` (local/dev only).
+  schemas:
+    CrawlRequest:
+      type: object
+      required: [urls]
+      properties:
+        urls:
+          type: array
+          description: URLs to fetch. 1–`OMNIFEED_MAX_URLS_PER_REQUEST` items (default 30).
+          minItems: 1
+          items:
+            type: string
+            format: uri
+    Document:
+      type: object
+      description: Matches the Open WebUI / LangChain `Document` shape.
+      required: [page_content, metadata]
+      properties:
+        page_content:
+          type: string
+        metadata:
+          type: object
+          description: >-
+            Free-form string metadata; always includes `source` (the fetched URL).
+            On a per-URL failure, `error` is `"true"`.
+          additionalProperties:
+            type: string
+    SearchRequest:
+      type: object
+      required: [query]
+      properties:
+        query:
+          type: string
+        limit:
+          type: integer
+          default: 10
+          description: Max results; clamped to `OMNIFEED_SEARCH_MAX_RESULTS` (default 25).
+        time_range:
+          type: string
+          description: Empty means no time filter.
+          enum: ["", day, week, month, year]
+        language:
+          type: string
+          description: e.g. `en`, `fr`. Empty = upstream default.
+    SearchResult:
+      type: object
+      required: [title, url]
+      properties:
+        title:
+          type: string
+        url:
+          type: string
+          format: uri
+        snippet:
+          type: string
+        engine:
+          type: string
+        published_date:
+          type: string
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+  responses:
+    BadRequest:
+      description: >-
+        Malformed request — bad JSON, empty or oversized `urls`, an invalid URL, or
+        an unsupported `time_range`.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Unauthorized:
+      description: Missing or invalid bearer token.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    MethodNotAllowed:
+      description: Only POST is accepted.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"

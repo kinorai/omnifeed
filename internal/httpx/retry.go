@@ -100,7 +100,7 @@ func (c *Client) DoRetry(
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				return nil, err
 			}
-			delay = nextBackoff(delay, cfg.MaxDelay)
+			delay = min(delay*2, cfg.MaxDelay)
 			continue
 		}
 
@@ -117,25 +117,13 @@ func (c *Client) DoRetry(
 		lastErr = &StatusError{StatusCode: resp.StatusCode}
 
 		if secs, ok := parseRetryAfter(retryAfter); ok {
-			d := time.Duration(secs) * time.Second
-			if d > cfg.MaxDelay {
-				d = cfg.MaxDelay
-			}
-			delay = d
+			delay = min(time.Duration(secs)*time.Second, cfg.MaxDelay)
 		} else {
-			delay = nextBackoff(delay, cfg.MaxDelay)
+			delay = min(delay*2, cfg.MaxDelay)
 		}
 	}
 
 	return nil, lastErr
-}
-
-func nextBackoff(d, max time.Duration) time.Duration {
-	d *= 2
-	if d > max {
-		return max
-	}
-	return d
 }
 
 // parseRetryAfter parses the integer-seconds form of Retry-After.

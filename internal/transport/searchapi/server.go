@@ -103,13 +103,11 @@ func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 	if opts.Limit > s.maxResults {
 		opts.Limit = s.maxResults
 	}
-	switch req.TimeRange {
-	case "", "day", "week", "month", "year":
-		opts.TimeRange = req.TimeRange
-	default:
+	if req.TimeRange != "" && !domain.ValidTimeRange(req.TimeRange) {
 		writeError(w, http.StatusBadRequest, "time_range must be one of: day, week, month, year")
 		return
 	}
+	opts.TimeRange = req.TimeRange
 	opts.Language = req.Language
 
 	start := time.Now()

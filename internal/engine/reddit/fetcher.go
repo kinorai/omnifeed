@@ -47,20 +47,23 @@ func NewFetcher(client *httpx.Client, crawl4aiURL string) *Fetcher {
 	return &Fetcher{client: client, crawl4aiURL: crawl4aiURL}
 }
 
-// FetchThread retrieves a thread via the .json endpoint with a generous limit
-// and depth, fetched from inside a real browser on the reddit.com origin. This
-// call navigates the page, creating/warming the per-thread crawl4ai session
-// that subsequent FetchMoreChildren calls reuse.
-func (f *Fetcher) FetchThread(ctx context.Context, permalink string) ([]byte, error) {
+// FetchThread retrieves a thread via the .json endpoint, fetched from inside a
+// real browser on the reddit.com origin. This call navigates the page,
+// creating/warming the per-thread crawl4ai session that subsequent
+// FetchMoreChildren calls reuse. limit/depth/sort map directly onto Reddit's
+// comments-endpoint query params (limit = max comments, depth = max subtree
+// nesting): https://www.reddit.com/dev/api/#GET_comments_{article}
+func (f *Fetcher) FetchThread(ctx context.Context, permalink string, limit, depth int, sort string) ([]byte, error) {
 	page := redditOrigin + permalink
-	jsonURL := redditOrigin + strings.TrimSuffix(permalink, "/") + ".json?limit=500&depth=20&sort=top&raw_json=1"
+	jsonURL := fmt.Sprintf("%s%s.json?limit=%d&depth=%d&sort=%s&raw_json=1",
+		redditOrigin, strings.TrimSuffix(permalink, "/"), limit, depth, url.QueryEscape(sort))
 	return f.browserFetch(ctx, page, getJS(jsonURL), threadSession(permalink), false)
 }
 
 // FetchMoreChildren expands collapsed reply branches via /api/morechildren.
 // linkID must include the t3_ prefix; childIDs are bare IDs (no prefix). It
 // reuses the thread's warmed browser session (js_only: no re-navigation).
-func (f *Fetcher) FetchMoreChildren(ctx context.Context, linkID string, childIDs []string) ([]byte, error) {
+func (f *Fetcher) FetchMoreChildren(ctx context.Context, linkID string, childIDs []string, sort string) ([]byte, error) {
 	id36 := strings.TrimPrefix(linkID, kindPostPrefix)
 	page := redditOrigin + "/comments/" + id36 + "/"
 
@@ -69,7 +72,7 @@ func (f *Fetcher) FetchMoreChildren(ctx context.Context, linkID string, childIDs
 	form.Set("link_id", linkID)
 	form.Set("children", strings.Join(childIDs, ","))
 	form.Set("limit_children", "false")
-	form.Set("sort", "top")
+	form.Set("sort", sort)
 	form.Set("raw_json", "1")
 	return f.browserFetch(ctx, page, postJS(redditOrigin+"/api/morechildren", form.Encode()), "carp-reddit-"+id36, true)
 }

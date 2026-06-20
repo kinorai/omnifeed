@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -73,7 +74,7 @@ func TestFetchThread(t *testing.T) {
 			defer srv.Close()
 
 			f := NewFetcher(httpx.New(nil), srv.URL)
-			got, err := f.FetchThread(context.Background(), permalink)
+			got, err := f.FetchThread(context.Background(), permalink, 500, 20, "top")
 
 			if tc.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
@@ -104,7 +105,7 @@ func TestFetchThread(t *testing.T) {
 // the config-level guard for the same reason).
 func TestFetcherMissingEndpoint(t *testing.T) {
 	f := NewFetcher(httpx.New(nil), "")
-	if _, err := f.FetchThread(context.Background(), "/r/news/comments/abc/t/"); err == nil {
+	if _, err := f.FetchThread(context.Background(), "/r/news/comments/abc/t/", 500, 20, "top"); err == nil {
 		t.Fatal("expected error when crawl4ai URL is empty")
 	}
 }
@@ -131,10 +132,19 @@ func TestRequestShape(t *testing.T) {
 	}
 
 	// FetchThread navigates and creates the session.
-	if _, err := f.FetchThread(context.Background(), "/r/news/comments/abc123/some_title/"); err != nil {
+	if _, err := f.FetchThread(context.Background(), "/r/news/comments/abc123/some_title/", 123, 4, "new"); err != nil {
 		t.Fatal(err)
 	}
 	req := decode()
+	// The Reddit fetch params must pass through into the in-page fetch() URL.
+	// jsLit JSON-escapes the URL, so the "&" query separators are unicode-
+	// escaped in the emitted JS; assert each key=value separately, not joined.
+	js := fmt.Sprint(req.CrawlerConfig.Params["js_code"])
+	for _, want := range []string{"limit=123", "depth=4", "sort=new"} {
+		if !strings.Contains(js, want) {
+			t.Errorf("thread fetch URL missing %q; js_code = %s", want, js)
+		}
+	}
 	if req.BrowserConfig.Params["enable_stealth"] != true {
 		t.Error("enable_stealth must be set")
 	}
@@ -155,7 +165,7 @@ func TestRequestShape(t *testing.T) {
 	}
 
 	// FetchMoreChildren reuses the same warmed session without re-navigating.
-	if _, err := f.FetchMoreChildren(context.Background(), "t3_abc123", []string{"x1", "x2"}); err != nil {
+	if _, err := f.FetchMoreChildren(context.Background(), "t3_abc123", []string{"x1", "x2"}, "top"); err != nil {
 		t.Fatal(err)
 	}
 	req = decode()

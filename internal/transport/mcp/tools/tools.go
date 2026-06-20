@@ -53,6 +53,27 @@ func FetchURL(reg *engine.Registry, defaults reddit.Options, metrics *observabil
 					"type":        "integer",
 					"description": "Reddit-only: number of /api/morechildren expansion rounds (0-40).",
 				},
+				"limit": map[string]any{
+					"type":        "integer",
+					"description": "Reddit-only: max comments to fetch in the initial tree (Reddit `limit`).",
+				},
+				"depth": map[string]any{
+					"type":        "integer",
+					"description": "Reddit-only: max nesting depth of the comment tree (Reddit `depth`).",
+				},
+				"sort": map[string]any{
+					"type":        "string",
+					"description": "Reddit-only: comment sort order ('confidence' = best).",
+					"enum":        domain.ValidRedditSorts,
+				},
+				"max_comments": map[string]any{
+					"type":        "integer",
+					"description": "Reddit-only: hard cap on total comments after expansion (0 = unlimited).",
+				},
+				"max_top_level": map[string]any{
+					"type":        "integer",
+					"description": "Reddit-only: hard cap on top-level comment threads (0 = unlimited).",
+				},
 			},
 		},
 		Handle: crawlHandler(reg, defaults, metrics),
@@ -71,12 +92,32 @@ func crawlHandler(reg *engine.Registry, defaults reddit.Options, metrics *observ
 			RedditKeepDepth:   defaults.KeepDepth,
 			RedditKeepCreated: defaults.KeepCreated,
 			RedditMaxRounds:   defaults.MaxRounds,
+			RedditFetchLimit:  defaults.FetchLimit,
+			RedditDepth:       defaults.Depth,
+			RedditSort:        defaults.Sort,
+			RedditMaxComments: defaults.MaxComments,
+			RedditMaxTopLevel: defaults.MaxTopLevel,
 		}
 		if f, isString := args["format"].(string); isString && (f == "toon" || f == "json") {
 			opts.RedditFormat = f
 		}
 		if ex, isNumber := args["expand"].(float64); isNumber && ex >= 0 {
 			opts.RedditMaxRounds = int(ex)
+		}
+		if l, isNumber := args["limit"].(float64); isNumber && l >= 1 {
+			opts.RedditFetchLimit = int(l)
+		}
+		if d, isNumber := args["depth"].(float64); isNumber && d >= 1 {
+			opts.RedditDepth = int(d)
+		}
+		if s, isString := args["sort"].(string); isString && domain.ValidRedditSort(s) {
+			opts.RedditSort = s
+		}
+		if mc, isNumber := args["max_comments"].(float64); isNumber && mc >= 0 {
+			opts.RedditMaxComments = int(mc)
+		}
+		if mt, isNumber := args["max_top_level"].(float64); isNumber && mt >= 0 {
+			opts.RedditMaxTopLevel = int(mt)
 		}
 
 		start := time.Now()
@@ -116,7 +157,7 @@ func WebSearch(searcher domain.Searcher, maxResults int, metrics *observability.
 				"time_range": map[string]any{
 					"type":        "string",
 					"description": "Restrict results to a recency window.",
-					"enum":        []string{"day", "week", "month", "year"},
+					"enum":        domain.ValidTimeRanges,
 				},
 				"language": map[string]any{
 					"type":        "string",
@@ -138,12 +179,10 @@ func WebSearch(searcher domain.Searcher, maxResults int, metrics *observability.
 				opts.Limit = maxResults
 			}
 			if tr, isString := args["time_range"].(string); isString && tr != "" {
-				switch tr {
-				case "day", "week", "month", "year":
-					opts.TimeRange = tr
-				default:
+				if !domain.ValidTimeRange(tr) {
 					return mcp.ToolResult{}, mcp.InvalidParams("time_range must be one of: day, week, month, year")
 				}
+				opts.TimeRange = tr
 			}
 			if lang, isString := args["language"].(string); isString {
 				opts.Language = lang

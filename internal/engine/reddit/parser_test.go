@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/kinorai/omnifeed/internal/domain"
 	"github.com/toon-format/toon-go"
 )
 
@@ -218,4 +219,118 @@ func TestToonEncoding_NonEmpty(t *testing.T) {
 	j, _ := json.Marshal(thread)
 	t.Logf("TOON: %d bytes, JSON: %d bytes (reduction: %.1f%%)",
 		len(encoded), len(j), 100*(1-float64(len(encoded))/float64(len(j))))
+}
+
+func TestCapComments(t *testing.T) {
+	mk := func(ids ...string) []Comment {
+		cs := make([]Comment, len(ids))
+		for i, id := range ids {
+			cs[i] = Comment{ID: id, ParentID: "p", Body: "x"}
+		}
+		return cs
+	}
+	t.Run("truncates to n preserving order", func(t *testing.T) {
+		thread := Thread{Post: Post{ID: "p"}, Comments: mk("a", "b", "c", "d", "e")}
+		capComments(&thread, 3)
+		if len(thread.Comments) != 3 || thread.Comments[0].ID != "a" || thread.Comments[2].ID != "c" {
+			t.Fatalf("got %+v, want [a b c]", thread.Comments)
+		}
+	})
+	t.Run("zero is unlimited", func(t *testing.T) {
+		thread := Thread{Post: Post{ID: "p"}, Comments: mk("a", "b")}
+		capComments(&thread, 0)
+		if len(thread.Comments) != 2 {
+			t.Errorf("n=0 must not truncate, got %d", len(thread.Comments))
+		}
+	})
+}
+
+func TestCapTopLevel(t *testing.T) {
+	// post p: t1 -> t1a ; t2 -> t2a -> t2a1 ; t3
+	newThread := func() Thread {
+		return Thread{
+			Post: Post{ID: "p"},
+			Comments: []Comment{
+				{ID: "t1", ParentID: "p"},
+				{ID: "t1a", ParentID: "t1"},
+				{ID: "t2", ParentID: "p"},
+				{ID: "t2a", ParentID: "t2"},
+				{ID: "t2a1", ParentID: "t2a"},
+				{ID: "t3", ParentID: "p"},
+			},
+		}
+	}
+
+	t.Run("keeps first n threads with full subtrees", func(t *testing.T) {
+		thread := newThread()
+		capTopLevel(&thread, 2)
+		got := map[string]bool{}
+		for _, c := range thread.Comments {
+			got[c.ID] = true
+		}
+		for _, id := range []string{"t1", "t1a", "t2", "t2a", "t2a1"} {
+			if !got[id] {
+				t.Errorf("expected %s kept; have %+v", id, thread.Comments)
+			}
+		}
+		if got["t3"] {
+			t.Error("3rd top-level thread (t3) and its subtree must be dropped")
+		}
+	})
+
+	t.Run("no-op when threads <= n", func(t *testing.T) {
+		thread := newThread()
+		capTopLevel(&thread, 5)
+		if len(thread.Comments) != 6 {
+			t.Errorf("cap above thread count must not drop anything, got %d", len(thread.Comments))
+		}
+	})
+
+	t.Run("keeps comments with an unresolvable parent chain", func(t *testing.T) {
+		// orphan's parent "ghost" was never in the list (e.g. deleted) -> keep it.
+		thread := Thread{
+			Post: Post{ID: "p"},
+			Comments: []Comment{
+				{ID: "t1", ParentID: "p"},
+				{ID: "t2", ParentID: "p"},
+				{ID: "orphan", ParentID: "ghost"},
+			},
+		}
+		capTopLevel(&thread, 1)
+		got := map[string]bool{}
+		for _, c := range thread.Comments {
+			got[c.ID] = true
+		}
+		if !got["t1"] || got["t2"] || !got["orphan"] {
+			t.Errorf("want t1+orphan kept, t2 dropped; got %+v", thread.Comments)
+		}
+	})
+}
+
+func TestResolveOptions(t *testing.T) {
+	e := &Engine{defaultOpts: Options{}}
+
+	t.Run("hard fallbacks for reddit params", func(t *testing.T) {
+		got := e.resolveOptions(domain.EngineOptions{})
+		if got.FetchLimit != domain.DefaultRedditFetchLimit || got.Depth != domain.DefaultRedditDepth || got.Sort != domain.DefaultRedditSort {
+			t.Errorf("fallbacks not applied: limit=%d depth=%d sort=%q", got.FetchLimit, got.Depth, got.Sort)
+		}
+	})
+
+	t.Run("per-request overrides", func(t *testing.T) {
+		got := e.resolveOptions(domain.EngineOptions{
+			RedditFetchLimit: 50, RedditDepth: 3, RedditSort: "new",
+			RedditMaxComments: 20, RedditMaxTopLevel: 5,
+		})
+		if got.FetchLimit != 50 || got.Depth != 3 || got.Sort != "new" || got.MaxComments != 20 || got.MaxTopLevel != 5 {
+			t.Errorf("overrides not applied: %+v", got)
+		}
+	})
+
+	t.Run("invalid sort ignored", func(t *testing.T) {
+		got := e.resolveOptions(domain.EngineOptions{RedditSort: "bogus"})
+		if got.Sort != domain.DefaultRedditSort {
+			t.Errorf("invalid sort should fall back to %q, got %q", domain.DefaultRedditSort, got.Sort)
+		}
+	})
 }
