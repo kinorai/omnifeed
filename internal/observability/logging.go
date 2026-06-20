@@ -26,11 +26,13 @@ func NewLogger(level, format string) *slog.Logger {
 
 	opts := &slog.HandlerOptions{Level: lvl}
 
+	// Logs go to stderr, never stdout: in stdio MCP mode stdout carries the
+	// JSON-RPC stream, so anything else on stdout would corrupt the protocol.
 	var handler slog.Handler
 	if strings.EqualFold(format, "text") {
-		handler = slog.NewTextHandler(os.Stdout, opts)
+		handler = slog.NewTextHandler(os.Stderr, opts)
 	} else {
-		handler = slog.NewJSONHandler(os.Stdout, opts)
+		handler = slog.NewJSONHandler(os.Stderr, opts)
 	}
 	return slog.New(handler)
 }

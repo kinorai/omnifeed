@@ -64,3 +64,21 @@ services:
       searxng:
         condition: service_healthy
     restart: unless-stopped
+
+  # Stdio MCP, for clients that only speak stdio. Prefer the HTTP transport on
+  # :8081 (the proxy service above) when this stack is already up. Guarded by the
+  # "mcp" profile so `docker compose up` never starts it — an MCP client launches
+  # it on demand, keeping all config (upstreams, network, image) in this file:
+  #   docker compose -f /abs/path/docker-compose.yml run -T --rm mcp
+  mcp:
+    image: kinorai/omnifeed:latest
+    profiles: ["mcp"]
+    command: ["--mcp-stdio"]
+    environment:
+      OMNIFEED_CRAWL4AI_URL: http://crawl4ai:11235/crawl
+      OMNIFEED_SEARXNG_URL: http://searxng:8080
+    depends_on:
+      crawl4ai:
+        condition: service_healthy
+      searxng:
+        condition: service_healthy
