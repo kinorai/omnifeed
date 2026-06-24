@@ -132,6 +132,11 @@ StatusError reports a non\-2xx HTTP status returned by an upstream after retries
 ```go
 type StatusError struct {
     StatusCode int
+    // Body is a bounded snippet of the upstream's error-response body, captured
+    // when retries are exhausted. It lets a caller tell an anti-bot block served
+    // as a 5xx (crawl4ai's detector) from a genuine upstream fault without
+    // re-reading the response. Empty when the body was absent or unreadable.
+    Body string
 }
 ```
 
