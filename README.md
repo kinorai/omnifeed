@@ -1,10 +1,10 @@
 <!-- markdownlint-disable MD033 MD041 -->
 <p align="center">
-  <img src="https://capsule-render.vercel.app/api?type=waving&color=0:F97316,100:7C3AED&height=220&section=header&text=omnifeed&fontSize=82&fontColor=ffffff&animation=fadeIn&fontAlignY=36&desc=One%20self-hosted%20gateway%20-%20web%20search%20%2B%20crawling%20for%20AI%20agents&descAlignY=56&descSize=17" alt="omnifeed" width="100%"/>
+  <img src="https://capsule-render.vercel.app/api?type=waving&color=0:F97316,100:7C3AED&height=220&section=header&text=omnifeed&fontSize=82&fontColor=ffffff&animation=fadeIn&fontAlignY=36" alt="omnifeed" width="100%"/>
 </p>
 
 <p align="center">
-  <img src="https://readme-typing-svg.demolab.com?font=Fira+Code&weight=700&size=27&color=F97316&center=true&vCenter=true&repeat=false&width=820&height=50&lines=search+%E2%86%92+URLs+%E2%86%92+content%2C+in+one+gateway" alt="search → URLs → content, in one gateway"/>
+  <img src="https://readme-typing-svg.demolab.com?font=Fira+Code&weight=700&size=27&color=F97316&center=true&vCenter=true&repeat=false&width=900&height=50&lines=Self-hosted+web+search+%2B+LLM-friendly+crawling,+with+a+dedicated+Reddit+engine" alt="Self-hosted web search + LLM-friendly crawling, with a dedicated Reddit engine"/>
 </p>
 
 <p align="center">
@@ -40,17 +40,17 @@ with a dedicated Reddit engine that returns <b>full comment trees as <a href="ht
 ## <img src="https://raw.githubusercontent.com/Tarikul-Islam-Anik/Animated-Fluent-Emojis/master/Emojis/Objects/Clapper%20Board.png" width="26" height="26" /> Demo
 
 <p align="center">
-  <img src="assets/demo.gif" alt="omnifeed demo — web_search then fetch_url returning a Reddit thread as TOON (render assets/demo.tape with vhs)" width="100%"/>
+  <img src="assets/demo.gif" alt="omnifeed demo — web_search then fetch_url returning a Reddit thread as TOON" width="100%"/>
 </p>
 
-<p align="center"><sub><code>web_search</code> → pick a URL → <code>fetch_url</code> → full Reddit comment tree as TOON. Generate this clip with <code>vhs assets/demo.tape</code>.</sub></p>
+<p align="center"><sub><code>web_search</code> → pick a URL → <code>fetch_url</code> → full Reddit comment tree as TOON.</sub></p>
 
 <img src="https://user-images.githubusercontent.com/74038190/212284100-561aa473-3905-4a80-b561-0d28506553ee.gif" width="100%">
 
 ## <img src="https://raw.githubusercontent.com/Tarikul-Islam-Anik/Animated-Fluent-Emojis/master/Emojis/Travel%20and%20places/Rocket.png" width="26" height="26" /> Quick start
 
 ```bash
-# No clone needed — fetch the compose file + SearXNG settings, then start:
+# Fetch the compose file + SearXNG settings, then start:
 curl -fsSL https://raw.githubusercontent.com/kinorai/omnifeed/main/docker-compose.yml -o docker-compose.yml
 curl -fsSL --create-dirs https://raw.githubusercontent.com/kinorai/omnifeed/main/searxng/settings.yml -o searxng/settings.yml
 docker compose up
@@ -58,7 +58,9 @@ docker compose up
 
 Starts omnifeed + SearXNG + crawl4ai — **tokenless out of the box** (the compose file sets `OMNIFEED_DEV_NO_AUTH=true`), so `docker compose up` just works. Point Open WebUI at `http://localhost:8080` with `WEB_LOADER_ENGINE=external`. (SearXNG is mounted with `searxng/settings.yml`, which enables the `json` format `web_search` needs.) See **Authentication** below to require a bearer token.
 
-### <img src="https://raw.githubusercontent.com/Tarikul-Islam-Anik/Animated-Fluent-Emojis/master/Emojis/Objects/Electric%20Plug.png" width="22" height="22" /> As an MCP server (Claude Code, Cursor, Windsurf, …)
+### <img src="https://raw.githubusercontent.com/Tarikul-Islam-Anik/Animated-Fluent-Emojis/master/Emojis/Objects/Electric%20Plug.png" width="22" height="22" /> As an MCP server
+
+Works with any MCP client — **Claude Code, Cursor, Codex, Gemini CLI, OpenCode, Windsurf, Pi**, and more.
 
 **HTTP — recommended.** `docker compose up` already runs the MCP server on `:8081` (tokenless in dev mode), so the simplest setup is no extra container at all — point your client at the URL:
 

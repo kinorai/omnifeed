@@ -109,12 +109,14 @@ func (c *Client) DoRetry(
 			return resp, nil
 		}
 
-		// Retryable: drain body so the connection can be reused, capture
-		// Retry-After, schedule the next attempt.
+		// Retryable: capture a bounded snippet of the body for later
+		// classification, drain the rest so the connection can be reused, then
+		// capture Retry-After and schedule the next attempt.
 		retryAfter := resp.Header.Get("Retry-After")
+		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, statusBodySnippetLimit))
 		_, _ = io.Copy(io.Discard, resp.Body)
 		_ = resp.Body.Close()
-		lastErr = &StatusError{StatusCode: resp.StatusCode}
+		lastErr = &StatusError{StatusCode: resp.StatusCode, Body: string(snippet)}
 
 		if secs, ok := parseRetryAfter(retryAfter); ok {
 			delay = min(time.Duration(secs)*time.Second, cfg.MaxDelay)
@@ -140,11 +142,22 @@ func parseRetryAfter(s string) (int, bool) {
 	return secs, true
 }
 
+// statusBodySnippetLimit bounds how much of a retryable error-response body is
+// captured into StatusError.Body for later classification (e.g. crawl4ai's
+// anti-bot verdict). The marker sits at the top of a small JSON error, so 2KiB
+// is ample and keeps the read off the hot path for large bodies.
+const statusBodySnippetLimit = 2 << 10
+
 // StatusError reports a non-2xx HTTP status returned by an upstream after
 // retries were exhausted (429 / 5xx). It lets callers classify the failure by
 // code via errors.As instead of parsing error text.
 type StatusError struct {
 	StatusCode int
+	// Body is a bounded snippet of the upstream's error-response body, captured
+	// when retries are exhausted. It lets a caller tell an anti-bot block served
+	// as a 5xx (crawl4ai's detector) from a genuine upstream fault without
+	// re-reading the response. Empty when the body was absent or unreadable.
+	Body string
 }
 
 func (e *StatusError) Error() string {

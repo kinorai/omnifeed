@@ -4,6 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/kinorai/omnifeed/internal/domain"
@@ -50,5 +54,35 @@ func TestClassifyClientError(t *testing.T) {
 				t.Fatalf("Kind = %q, want %q", fe.Kind, tc.want)
 			}
 		})
+	}
+}
+
+// On retry exhaustion the upstream's error body must survive on StatusError.Body
+// so callers can classify it (e.g. crawl4ai's anti-bot 5xx → bot_block).
+func TestDoRetryCapturesStatusBody(t *testing.T) {
+	const errBody = `{"error":"Blocked by anti-bot protection: Structural: minimal_text on small page"}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = io.WriteString(w, errBody)
+	}))
+	defer srv.Close()
+
+	// MaxAttempts: 1 keeps the test fast (no backoff); one 5xx is enough to
+	// produce the StatusError whose Body downstream classification reads.
+	resp, err := New(nil).DoRetry(context.Background(), http.MethodGet, srv.URL, nil, nil,
+		RetryConfig{MaxAttempts: 1})
+	if resp != nil { // nil on this 5xx path, but satisfies the bodyclose linter
+		_ = resp.Body.Close()
+	}
+
+	var se *StatusError
+	if !errors.As(err, &se) {
+		t.Fatalf("want *StatusError, got %T: %v", err, err)
+	}
+	if se.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("StatusCode = %d, want 500", se.StatusCode)
+	}
+	if !strings.Contains(se.Body, "anti-bot protection") {
+		t.Fatalf("Body = %q, want it to contain the upstream error text", se.Body)
 	}
 }
