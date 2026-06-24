@@ -6,9 +6,11 @@ package crawl4ai
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/kinorai/omnifeed/internal/antibot"
 	"github.com/kinorai/omnifeed/internal/domain"
@@ -123,7 +125,7 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, _ domain.EngineOption
 	resp, err := e.client.DoRetry(ctx, http.MethodPost, e.endpoint, body,
 		map[string]string{"Content-Type": "application/json"}, httpx.RetryConfig{})
 	if err != nil {
-		return domain.Document{}, httpx.ClassifyClientError(err, domain.KindUpstreamError)
+		return domain.Document{}, classifyCrawlError(err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -148,7 +150,11 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, _ domain.EngineOption
 		if msg == "" && len(cr.Results) > 0 {
 			msg = cr.Results[0].ErrorMessage
 		}
-		return domain.Document{}, &domain.FetchError{Kind: domain.KindUpstreamError, Err: fmt.Errorf("crawl failed: %s", msg)}
+		kind := domain.KindUpstreamError
+		if isAntibotBlock(msg) {
+			kind = domain.KindBotBlock
+		}
+		return domain.Document{}, &domain.FetchError{Kind: kind, Err: fmt.Errorf("crawl failed: %s", msg)}
 	}
 	if len(cr.Results) == 0 {
 		return domain.Document{}, &domain.FetchError{Kind: domain.KindBadResponse, Err: fmt.Errorf("crawl returned no results")}
@@ -196,4 +202,36 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n] + "..."
+}
+
+// antibotBlockMarker is the signature crawl4ai 0.8.x stamps into its error body
+// when its own anti-bot / structural detector rejects a page (e.g. "Blocked by
+// anti-bot protection: Structural: minimal_text on small page"). It is crawl4ai's
+// own verdict string, not an HTTP status, so it is matched here in the engine
+// rather than in the generic httpx / antibot layers.
+const antibotBlockMarker = "blocked by anti-bot protection"
+
+// isAntibotBlock reports whether a crawl4ai error message/body is its anti-bot
+// detector firing — a real wall, or a false positive on a legitimately small page
+// such as a raw .md / LICENSE.
+func isAntibotBlock(s string) bool {
+	return strings.Contains(strings.ToLower(s), antibotBlockMarker)
+}
+
+// classifyCrawlError turns a DoRetry transport error into a typed FetchError.
+// crawl4ai hard-errors a blocked or too-sparse page as a top-level HTTP 5xx whose
+// body names the block (see antibotBlockMarker); that is a content block, not an
+// upstream fault, so it is demoted from upstream_error to bot_block. It then drops
+// out of the OmnifeedCrawlErrors alert (which excludes bot_block) while staying a
+// distinct, visible metric series. A 5xx with any other body stays upstream_error
+// and still pages.
+func classifyCrawlError(err error) *domain.FetchError {
+	fe := httpx.ClassifyClientError(err, domain.KindUpstreamError)
+	if fe != nil && fe.Kind == domain.KindUpstreamError {
+		var se *httpx.StatusError
+		if errors.As(err, &se) && isAntibotBlock(se.Body) {
+			fe.Kind = domain.KindBotBlock
+		}
+	}
+	return fe
 }
