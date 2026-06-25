@@ -60,6 +60,15 @@ func (f *Fetcher) FetchThread(ctx context.Context, permalink string, limit, dept
 	return f.browserFetch(ctx, page, getJS(jsonURL), threadSession(permalink), false)
 }
 
+// FetchListing retrieves a subreddit listing (hot/new/top/…) via its .json
+// endpoint, fetched same-origin from inside a real browser on reddit.com — the
+// same bot-wall evasion FetchThread uses. limit caps the number of posts.
+func (f *Fetcher) FetchListing(ctx context.Context, sub, sort string, limit int) ([]byte, error) {
+	page := fmt.Sprintf("%s/r/%s/%s/", redditOrigin, sub, sort)
+	jsonURL := fmt.Sprintf("%s/r/%s/%s.json?limit=%d&raw_json=1", redditOrigin, sub, sort, limit)
+	return f.browserFetch(ctx, page, getJS(jsonURL), "carp-reddit-list-"+sub, false)
+}
+
 // FetchMoreChildren expands collapsed reply branches via /api/morechildren.
 // linkID must include the t3_ prefix; childIDs are bare IDs (no prefix). It
 // reuses the thread's warmed browser session (js_only: no re-navigation).

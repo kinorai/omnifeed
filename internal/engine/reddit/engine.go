@@ -22,6 +22,11 @@ import (
 // total latency and rate-limit exposure.
 const MaxExpansionRounds = 40
 
+// listingLimit caps posts fetched for a subreddit listing. Reddit's own default
+// page is 25; a listing carries no comment trees, so this stays small and bounded
+// regardless of the (comment-oriented) FetchLimit knob.
+const listingLimit = 25
+
 // HostMatcher matches reddit.com and its subdomains (old, new, np, m, amp, ...).
 var hostMatcher = regexp.MustCompile(`(?i)(^|\.)reddit\.com$`)
 
@@ -77,8 +82,11 @@ func (*Engine) Matches(rawURL string) bool {
 	if IsShareURL(rawURL) {
 		return true
 	}
-	_, err := NormalizePermalink(rawURL)
-	return err == nil
+	if _, err := NormalizePermalink(rawURL); err == nil {
+		return true
+	}
+	_, _, ok := ParseListingURL(rawURL)
+	return ok
 }
 
 // IsRedditURL is the package-level matcher used by Engine.Matches; exported so
@@ -99,6 +107,13 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, eo domain.EngineOptio
 	// Bound wall-clock so a slow expand=full can't outlive the handler.
 	ctx, cancel := context.WithTimeout(ctx, e.timeout)
 	defer cancel()
+
+	// A bare subreddit listing (/r/{sub}/, /r/{sub}/top, …) has no comment tree —
+	// fetch the post list instead. Checked before the comments path because
+	// ParseListingURL only claims listing-shaped paths (never /comments/).
+	if sub, sort, ok := ParseListingURL(rawURL); ok {
+		return e.crawlListing(ctx, sub, sort, opts)
+	}
 
 	// Reddit share links (/r/{sub}/s/{code}) 301-redirect to the canonical
 	// /comments/ permalink; resolve them in the browser before normalizing.
@@ -284,4 +299,53 @@ func encode(thread *Thread, format string) ([]byte, error) {
 		return json.Marshal(thread)
 	}
 	return toon.Marshal(thread, toon.WithLengthMarkers(true))
+}
+
+// crawlListing renders a bare subreddit page (/r/{sub}/{sort}) as its post list.
+// It reuses the same browser-fetch path as threads (so it clears Reddit's wall),
+// but parses the flat Listing shape instead of a comment tree.
+func (e *Engine) crawlListing(ctx context.Context, sub, sort string, opts Options) (domain.Document, error) {
+	release := e.limiter.Acquire(redditOrigin + "/r/" + sub + "/" + sort)
+	defer release()
+
+	raw, err := e.fetcher.FetchListing(ctx, sub, sort, listingLimit)
+	if err != nil {
+		return domain.Document{}, fmt.Errorf("fetch listing: %w", err)
+	}
+	posts, err := ParseSubredditListing(raw)
+	if err != nil {
+		return domain.Document{}, fmt.Errorf("parse listing: %w", err)
+	}
+
+	listing := SubredditListing{Subreddit: sub, Sort: sort, Posts: posts}
+	encoded, err := encodeListing(&listing, opts.Format)
+	if err != nil {
+		return domain.Document{}, fmt.Errorf("encode: %w", err)
+	}
+
+	e.logger.Info("reddit listing complete",
+		"subreddit", sub,
+		"sort", sort,
+		"posts", len(posts),
+		"format", opts.Format,
+		"bytes", len(encoded),
+	)
+
+	return domain.Document{
+		PageContent: string(encoded),
+		Metadata: map[string]string{
+			"source":      fmt.Sprintf("%s/r/%s/%s/", redditOrigin, sub, sort),
+			"status_code": "200",
+			"format":      opts.Format,
+			"posts":       strconv.Itoa(len(posts)),
+		},
+	}, nil
+}
+
+// encodeListing serializes a SubredditListing as TOON or JSON (mirrors encode).
+func encodeListing(l *SubredditListing, format string) ([]byte, error) {
+	if format == "json" {
+		return json.Marshal(l)
+	}
+	return toon.Marshal(l, toon.WithLengthMarkers(true))
 }

@@ -331,6 +331,61 @@ func NormalizePermalink(rawURL string) (string, error) {
 	return m[1], nil
 }
 
+// listingRE matches a subreddit listing path — /r/{sub} optionally followed by a
+// sort — and nothing deeper. It deliberately does NOT match /r/{sub}/comments/…
+// (a thread), /r/{sub}/s/… (a share link), /r/{sub}/wiki/…, or /user/…; those
+// keep falling through to the comments path or the generic fallback.
+var listingRE = regexp.MustCompile(`(?i)^/r/([^/]+)(?:/(hot|new|top|rising|best|controversial))?/?$`)
+
+// ParseListingURL extracts the subreddit and sort from a subreddit listing URL.
+// Sort defaults to "hot" (Reddit's default view) when the path omits it. ok is
+// false for any reddit.com URL that isn't a bare subreddit listing.
+func ParseListingURL(rawURL string) (sub, sort string, ok bool) {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return "", "", false
+	}
+	m := listingRE.FindStringSubmatch(u.Path)
+	if m == nil {
+		return "", "", false
+	}
+	sort = strings.ToLower(m[2])
+	if sort == "" {
+		sort = "hot"
+	}
+	return m[1], sort, true
+}
+
+// ParseSubredditListing decodes a subreddit listing (.json) — a single Listing
+// whose children are t3 posts — into a slice of Posts (no comment trees).
+func ParseSubredditListing(raw []byte) ([]Post, error) {
+	var wrap rawListingWrap
+	if err := json.Unmarshal(raw, &wrap); err != nil {
+		return nil, err
+	}
+	posts := make([]Post, 0, len(wrap.Data.Children))
+	for _, c := range wrap.Data.Children {
+		var p rawPost
+		if err := json.Unmarshal(c, &p); err != nil || p.Kind != "t3" {
+			continue
+		}
+		posts = append(posts, Post{
+			ID:          p.Data.ID,
+			Title:       p.Data.Title,
+			Author:      p.Data.Author,
+			Subreddit:   p.Data.Subreddit,
+			Score:       p.Data.Score,
+			UpvoteRatio: p.Data.UpvoteRatio,
+			NumComments: p.Data.NumComments,
+			Created:     int64(p.Data.CreatedUTC),
+			URL:         p.Data.URL,
+			Selftext:    cleanBody(p.Data.Selftext),
+			Permalink:   p.Data.Permalink,
+		})
+	}
+	return posts, nil
+}
+
 // shareRE matches Reddit share links: /r/{sub}/s/{code}. They 301-redirect to
 // the canonical /comments/ permalink and must be resolved before fetching.
 var shareRE = regexp.MustCompile(`(?i)^/r/[^/]+/s/[A-Za-z0-9_-]+/?$`)
