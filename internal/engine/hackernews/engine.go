@@ -1,0 +1,209 @@
+package hackernews
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/url"
+	"regexp"
+	"strconv"
+	"strings"
+
+	"github.com/kinorai/omnifeed/internal/domain"
+	"github.com/kinorai/omnifeed/internal/httpx"
+	"github.com/toon-format/toon-go"
+)
+
+const (
+	defaultAPIBase = "https://hn.algolia.com/api/v1"
+	frontPageSize  = 30
+)
+
+// hostMatcher matches news.ycombinator.com and its subdomains.
+var hostMatcher = regexp.MustCompile(`(?i)(^|\.)news\.ycombinator\.com$`)
+
+// pathFeed maps a front-page-style path to a feed label.
+var pathFeed = map[string]string{
+	"/": "front_page", "/news": "front_page", "/front": "front_page",
+	"/newest": "newest", "/ask": "ask", "/show": "show",
+}
+
+// feedQuery maps a feed label to the Algolia endpoint + tag that serves it.
+var feedQuery = map[string]struct{ endpoint, tag string }{
+	"front_page": {"search", "front_page"},
+	"newest":     {"search_by_date", "story"},
+	"ask":        {"search", "ask_hn"},
+	"show":       {"search", "show_hn"},
+}
+
+// Engine implements domain.Engine for Hacker News URLs via the Algolia API.
+type Engine struct {
+	client  *httpx.Client
+	limiter *httpx.DomainLimiter
+	apiBase string
+	logger  *slog.Logger
+}
+
+// Config configures a Hacker News Engine.
+type Config struct {
+	Client  *httpx.Client
+	Limiter *httpx.DomainLimiter
+	APIBase string // defaults to the public Algolia API; overridden in tests
+	Logger  *slog.Logger
+}
+
+// New returns a Hacker News Engine configured per cfg.
+func New(cfg Config) *Engine {
+	if cfg.APIBase == "" {
+		cfg.APIBase = defaultAPIBase
+	}
+	if cfg.Logger == nil {
+		cfg.Logger = slog.Default()
+	}
+	return &Engine{
+		client:  cfg.Client,
+		limiter: cfg.Limiter,
+		apiBase: strings.TrimRight(cfg.APIBase, "/"),
+		logger:  cfg.Logger,
+	}
+}
+
+// Name returns the engine identifier ("hackernews").
+func (*Engine) Name() string { return "hackernews" }
+
+// Matches claims the news.ycombinator.com URLs this engine renders: /item?id=N
+// threads and the front-page-style feeds (/, /news, /newest, /ask, /show).
+// Anything else (user profiles, /jobs, …) falls through to the generic fallback.
+func (*Engine) Matches(rawURL string) bool {
+	_, ok := parseTarget(rawURL)
+	return ok
+}
+
+// target is the resolved fetch plan for a Hacker News URL.
+type target struct {
+	item bool   // an /item?id= thread
+	id   string // numeric item id (item only)
+	feed string // feed label (front_page/newest/ask/show) — list only
+}
+
+// parseTarget classifies a Hacker News URL into a fetch plan. ok is false for any
+// news.ycombinator.com URL this engine doesn't render (so it falls through).
+func parseTarget(rawURL string) (target, bool) {
+	u, err := url.Parse(rawURL)
+	if err != nil || !hostMatcher.MatchString(u.Hostname()) {
+		return target{}, false
+	}
+	if u.Path == "/item" {
+		id := u.Query().Get("id")
+		if !isDigits(id) {
+			return target{}, false
+		}
+		return target{item: true, id: id}, true
+	}
+	p := strings.TrimSuffix(u.Path, "/")
+	if p == "" {
+		p = "/"
+	}
+	if feed, ok := pathFeed[p]; ok {
+		return target{feed: feed}, true
+	}
+	return target{}, false
+}
+
+// Crawl fetches the HN item or feed behind rawURL from the Algolia API and
+// returns it encoded as TOON.
+func (e *Engine) Crawl(ctx context.Context, rawURL string, _ domain.EngineOptions) (domain.Document, error) {
+	t, ok := parseTarget(rawURL)
+	if !ok {
+		return domain.Document{}, fmt.Errorf("unsupported hacker news url: %s", rawURL)
+	}
+
+	if e.limiter != nil {
+		release := e.limiter.Acquire(e.apiBase)
+		defer release()
+	}
+
+	if t.item {
+		raw, err := e.get(ctx, e.apiBase+"/items/"+t.id)
+		if err != nil {
+			return domain.Document{}, fmt.Errorf("fetch item: %w", err)
+		}
+		thread, perr := parseThread(raw)
+		if perr != nil {
+			return domain.Document{}, &domain.FetchError{Kind: domain.KindBadResponse, Err: fmt.Errorf("parse item: %w", perr)}
+		}
+		return e.document(thread, rawURL, map[string]string{
+			"id":       t.id,
+			"comments": strconv.Itoa(len(thread.Comments)),
+		})
+	}
+
+	fq := feedQuery[t.feed]
+	q := url.Values{}
+	q.Set("tags", fq.tag)
+	q.Set("hitsPerPage", strconv.Itoa(frontPageSize))
+	raw, err := e.get(ctx, e.apiBase+"/"+fq.endpoint+"?"+q.Encode())
+	if err != nil {
+		return domain.Document{}, fmt.Errorf("fetch feed: %w", err)
+	}
+	fp, perr := parseFrontPage(raw, t.feed)
+	if perr != nil {
+		return domain.Document{}, &domain.FetchError{Kind: domain.KindBadResponse, Err: fmt.Errorf("parse feed: %w", perr)}
+	}
+	return e.document(fp, rawURL, map[string]string{
+		"feed":    t.feed,
+		"stories": strconv.Itoa(len(fp.Stories)),
+	})
+}
+
+// get fetches an Algolia API URL and returns the raw JSON body.
+func (e *Engine) get(ctx context.Context, apiURL string) ([]byte, error) {
+	resp, err := e.client.DoRetry(ctx, http.MethodGet, apiURL, nil,
+		map[string]string{"Accept": "application/json"}, httpx.RetryConfig{})
+	if err != nil {
+		return nil, httpx.ClassifyClientError(err, domain.KindUpstreamError)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 20<<20)) // 20MB cap
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, &domain.FetchError{
+			Kind:       domain.KindForStatus(resp.StatusCode),
+			StatusCode: resp.StatusCode,
+			Err:        fmt.Errorf("hn algolia returned %d", resp.StatusCode),
+		}
+	}
+	return body, nil
+}
+
+// document encodes v as TOON and wraps it in a Document with standard metadata.
+func (e *Engine) document(v any, source string, extra map[string]string) (domain.Document, error) {
+	encoded, err := toon.Marshal(v, toon.WithLengthMarkers(true))
+	if err != nil {
+		return domain.Document{}, fmt.Errorf("encode: %w", err)
+	}
+	meta := map[string]string{"source": source, "status_code": "200"}
+	for k, val := range extra {
+		meta[k] = val
+	}
+	e.logger.Info("hackernews crawl complete", "source", source, "bytes", len(encoded))
+	return domain.Document{PageContent: string(encoded), Metadata: meta}, nil
+}
+
+// isDigits reports whether s is a non-empty run of ASCII digits.
+func isDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}

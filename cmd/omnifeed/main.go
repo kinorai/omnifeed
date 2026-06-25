@@ -21,6 +21,7 @@ import (
 	"github.com/kinorai/omnifeed/internal/domain"
 	"github.com/kinorai/omnifeed/internal/engine"
 	"github.com/kinorai/omnifeed/internal/engine/crawl4ai"
+	"github.com/kinorai/omnifeed/internal/engine/hackernews"
 	"github.com/kinorai/omnifeed/internal/engine/reddit"
 	"github.com/kinorai/omnifeed/internal/httpx"
 	"github.com/kinorai/omnifeed/internal/observability"
@@ -87,13 +88,24 @@ func run(cfg config.Config, logger *slog.Logger) error {
 		Metrics:     metrics,
 	})
 	crawl4aiEngine := crawl4ai.New(crawl4ai.Config{
-		Endpoint: cfg.Crawl4AIURL,
-		Client:   httpClient,
-		Limiter:  limiter,
+		Endpoint:  cfg.Crawl4AIURL,
+		Client:    httpClient,
+		Limiter:   limiter,
+		KeepLinks: cfg.Crawl4AIKeepLinks,
+	})
+
+	// The Hacker News engine reads the public Algolia HN API directly (it is not
+	// bot-walled, unlike Reddit), so — exceptionally — it does NOT go through
+	// crawl4ai. It needs outbound access to hn.algolia.com.
+	hackerNewsEngine := hackernews.New(hackernews.Config{
+		Client:  httpClient,
+		Limiter: limiter,
+		Logger:  logger,
 	})
 
 	registry := engine.New().
 		Register(redditEngine).
+		Register(hackerNewsEngine).
 		Fallback(crawl4aiEngine).
 		BlockPrivateIPs(cfg.BlockPrivateIPs)
 
