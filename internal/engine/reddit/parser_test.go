@@ -334,3 +334,48 @@ func TestResolveOptions(t *testing.T) {
 		}
 	})
 }
+
+func TestParseListingURL(t *testing.T) {
+	cases := []struct {
+		url      string
+		wantSub  string
+		wantSort string
+		wantOK   bool
+	}{
+		{"https://www.reddit.com/r/devops/", "devops", "hot", true},
+		{"https://www.reddit.com/r/golang", "golang", "hot", true},
+		{"https://old.reddit.com/r/golang/top", "golang", "top", true},
+		{"https://www.reddit.com/r/golang/new/", "golang", "new", true},
+		{"https://www.reddit.com/r/news/comments/1t056xf", "", "", false}, // a thread
+		{"https://www.reddit.com/r/golang/wiki/index", "", "", false},     // wiki page
+		{"https://www.reddit.com/user/spez", "", "", false},               // profile
+	}
+	for _, tc := range cases {
+		sub, sort, ok := ParseListingURL(tc.url)
+		if ok != tc.wantOK || sub != tc.wantSub || sort != tc.wantSort {
+			t.Errorf("ParseListingURL(%q) = (%q,%q,%v), want (%q,%q,%v)",
+				tc.url, sub, sort, ok, tc.wantSub, tc.wantSort, tc.wantOK)
+		}
+	}
+}
+
+func TestParseSubredditListing(t *testing.T) {
+	raw := []byte(`{"kind":"Listing","data":{"children":[
+		{"kind":"t3","data":{"id":"abc","title":"First","author":"alice","subreddit":"golang","score":42,"upvote_ratio":0.95,"num_comments":7,"created_utc":1700000000,"url":"https://example.com/a","permalink":"/r/golang/comments/abc/first/"}},
+		{"kind":"t3","data":{"id":"def","title":"Second","author":"bob","subreddit":"golang","score":10,"num_comments":2,"created_utc":1700000100,"permalink":"/r/golang/comments/def/second/"}},
+		{"kind":"more","data":{"id":"xyz"}}
+	]}}`)
+	posts, err := ParseSubredditListing(raw)
+	if err != nil {
+		t.Fatalf("ParseSubredditListing: %v", err)
+	}
+	if len(posts) != 2 {
+		t.Fatalf("posts = %d, want 2 (the 'more' child must be skipped)", len(posts))
+	}
+	if posts[0].ID != "abc" || posts[0].Title != "First" || posts[0].Author != "alice" || posts[0].Score != 42 {
+		t.Errorf("posts[0] = %+v", posts[0])
+	}
+	if posts[0].Created != 1700000000 {
+		t.Errorf("posts[0].Created = %d, want 1700000000", posts[0].Created)
+	}
+}

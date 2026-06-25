@@ -55,6 +55,14 @@ type Thread struct {
 	Gaps     []Gap     `json:"gaps,omitempty" toon:"gaps,omitempty"`
 }
 
+// SubredditListing is a subreddit page (hot/new/top/…) reduced to its posts,
+// without comment trees — the output shape for a bare /r/{sub}/ listing URL.
+type SubredditListing struct {
+	Subreddit string `json:"subreddit" toon:"subreddit"`
+	Sort      string `json:"sort" toon:"sort"`
+	Posts     []Post `json:"posts" toon:"posts"`
+}
+
 // --- Raw Reddit wire shapes ---
 
 type rawListingWrap struct {
