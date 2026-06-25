@@ -33,8 +33,9 @@ type Config struct {
 	AllowNoAuth bool
 
 	// Upstream crawl4ai.
-	Crawl4AIURL     string
-	Crawl4AITimeout time.Duration
+	Crawl4AIURL       string
+	Crawl4AITimeout   time.Duration
+	Crawl4AIKeepLinks bool // render hyperlink anchor text + keep external links in markdown
 
 	// Upstream SearXNG (optional). Empty disables the `search` MCP tool.
 	SearXNGURL     string
@@ -92,6 +93,9 @@ func Load() (Config, error) {
 		return c, err
 	}
 	if c.Crawl4AITimeout, err = envDuration("OMNIFEED_CRAWL4AI_TIMEOUT", 90*time.Second); err != nil {
+		return c, err
+	}
+	if c.Crawl4AIKeepLinks, err = envBool("OMNIFEED_CRAWL4AI_KEEP_LINKS", true); err != nil {
 		return c, err
 	}
 	if c.SearXNGTimeout, err = envDuration("OMNIFEED_SEARXNG_TIMEOUT", 15*time.Second); err != nil {
