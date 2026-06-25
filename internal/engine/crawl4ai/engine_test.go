@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -104,6 +105,60 @@ func TestCrawlClassifiesUnsuccessfulResponse(t *testing.T) {
 			}
 			if fe.Kind != tc.wantKind {
 				t.Fatalf("Kind = %q, want %q", fe.Kind, tc.wantKind)
+			}
+		})
+	}
+}
+
+// KeepLinks must drive the crawl4ai markdown options: with it on, anchor text is
+// rendered (ignore_links=false) and external links are retained
+// (exclude_external_links=false). Dropping them loses the primary content on
+// link-dense pages (e.g. every Hacker News story title is an external link).
+func TestCrawlRequestLinkOptions(t *testing.T) {
+	cases := []struct {
+		name                       string
+		keepLinks                  bool
+		wantIgnore, wantExcludeExt bool
+	}{
+		{"keep links renders anchors", true, false, false},
+		{"strip links for lean output", false, true, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var gotIgnore, gotExcludeExt bool
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				raw, _ := io.ReadAll(r.Body)
+				var req map[string]any
+				if err := json.Unmarshal(raw, &req); err != nil {
+					t.Errorf("decode request: %v", err)
+				}
+				params := req["crawler_config"].(map[string]any)["params"].(map[string]any)
+				gotExcludeExt = params["exclude_external_links"].(bool)
+				mg := params["markdown_generator"].(map[string]any)["params"].(map[string]any)
+				gotIgnore = mg["options"].(map[string]any)["ignore_links"].(bool)
+
+				resp := map[string]any{"success": true, "results": []any{map[string]any{
+					"success": true, "status_code": 200, "markdown": map[string]any{"raw_markdown": "# ok"},
+				}}}
+				b, _ := json.Marshal(resp)
+				_, _ = w.Write(b)
+			}))
+			defer srv.Close()
+
+			e := New(Config{
+				Endpoint:  srv.URL,
+				Client:    httpx.New(nil),
+				Limiter:   httpx.NewDomainLimiter(2, 0),
+				KeepLinks: tc.keepLinks,
+			})
+			if _, err := e.Crawl(context.Background(), "https://example.com/page", domain.EngineOptions{}); err != nil {
+				t.Fatalf("Crawl() error = %v", err)
+			}
+			if gotIgnore != tc.wantIgnore {
+				t.Errorf("ignore_links = %v, want %v", gotIgnore, tc.wantIgnore)
+			}
+			if gotExcludeExt != tc.wantExcludeExt {
+				t.Errorf("exclude_external_links = %v, want %v", gotExcludeExt, tc.wantExcludeExt)
 			}
 		})
 	}

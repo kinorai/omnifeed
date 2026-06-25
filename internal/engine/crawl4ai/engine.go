@@ -20,9 +20,10 @@ import (
 // Engine sends URLs to crawl4ai's /crawl endpoint and extracts the best-fit
 // markdown body. It is registered as the Registry fallback.
 type Engine struct {
-	endpoint string
-	client   *httpx.Client
-	limiter  *httpx.DomainLimiter
+	endpoint  string
+	client    *httpx.Client
+	limiter   *httpx.DomainLimiter
+	keepLinks bool
 }
 
 // Config configures the crawl4ai Engine.
@@ -30,11 +31,15 @@ type Config struct {
 	Endpoint string
 	Client   *httpx.Client
 	Limiter  *httpx.DomainLimiter
+	// KeepLinks renders hyperlink anchor text and retains external links in the
+	// extracted markdown. When false, both are stripped for leaner output. The
+	// default is owned by config (OMNIFEED_CRAWL4AI_KEEP_LINKS).
+	KeepLinks bool
 }
 
 // New returns a crawl4ai fallback Engine wired with the given config.
 func New(cfg Config) *Engine {
-	return &Engine{endpoint: cfg.Endpoint, client: cfg.Client, limiter: cfg.Limiter}
+	return &Engine{endpoint: cfg.Endpoint, client: cfg.Client, limiter: cfg.Limiter, keepLinks: cfg.KeepLinks}
 }
 
 // Name returns the engine identifier ("crawl4ai").
@@ -81,6 +86,13 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, _ domain.EngineOption
 	release := e.limiter.Acquire(rawURL)
 	defer release()
 
+	// Dropping links silently loses the primary content on link-dense pages —
+	// e.g. every story title on a Hacker News front page is an external link.
+	// keepLinks renders anchor text (ignore_links=false) and retains external
+	// anchors (exclude_external_links=false).
+	ignoreLinks := !e.keepLinks
+	excludeExternalLinks := !e.keepLinks
+
 	req := crawlRequest{
 		URLs: []string{rawURL},
 		CrawlerConfig: map[string]interface{}{
@@ -95,7 +107,7 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, _ domain.EngineOption
 				"max_retries":                2,
 				"excluded_tags":              []string{"nav", "footer", "header", "form", "aside"},
 				"remove_overlay_elements":    true,
-				"exclude_external_links":     true,
+				"exclude_external_links":     excludeExternalLinks,
 				"exclude_social_media_links": true,
 				"exclude_external_images":    true,
 				"markdown_generator": map[string]interface{}{
@@ -109,7 +121,7 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, _ domain.EngineOption
 							},
 						},
 						"options": map[string]interface{}{
-							"ignore_links": true,
+							"ignore_links": ignoreLinks,
 						},
 					},
 				},
@@ -123,7 +135,8 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, _ domain.EngineOption
 	}
 
 	resp, err := e.client.DoRetry(ctx, http.MethodPost, e.endpoint, body,
-		map[string]string{"Content-Type": "application/json"}, httpx.RetryConfig{})
+		map[string]string{"Content-Type": "application/json"},
+		httpx.RetryConfig{RetryableStatus: retryableCrawlStatus})
 	if err != nil {
 		return domain.Document{}, classifyCrawlError(err)
 	}
@@ -216,6 +229,15 @@ const antibotBlockMarker = "blocked by anti-bot protection"
 // such as a raw .md / LICENSE.
 func isAntibotBlock(s string) bool {
 	return strings.Contains(strings.ToLower(s), antibotBlockMarker)
+}
+
+// retryableCrawlStatus vetoes DoRetry's retry of a crawl4ai anti-bot block. The
+// block surfaces as a 5xx whose body names it (antibotBlockMarker); it is not
+// transient, so retrying just re-drives an expensive browser crawl for the same
+// failure — the reasoning the Reddit path already applies with MaxAttempts:1. A
+// 5xx with any other body stays retryable (a genuine transient upstream fault).
+func retryableCrawlStatus(status int, body string) bool {
+	return status < 500 || !isAntibotBlock(body)
 }
 
 // classifyCrawlError turns a DoRetry transport error into a typed FetchError.

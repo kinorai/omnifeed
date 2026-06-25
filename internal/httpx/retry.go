@@ -21,6 +21,11 @@ type RetryConfig struct {
 	MaxAttempts int           // total attempts including the first try
 	BaseDelay   time.Duration // first backoff interval
 	MaxDelay    time.Duration // cap on any single backoff
+	// RetryableStatus, when non-nil, is consulted for a retryable status (429 or
+	// 5xx) before another attempt is scheduled. Returning false stops retries and
+	// surfaces the StatusError immediately — used to avoid re-driving an expensive
+	// crawl for a non-transient block that an upstream reports as a 5xx.
+	RetryableStatus func(status int, body string) bool
 }
 
 func (c *RetryConfig) defaults() {
@@ -51,7 +56,9 @@ func New(c *http.Client) *Client {
 
 // DoRetry sends an HTTP request with exponential-backoff-with-jitter retries
 // on transient failures. It retries on network errors, 429, and 5xx. 4xx
-// other than 429 and context cancellation are not retried.
+// other than 429 and context cancellation are not retried. A non-nil
+// RetryConfig.RetryableStatus can additionally veto retrying a specific 429/5xx
+// (e.g. a non-transient block), returning the StatusError immediately.
 //
 // Body is passed as a byte slice (or nil) so the helper can rebuild the
 // request on each attempt — http.Request bodies are single-use streams.
@@ -116,7 +123,15 @@ func (c *Client) DoRetry(
 		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, statusBodySnippetLimit))
 		_, _ = io.Copy(io.Discard, resp.Body)
 		_ = resp.Body.Close()
-		lastErr = &StatusError{StatusCode: resp.StatusCode, Body: string(snippet)}
+		errBody := string(snippet)
+		lastErr = &StatusError{StatusCode: resp.StatusCode, Body: errBody}
+
+		// Let the caller veto a retry for a status it knows is non-transient (e.g.
+		// an anti-bot block served as a 5xx). Without this the block is re-driven
+		// MaxAttempts times at full crawl cost.
+		if cfg.RetryableStatus != nil && !cfg.RetryableStatus(resp.StatusCode, errBody) {
+			return nil, lastErr
+		}
 
 		if secs, ok := parseRetryAfter(retryAfter); ok {
 			delay = min(time.Duration(secs)*time.Second, cfg.MaxDelay)
