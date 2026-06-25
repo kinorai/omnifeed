@@ -1,0 +1,110 @@
+package hackernews
+
+import (
+	"context"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/kinorai/omnifeed/internal/domain"
+	"github.com/kinorai/omnifeed/internal/httpx"
+)
+
+// Matches must claim /item?id=N threads and the supported feed paths, and fall
+// through for anything else on the host (so the generic fallback handles it).
+func TestMatches(t *testing.T) {
+	e := &Engine{}
+
+	claim := []string{
+		"https://news.ycombinator.com/",
+		"https://news.ycombinator.com/news",
+		"https://news.ycombinator.com/newest",
+		"https://news.ycombinator.com/ask",
+		"https://news.ycombinator.com/show",
+		"https://news.ycombinator.com/item?id=43307229",
+	}
+	for _, u := range claim {
+		if !e.Matches(u) {
+			t.Errorf("Matches(%q) = false, want true", u)
+		}
+	}
+
+	fallThrough := []string{
+		"https://news.ycombinator.com/item",        // no id
+		"https://news.ycombinator.com/item?id=abc", // non-numeric id
+		"https://news.ycombinator.com/user?id=pg",  // profile
+		"https://news.ycombinator.com/jobs",        // unsupported feed
+		"https://example.com/news",                 // not Hacker News
+	}
+	for _, u := range fallThrough {
+		if e.Matches(u) {
+			t.Errorf("Matches(%q) = true, want false (should fall through)", u)
+		}
+	}
+}
+
+// Crawl on an /item URL must fetch /items/{id}, flatten the comment tree with
+// parent_id, unescape HTML, skip deleted nodes but keep their live replies.
+func TestCrawlItem(t *testing.T) {
+	const item = `{"id":1,"created_at_i":1700000000,"type":"story","author":"pg","title":"Hello","url":"https://example.com","points":100,"children":[
+		{"id":2,"author":"alice","text":"<p>first &amp; best","created_at_i":1700000100,"parent_id":1,"children":[
+			{"id":3,"author":"bob","text":"reply","created_at_i":1700000200,"parent_id":2,"children":[]}
+		]},
+		{"id":4,"author":null,"text":null,"created_at_i":1700000300,"parent_id":1,"children":[
+			{"id":5,"author":"carol","text":"under a deleted parent","created_at_i":1700000400,"parent_id":4,"children":[]}
+		]}
+	]}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.Contains(r.URL.Path, "/items/1") {
+			t.Errorf("unexpected path %q", r.URL.Path)
+		}
+		_, _ = io.WriteString(w, item)
+	}))
+	defer srv.Close()
+
+	e := New(Config{Client: httpx.New(nil), APIBase: srv.URL})
+	doc, err := e.Crawl(context.Background(), "https://news.ycombinator.com/item?id=1", domain.EngineOptions{})
+	if err != nil {
+		t.Fatalf("Crawl: %v", err)
+	}
+	// Comments 2, 3, 5 are live; deleted #4 is skipped but its child #5 survives.
+	if doc.Metadata["comments"] != "3" {
+		t.Fatalf("comments = %q, want 3\n%s", doc.Metadata["comments"], doc.PageContent)
+	}
+	for _, want := range []string{"Hello", "alice", "first & best", "bob", "carol"} {
+		if !strings.Contains(doc.PageContent, want) {
+			t.Errorf("output missing %q:\n%s", want, doc.PageContent)
+		}
+	}
+}
+
+// Crawl on a feed path must query the right Algolia tag and rank the hits.
+func TestCrawlFrontPage(t *testing.T) {
+	const search = `{"hits":[
+		{"objectID":"10","title":"Story A","url":"https://a.com","author":"alice","points":50,"num_comments":12,"created_at_i":1700000000},
+		{"objectID":"20","title":"Story B","url":"https://b.com","author":"bob","points":30,"num_comments":4,"created_at_i":1700000100}
+	]}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("tags"); got != "front_page" {
+			t.Errorf("tags = %q, want front_page", got)
+		}
+		_, _ = io.WriteString(w, search)
+	}))
+	defer srv.Close()
+
+	e := New(Config{Client: httpx.New(nil), APIBase: srv.URL})
+	doc, err := e.Crawl(context.Background(), "https://news.ycombinator.com/news", domain.EngineOptions{})
+	if err != nil {
+		t.Fatalf("Crawl: %v", err)
+	}
+	if doc.Metadata["stories"] != "2" {
+		t.Fatalf("stories = %q, want 2", doc.Metadata["stories"])
+	}
+	for _, want := range []string{"Story A", "Story B", "alice"} {
+		if !strings.Contains(doc.PageContent, want) {
+			t.Errorf("output missing %q:\n%s", want, doc.PageContent)
+		}
+	}
+}
