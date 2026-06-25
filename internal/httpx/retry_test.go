@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/kinorai/omnifeed/internal/domain"
 )
@@ -84,5 +85,50 @@ func TestDoRetryCapturesStatusBody(t *testing.T) {
 	}
 	if !strings.Contains(se.Body, "anti-bot protection") {
 		t.Fatalf("Body = %q, want it to contain the upstream error text", se.Body)
+	}
+}
+
+// RetryableStatus lets a caller veto retrying a non-transient 5xx (e.g. an
+// anti-bot block crawl4ai serves as a 500). A vetoed status is attempted once;
+// any other 5xx still retries to MaxAttempts.
+func TestDoRetryRespectsRetryableStatus(t *testing.T) {
+	cases := []struct {
+		name         string
+		body         string
+		wantAttempts int
+	}{
+		{"anti-bot block is not retried", `{"error":"Blocked by anti-bot protection"}`, 1},
+		{"generic 5xx still retries", `{"error":"internal server error"}`, 3},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var attempts int
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				attempts++
+				w.WriteHeader(http.StatusInternalServerError)
+				_, _ = io.WriteString(w, tc.body)
+			}))
+			defer srv.Close()
+
+			resp, err := New(nil).DoRetry(context.Background(), http.MethodGet, srv.URL, nil, nil,
+				RetryConfig{
+					MaxAttempts: 3,
+					BaseDelay:   time.Microsecond, // keep backoff negligible
+					RetryableStatus: func(status int, body string) bool {
+						return status < 500 || !strings.Contains(body, "anti-bot protection")
+					},
+				})
+			if resp != nil { // nil on this 5xx path, but satisfies the bodyclose linter
+				_ = resp.Body.Close()
+			}
+
+			var se *StatusError
+			if !errors.As(err, &se) {
+				t.Fatalf("want *StatusError, got %T: %v", err, err)
+			}
+			if attempts != tc.wantAttempts {
+				t.Fatalf("attempts = %d, want %d", attempts, tc.wantAttempts)
+			}
+		})
 	}
 }
