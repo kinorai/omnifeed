@@ -15,6 +15,7 @@ Package reddit implements the Reddit\-specific engine: fetches threads via the p
 - [func IsShareURL\(rawURL string\) bool](<#IsShareURL>)
 - [func MergeExpanded\(thread \*Thread, newC \[\]Comment, newG \[\]Gap, requestedIDs \[\]string, usedGapIdx \[\]int\)](<#MergeExpanded>)
 - [func NormalizePermalink\(rawURL string\) \(string, error\)](<#NormalizePermalink>)
+- [func ParseListingURL\(rawURL string\) \(sub, sort string, ok bool\)](<#ParseListingURL>)
 - [func ParseMoreChildren\(raw \[\]byte, opts Options\) \(\[\]Comment, \[\]Gap, error\)](<#ParseMoreChildren>)
 - [type Comment](<#Comment>)
 - [type Config](<#Config>)
@@ -25,12 +26,15 @@ Package reddit implements the Reddit\-specific engine: fetches threads via the p
   - [func \(\*Engine\) Name\(\) string](<#Engine.Name>)
 - [type Fetcher](<#Fetcher>)
   - [func NewFetcher\(client \*httpx.Client, crawl4aiURL string\) \*Fetcher](<#NewFetcher>)
+  - [func \(f \*Fetcher\) FetchListing\(ctx context.Context, sub, sort string, limit int\) \(\[\]byte, error\)](<#Fetcher.FetchListing>)
   - [func \(f \*Fetcher\) FetchMoreChildren\(ctx context.Context, linkID string, childIDs \[\]string, sort string\) \(\[\]byte, error\)](<#Fetcher.FetchMoreChildren>)
   - [func \(f \*Fetcher\) FetchThread\(ctx context.Context, permalink string, limit, depth int, sort string\) \(\[\]byte, error\)](<#Fetcher.FetchThread>)
   - [func \(f \*Fetcher\) ResolveShareURL\(ctx context.Context, shareURL string\) \(string, error\)](<#Fetcher.ResolveShareURL>)
 - [type Gap](<#Gap>)
 - [type Options](<#Options>)
 - [type Post](<#Post>)
+  - [func ParseSubredditListing\(raw \[\]byte\) \(\[\]Post, error\)](<#ParseSubredditListing>)
+- [type SubredditListing](<#SubredditListing>)
 - [type Thread](<#Thread>)
   - [func ParseThread\(raw \[\]byte, opts Options\) \(Thread, error\)](<#ParseThread>)
 
@@ -78,6 +82,15 @@ func NormalizePermalink(rawURL string) (string, error)
 ```
 
 NormalizePermalink converts any reddit.com URL into the canonical /r/\{sub\}/comments/\{id\}\[/\{slug\}\] permalink fragment \(no trailing slash, no .json suffix\).
+
+<a name="ParseListingURL"></a>
+## func ParseListingURL
+
+```go
+func ParseListingURL(rawURL string) (sub, sort string, ok bool)
+```
+
+ParseListingURL extracts the subreddit and sort from a subreddit listing URL. Sort defaults to "hot" \(Reddit's default view\) when the path omits it. ok is false for any reddit.com URL that isn't a bare subreddit listing.
 
 <a name="ParseMoreChildren"></a>
 ## func ParseMoreChildren
@@ -188,6 +201,15 @@ func NewFetcher(client *httpx.Client, crawl4aiURL string) *Fetcher
 
 NewFetcher constructs a Fetcher that drives crawl4ai's /crawl endpoint \(crawl4aiURL == OMNIFEED\_CRAWL4AI\_URL\) to reach Reddit through a browser.
 
+<a name="Fetcher.FetchListing"></a>
+### func \(\*Fetcher\) FetchListing
+
+```go
+func (f *Fetcher) FetchListing(ctx context.Context, sub, sort string, limit int) ([]byte, error)
+```
+
+FetchListing retrieves a subreddit listing \(hot/new/top/…\) via its .json endpoint, fetched same\-origin from inside a real browser on reddit.com — the same bot\-wall evasion FetchThread uses. limit caps the number of posts.
+
 <a name="Fetcher.FetchMoreChildren"></a>
 ### func \(\*Fetcher\) FetchMoreChildren
 
@@ -272,6 +294,28 @@ type Post struct {
     URL         string  `json:"url" toon:"url"`
     Selftext    string  `json:"selftext,omitempty" toon:"selftext,omitempty"`
     Permalink   string  `json:"permalink" toon:"permalink"`
+}
+```
+
+<a name="ParseSubredditListing"></a>
+### func ParseSubredditListing
+
+```go
+func ParseSubredditListing(raw []byte) ([]Post, error)
+```
+
+ParseSubredditListing decodes a subreddit listing \(.json\) — a single Listing whose children are t3 posts — into a slice of Posts \(no comment trees\).
+
+<a name="SubredditListing"></a>
+## type SubredditListing
+
+SubredditListing is a subreddit page \(hot/new/top/…\) reduced to its posts, without comment trees — the output shape for a bare /r/\{sub\}/ listing URL.
+
+```go
+type SubredditListing struct {
+    Subreddit string `json:"subreddit" toon:"subreddit"`
+    Sort      string `json:"sort" toon:"sort"`
+    Posts     []Post `json:"posts" toon:"posts"`
 }
 ```
 

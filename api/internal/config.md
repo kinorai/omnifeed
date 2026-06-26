@@ -39,8 +39,10 @@ type Config struct {
     AllowNoAuth bool
 
     // Upstream crawl4ai.
-    Crawl4AIURL     string
-    Crawl4AITimeout time.Duration
+    Crawl4AIURL            string
+    Crawl4AITimeout        time.Duration
+    Crawl4AIKeepLinks      bool    // render hyperlink anchor text + keep external links in markdown
+    Crawl4AIPruneThreshold float64 // PruningContentFilter cutoff for the generic engine (0–1; higher strips more boilerplate)
 
     // Upstream SearXNG (optional). Empty disables the `search` MCP tool.
     SearXNGURL     string

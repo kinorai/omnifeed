@@ -11,6 +11,7 @@ Package httpx provides HTTP utilities shared across engines: a retrying HTTP cli
 ## Index
 
 - [func ClassifyClientError\(err error, fallback domain.FailureKind\) \*domain.FetchError](<#ClassifyClientError>)
+- [func HostMatcher\(domain string\) \*regexp.Regexp](<#HostMatcher>)
 - [func ValidateURL\(rawURL string, blockPrivate bool\) error](<#ValidateURL>)
 - [type Client](<#Client>)
   - [func New\(c \*http.Client\) \*Client](<#New>)
@@ -31,6 +32,15 @@ func ClassifyClientError(err error, fallback domain.FailureKind) *domain.FetchEr
 ```
 
 ClassifyClientError translates an error returned by DoRetry into a typed domain.FetchError. A StatusError carries the upstream status after retries: a 429 is unambiguous and becomes KindHTTP429, but a 5xx is ambiguous — it can be a genuine upstream fault OR, on the browser/anti\-bot paths, the block itself surfacing as a crawl4ai 5xx \(see reddit.browserExec\) — so the caller's fallback decides \(KindUpstreamError for a generic crawl, KindBotBlock for a Reddit navigation\). A context deadline becomes KindTimeout; a caller cancellation \(client abort\) becomes KindCanceled; anything else becomes the fallback. Returns nil when err is nil.
+
+<a name="HostMatcher"></a>
+## func HostMatcher
+
+```go
+func HostMatcher(domain string) *regexp.Regexp
+```
+
+HostMatcher returns a case\-insensitive regexp matching host and all of its subdomains: HostMatcher\("reddit.com"\) matches reddit.com, www.reddit.com, and old.reddit.com, but not evilreddit.com or reddit.com.evil.com. Engines use it to claim URLs; centralizing the pattern keeps this security\-sensitive rule from drifting between engines.
 
 <a name="ValidateURL"></a>
 ## func ValidateURL
@@ -57,6 +67,11 @@ Client wraps http.Client with retry\-on\-429/5xx and Retry\-After honoring.
 ```go
 type Client struct {
     HTTP *http.Client
+    // OnAttempt, when non-nil, is called once per HTTP attempt DoRetry makes.
+    // retry is false for the first try and true for every retry, so a caller can
+    // count retry volume — the wasted work #2's RetryableStatus veto cuts. Set on
+    // the shared crawl client; nil elsewhere.
+    OnAttempt func(retry bool)
 }
 ```
 
@@ -76,7 +91,7 @@ New returns a Client wrapping the given http.Client. If nil is passed, a 90s\-ti
 func (c *Client) DoRetry(ctx context.Context, method, url string, body []byte, headers map[string]string, cfg RetryConfig) (*http.Response, error)
 ```
 
-DoRetry sends an HTTP request with exponential\-backoff\-with\-jitter retries on transient failures. It retries on network errors, 429, and 5xx. 4xx other than 429 and context cancellation are not retried.
+DoRetry sends an HTTP request with exponential\-backoff\-with\-jitter retries on transient failures. It retries on network errors, 429, and 5xx. 4xx other than 429 and context cancellation are not retried. A non\-nil RetryConfig.RetryableStatus can additionally veto retrying a specific 429/5xx \(e.g. a non\-transient block\), returning the StatusError immediately.
 
 Body is passed as a byte slice \(or nil\) so the helper can rebuild the request on each attempt — http.Request bodies are single\-use streams.
 
@@ -121,6 +136,11 @@ type RetryConfig struct {
     MaxAttempts int           // total attempts including the first try
     BaseDelay   time.Duration // first backoff interval
     MaxDelay    time.Duration // cap on any single backoff
+    // RetryableStatus, when non-nil, is consulted for a retryable status (429 or
+    // 5xx) before another attempt is scheduled. Returning false stops retries and
+    // surfaces the StatusError immediately — used to avoid re-driving an expensive
+    // crawl for a non-transient block that an upstream reports as a 5xx.
+    RetryableStatus func(status int, body string) bool
 }
 ```
 
