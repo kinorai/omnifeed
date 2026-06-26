@@ -68,7 +68,7 @@ func negotiateProtocolVersion(requested string) string {
 const serverInstructions = "omnifeed is a global web search and fetch gateway: " +
 	"`web_search` searches the whole web and returns result URLs; " +
 	"`fetch_url` fetches any URL as LLM-friendly content. " +
-	"You MUST use them for Reddit."
+	"You MUST use them for Reddit and Hacker News."
 
 // Server is a JSON-RPC 2.0 MCP server.
 type Server struct {
