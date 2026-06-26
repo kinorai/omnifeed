@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
-	"regexp"
 	"strconv"
 	"time"
 
@@ -27,8 +26,8 @@ const MaxExpansionRounds = 40
 // regardless of the (comment-oriented) FetchLimit knob.
 const listingLimit = 25
 
-// HostMatcher matches reddit.com and its subdomains (old, new, np, m, amp, ...).
-var hostMatcher = regexp.MustCompile(`(?i)(^|\.)reddit\.com$`)
+// hostMatcher matches reddit.com and its subdomains (old, new, np, m, amp, ...).
+var hostMatcher = httpx.HostMatcher("reddit.com")
 
 // Engine implements domain.Engine for Reddit URLs.
 type Engine struct {
@@ -296,12 +295,13 @@ func (e *Engine) expandGaps(ctx context.Context, thread *Thread, opts Options) i
 	return rounds
 }
 
-// encode serializes thread as TOON or JSON.
-func encode(thread *Thread, format string) ([]byte, error) {
+// encode serializes v as TOON (default) or JSON. Generic over the output shape
+// so threads and subreddit listings share one serialization contract.
+func encode[T any](v T, format string) ([]byte, error) {
 	if format == "json" {
-		return json.Marshal(thread)
+		return json.Marshal(v)
 	}
-	return toon.Marshal(thread, toon.WithLengthMarkers(true))
+	return toon.Marshal(v, toon.WithLengthMarkers(true))
 }
 
 // crawlListing renders a bare subreddit page (/r/{sub}/{sort}) as its post list.
@@ -321,7 +321,7 @@ func (e *Engine) crawlListing(ctx context.Context, rawURL, sub, sort string, opt
 	}
 
 	listing := SubredditListing{Subreddit: sub, Sort: sort, Posts: posts}
-	encoded, err := encodeListing(&listing, opts.Format)
+	encoded, err := encode(&listing, opts.Format)
 	if err != nil {
 		return domain.Document{}, fmt.Errorf("encode: %w", err)
 	}
@@ -343,12 +343,4 @@ func (e *Engine) crawlListing(ctx context.Context, rawURL, sub, sort string, opt
 			"posts":       strconv.Itoa(len(posts)),
 		},
 	}, nil
-}
-
-// encodeListing serializes a SubredditListing as TOON or JSON (mirrors encode).
-func encodeListing(l *SubredditListing, format string) ([]byte, error) {
-	if format == "json" {
-		return json.Marshal(l)
-	}
-	return toon.Marshal(l, toon.WithLengthMarkers(true))
 }

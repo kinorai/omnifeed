@@ -47,6 +47,26 @@ var markers = []string{
 	"sign in to confirm you're not a bot",
 }
 
+// blockResponseMarker is the verdict crawl4ai stamps into its error RESPONSE
+// body when its own anti-bot / structural detector rejects a page (e.g. "Blocked
+// by anti-bot protection: Structural: minimal_text on small page"). Unlike the
+// markers above (which appear in page CONTENT), this appears in crawl4ai's 5xx
+// error body.
+const blockResponseMarker = "blocked by anti-bot protection"
+
+// IsBlockResponse reports whether an upstream error body is crawl4ai's anti-bot
+// block verdict — a non-transient content block (served as a 5xx), not a fault.
+func IsBlockResponse(body string) bool {
+	return strings.Contains(strings.ToLower(body), blockResponseMarker)
+}
+
+// RetryableStatus is an httpx.RetryConfig predicate shared by the Reddit and
+// generic crawl paths: retry genuine transient 429/5xx, but never a crawl4ai
+// anti-bot block (it recurs, and re-driving the crawl just pays the cost again).
+func RetryableStatus(status int, body string) bool {
+	return status < 500 || !IsBlockResponse(body)
+}
+
 // Detect reports whether body looks like a bot wall / challenge page and, if
 // so, the marker that matched (for logging/metrics). Matching is
 // case-insensitive and bounded to the first scanLimit bytes.
