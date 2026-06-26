@@ -25,11 +25,12 @@ const mcpTenant = "mcp"
 const defaultSearchLimit = 10
 
 // FetchURL returns the `fetch_url` tool: URL → LLM-friendly content via the
-// engine registry (Reddit engine for reddit.com, crawl4ai fallback for the rest).
+// engine registry (Reddit engine for reddit.com, Hacker News engine for
+// news.ycombinator.com, crawl4ai fallback for the rest).
 func FetchURL(reg *engine.Registry, defaults reddit.Options, metrics *observability.Metrics) mcp.Tool {
 	return mcp.Tool{
 		Name:        "fetch_url",
-		Description: "Fetch any URL and return LLM-friendly content. You MUST use it for Reddit URLs.",
+		Description: "Fetch any URL and return LLM-friendly content. You MUST use it for Reddit and Hacker News URLs.",
 		// Read-only and open-world: fetches external pages without mutating
 		// anything, so clients can auto-approve it.
 		Annotations: map[string]any{
@@ -136,7 +137,7 @@ func crawlHandler(reg *engine.Registry, defaults reddit.Options, metrics *observ
 func WebSearch(searcher domain.Searcher, maxResults int, metrics *observability.Metrics) mcp.Tool {
 	return mcp.Tool{
 		Name:        "web_search",
-		Description: "Search the whole web and return result URLs with titles and snippets. You MUST use it for Reddit. Follow up with `fetch_url` to read a result.",
+		Description: "Search the whole web and return result URLs with titles and snippets. You MUST use it for Reddit and Hacker News. Follow up with `fetch_url` to read a result.",
 		// Read-only and open-world (see fetch_url).
 		Annotations: map[string]any{
 			"readOnlyHint":  true,
