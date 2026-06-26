@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/kinorai/omnifeed/internal/domain"
 	"github.com/kinorai/omnifeed/internal/httpx"
@@ -17,8 +18,10 @@ import (
 )
 
 const (
-	defaultAPIBase = "https://hn.algolia.com/api/v1"
-	frontPageSize  = 30
+	defaultAPIBase    = "https://hn.algolia.com/api/v1"
+	frontPageSize     = 30
+	defaultTimeout    = 30 * time.Second // wall-clock budget per HN crawl
+	maxThreadComments = 500              // cap emitted comments so a megathread can't blow the consumer's context
 )
 
 // hostMatcher matches news.ycombinator.com and its subdomains.
@@ -30,7 +33,6 @@ var pathFeed = map[string]string{
 	"/newest": "newest", "/ask": "ask", "/show": "show",
 }
 
-// feedQuery maps a feed label to the Algolia endpoint + tag that serves it.
 // feedQuery maps a feed label to the Algolia endpoint + tag that serves it.
 // /ask and /show use search_by_date: plain /search returns all-time top by points,
 // not the current listing those pages represent. front_page keeps /search (the
@@ -47,6 +49,7 @@ type Engine struct {
 	client  *httpx.Client
 	limiter *httpx.DomainLimiter
 	apiBase string
+	timeout time.Duration
 	logger  *slog.Logger
 }
 
@@ -54,7 +57,8 @@ type Engine struct {
 type Config struct {
 	Client  *httpx.Client
 	Limiter *httpx.DomainLimiter
-	APIBase string // defaults to the public Algolia API; overridden in tests
+	APIBase string        // defaults to the public Algolia API; overridden in tests
+	Timeout time.Duration // wall-clock budget per crawl; defaults to defaultTimeout
 	Logger  *slog.Logger
 }
 
@@ -63,6 +67,9 @@ func New(cfg Config) *Engine {
 	if cfg.APIBase == "" {
 		cfg.APIBase = defaultAPIBase
 	}
+	if cfg.Timeout == 0 {
+		cfg.Timeout = defaultTimeout
+	}
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
@@ -70,6 +77,7 @@ func New(cfg Config) *Engine {
 		client:  cfg.Client,
 		limiter: cfg.Limiter,
 		apiBase: strings.TrimRight(cfg.APIBase, "/"),
+		timeout: cfg.Timeout,
 		logger:  cfg.Logger,
 	}
 }
@@ -99,16 +107,17 @@ func parseTarget(rawURL string) (target, bool) {
 	if err != nil || !hostMatcher.MatchString(u.Hostname()) {
 		return target{}, false
 	}
-	if u.Path == "/item" {
+	// Normalize a trailing slash once so /item/ and /news/ match like /item and /news.
+	p := strings.TrimSuffix(u.Path, "/")
+	if p == "" {
+		p = "/"
+	}
+	if p == "/item" {
 		id := u.Query().Get("id")
 		if !isDigits(id) {
 			return target{}, false
 		}
 		return target{item: true, id: id}, true
-	}
-	p := strings.TrimSuffix(u.Path, "/")
-	if p == "" {
-		p = "/"
 	}
 	if feed, ok := pathFeed[p]; ok {
 		return target{feed: feed}, true
@@ -124,6 +133,11 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, _ domain.EngineOption
 		return domain.Document{}, fmt.Errorf("unsupported hacker news url: %s", rawURL)
 	}
 
+	// Bound wall-clock independently of the shared HTTP client timeout (which is
+	// the crawl4ai knob); the HN engine talks to Algolia directly, not crawl4ai.
+	ctx, cancel := context.WithTimeout(ctx, e.timeout)
+	defer cancel()
+
 	if e.limiter != nil {
 		release := e.limiter.Acquire(e.apiBase)
 		defer release()
@@ -138,10 +152,14 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, _ domain.EngineOption
 		if perr != nil {
 			return domain.Document{}, &domain.FetchError{Kind: domain.KindBadResponse, Err: fmt.Errorf("parse item: %w", perr)}
 		}
-		return e.document(thread, rawURL, map[string]string{
-			"id":       t.id,
-			"comments": strconv.Itoa(len(thread.Comments)),
-		})
+		meta := map[string]string{"id": t.id}
+		// Cap emitted comments (pre-order DFS, so the deepest/tail go first) to bound output.
+		if total := len(thread.Comments); total > maxThreadComments {
+			thread.Comments = thread.Comments[:maxThreadComments]
+			meta["truncated_from"] = strconv.Itoa(total)
+		}
+		meta["comments"] = strconv.Itoa(len(thread.Comments))
+		return e.document(thread, rawURL, meta)
 	}
 
 	fq := feedQuery[t.feed]

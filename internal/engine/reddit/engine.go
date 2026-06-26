@@ -112,7 +112,7 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, eo domain.EngineOptio
 	// fetch the post list instead. Checked before the comments path because
 	// ParseListingURL only claims listing-shaped paths (never /comments/).
 	if sub, sort, ok := ParseListingURL(rawURL); ok {
-		return e.crawlListing(ctx, sub, sort, opts)
+		return e.crawlListing(ctx, rawURL, sub, sort, opts)
 	}
 
 	// Reddit share links (/r/{sub}/s/{code}) 301-redirect to the canonical
@@ -307,7 +307,7 @@ func encode(thread *Thread, format string) ([]byte, error) {
 // crawlListing renders a bare subreddit page (/r/{sub}/{sort}) as its post list.
 // It reuses the same browser-fetch path as threads (so it clears Reddit's wall),
 // but parses the flat Listing shape instead of a comment tree.
-func (e *Engine) crawlListing(ctx context.Context, sub, sort string, opts Options) (domain.Document, error) {
+func (e *Engine) crawlListing(ctx context.Context, rawURL, sub, sort string, opts Options) (domain.Document, error) {
 	release := e.limiter.Acquire(redditOrigin + "/r/" + sub + "/" + sort)
 	defer release()
 
@@ -337,7 +337,7 @@ func (e *Engine) crawlListing(ctx context.Context, sub, sort string, opts Option
 	return domain.Document{
 		PageContent: string(encoded),
 		Metadata: map[string]string{
-			"source":      fmt.Sprintf("%s/r/%s/%s/", redditOrigin, sub, sort),
+			"source":      rawURL, // echo the caller's URL, not a fabricated /sort/ path
 			"status_code": "200",
 			"format":      opts.Format,
 			"posts":       strconv.Itoa(len(posts)),
