@@ -10,7 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
+	"unicode/utf8"
 
 	"github.com/kinorai/omnifeed/internal/antibot"
 	"github.com/kinorai/omnifeed/internal/domain"
@@ -71,9 +71,8 @@ type crawlResult struct {
 }
 
 type crawlMarkdown struct {
-	RawMarkdown           string `json:"raw_markdown"`
-	MarkdownWithCitations string `json:"markdown_with_citations"`
-	FitMarkdown           string `json:"fit_markdown"`
+	RawMarkdown string `json:"raw_markdown"`
+	FitMarkdown string `json:"fit_markdown"`
 }
 
 // Crawl proxies rawURL to crawl4ai. The configured per-domain limiter applies
@@ -136,7 +135,7 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, _ domain.EngineOption
 
 	resp, err := e.client.DoRetry(ctx, http.MethodPost, e.endpoint, body,
 		map[string]string{"Content-Type": "application/json"},
-		httpx.RetryConfig{RetryableStatus: retryableCrawlStatus})
+		httpx.RetryConfig{RetryableStatus: antibot.RetryableStatus})
 	if err != nil {
 		return domain.Document{}, classifyCrawlError(err)
 	}
@@ -164,7 +163,7 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, _ domain.EngineOption
 			msg = cr.Results[0].ErrorMessage
 		}
 		kind := domain.KindUpstreamError
-		if isAntibotBlock(msg) {
+		if antibot.IsBlockResponse(msg) {
 			kind = domain.KindBotBlock
 		}
 		return domain.Document{}, &domain.FetchError{Kind: kind, Err: fmt.Errorf("crawl failed: %s", msg)}
@@ -214,35 +213,15 @@ func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
+	for n > 0 && !utf8.RuneStart(s[n]) { // back up to a rune boundary so we don't split a multibyte char
+		n--
+	}
 	return s[:n] + "..."
-}
-
-// antibotBlockMarker is the signature crawl4ai 0.8.x stamps into its error body
-// when its own anti-bot / structural detector rejects a page (e.g. "Blocked by
-// anti-bot protection: Structural: minimal_text on small page"). It is crawl4ai's
-// own verdict string, not an HTTP status, so it is matched here in the engine
-// rather than in the generic httpx / antibot layers.
-const antibotBlockMarker = "blocked by anti-bot protection"
-
-// isAntibotBlock reports whether a crawl4ai error message/body is its anti-bot
-// detector firing — a real wall, or a false positive on a legitimately small page
-// such as a raw .md / LICENSE.
-func isAntibotBlock(s string) bool {
-	return strings.Contains(strings.ToLower(s), antibotBlockMarker)
-}
-
-// retryableCrawlStatus vetoes DoRetry's retry of a crawl4ai anti-bot block. The
-// block surfaces as a 5xx whose body names it (antibotBlockMarker); it is not
-// transient, so retrying just re-drives an expensive browser crawl for the same
-// failure — the reasoning the Reddit path already applies with MaxAttempts:1. A
-// 5xx with any other body stays retryable (a genuine transient upstream fault).
-func retryableCrawlStatus(status int, body string) bool {
-	return status < 500 || !isAntibotBlock(body)
 }
 
 // classifyCrawlError turns a DoRetry transport error into a typed FetchError.
 // crawl4ai hard-errors a blocked or too-sparse page as a top-level HTTP 5xx whose
-// body names the block (see antibotBlockMarker); that is a content block, not an
+// body names the block (antibot.IsBlockResponse); that is a content block, not an
 // upstream fault, so it is demoted from upstream_error to bot_block. It then drops
 // out of the OmnifeedCrawlErrors alert (which excludes bot_block) while staying a
 // distinct, visible metric series. A 5xx with any other body stays upstream_error
@@ -251,7 +230,7 @@ func classifyCrawlError(err error) *domain.FetchError {
 	fe := httpx.ClassifyClientError(err, domain.KindUpstreamError)
 	if fe != nil && fe.Kind == domain.KindUpstreamError {
 		var se *httpx.StatusError
-		if errors.As(err, &se) && isAntibotBlock(se.Body) {
+		if errors.As(err, &se) && antibot.IsBlockResponse(se.Body) {
 			fe.Kind = domain.KindBotBlock
 		}
 	}

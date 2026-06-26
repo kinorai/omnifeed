@@ -27,3 +27,25 @@ func TestDetectClean(t *testing.T) {
 		t.Errorf("Detect(clean) matched %q, want no match", marker)
 	}
 }
+
+// RetryableStatus (and IsBlockResponse) must veto retrying a crawl4ai anti-bot
+// 5xx while still retrying genuine transient faults.
+func TestRetryableStatus(t *testing.T) {
+	const block = `{"error":"Blocked by anti-bot protection: Structural: minimal_text"}`
+	cases := []struct {
+		status int
+		body   string
+		want   bool
+	}{
+		{500, block, false},                 // anti-bot 5xx → don't retry
+		{503, block, false},                 // any 5xx carrying the marker
+		{500, `{"error":"internal"}`, true}, // generic transient 5xx → retry
+		{429, "rate limited", true},         // 429 → retry
+		{200, block, true},                  // <500 is never vetoed here
+	}
+	for _, tc := range cases {
+		if got := RetryableStatus(tc.status, tc.body); got != tc.want {
+			t.Errorf("RetryableStatus(%d, %q) = %v, want %v", tc.status, tc.body, got, tc.want)
+		}
+	}
+}

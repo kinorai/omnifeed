@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/kinorai/omnifeed/internal/antibot"
 	"github.com/kinorai/omnifeed/internal/domain"
@@ -222,12 +223,13 @@ func (f *Fetcher) browserExec(ctx context.Context, navURL, js, sessionID string,
 		return "", fmt.Errorf("marshal crawl4ai request: %w", err)
 	}
 
-	// MaxAttempts: 1 — no retry. A Reddit block surfaces as a crawl4ai 500
-	// (anti-bot detector) which is NOT transient, so retrying just re-drives an
-	// expensive browser crawl for the same failure; genuine transient crawl4ai
-	// 5xx are rare and the caller/engine degrades gracefully.
+	// A Reddit block surfaces as a crawl4ai 5xx whose body names the anti-bot
+	// verdict; don't retry it (re-driving the browser crawl just pays the cost
+	// again). antibot.RetryableStatus vetoes exactly that while still retrying a
+	// genuine transient crawl4ai 5xx — the same predicate the generic engine uses.
 	resp, err := f.client.DoRetry(ctx, http.MethodPost, f.crawl4aiURL, reqBody,
-		map[string]string{"Content-Type": "application/json"}, httpx.RetryConfig{MaxAttempts: 1})
+		map[string]string{"Content-Type": "application/json"},
+		httpx.RetryConfig{RetryableStatus: antibot.RetryableStatus})
 	if err != nil {
 		// A Reddit nav that trips crawl4ai's anti-bot detector surfaces here as a
 		// 5xx (DoRetry error path); classify unmatched client errors as a block.
@@ -311,6 +313,9 @@ func (f *Fetcher) browserFetch(ctx context.Context, navURL, js, sessionID string
 func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) { // back up to a rune boundary so we don't split a multibyte char
+		n--
 	}
 	return s[:n] + "..."
 }
