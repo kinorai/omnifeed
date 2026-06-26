@@ -163,3 +163,40 @@ func TestCrawlRequestLinkOptions(t *testing.T) {
 		})
 	}
 }
+
+// PruneThreshold must drive the PruningContentFilter cutoff sent to crawl4ai so
+// operators can tune how aggressively boilerplate/duplicated chrome is stripped
+// without a rebuild (OMNIFEED_CRAWL4AI_PRUNE_THRESHOLD).
+func TestCrawlRequestPruneThreshold(t *testing.T) {
+	var got float64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		var req map[string]any
+		if err := json.Unmarshal(raw, &req); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+		params := req["crawler_config"].(map[string]any)["params"].(map[string]any)
+		filter := params["markdown_generator"].(map[string]any)["params"].(map[string]any)["content_filter"].(map[string]any)["params"].(map[string]any)
+		got = filter["threshold"].(float64)
+
+		resp := map[string]any{"success": true, "results": []any{map[string]any{
+			"success": true, "status_code": 200, "markdown": map[string]any{"raw_markdown": "# ok"},
+		}}}
+		b, _ := json.Marshal(resp)
+		_, _ = w.Write(b)
+	}))
+	defer srv.Close()
+
+	e := New(Config{
+		Endpoint:       srv.URL,
+		Client:         httpx.New(nil),
+		Limiter:        httpx.NewDomainLimiter(2, 0),
+		PruneThreshold: 0.72,
+	})
+	if _, err := e.Crawl(context.Background(), "https://example.com/page", domain.EngineOptions{}); err != nil {
+		t.Fatalf("Crawl() error = %v", err)
+	}
+	if got != 0.72 {
+		t.Errorf("threshold = %v, want 0.72", got)
+	}
+}

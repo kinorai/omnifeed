@@ -14,11 +14,12 @@ import (
 type Metrics struct {
 	registry *prometheus.Registry
 
-	RequestsTotal *prometheus.CounterVec   // engine, tenant, status, reason
-	RequestSecs   *prometheus.HistogramVec // engine, status
-	RedditRounds  prometheus.Histogram
-	SearchesTotal *prometheus.CounterVec   // searcher, status, reason
-	SearchSecs    *prometheus.HistogramVec // searcher, status
+	RequestsTotal   *prometheus.CounterVec   // engine, tenant, status, reason
+	RequestAttempts *prometheus.CounterVec   // attempt (first|retry)
+	RequestSecs     *prometheus.HistogramVec // engine, status
+	RedditRounds    prometheus.Histogram
+	SearchesTotal   *prometheus.CounterVec   // searcher, status, reason
+	SearchSecs      *prometheus.HistogramVec // searcher, status
 }
 
 // NewMetrics builds and registers all collectors.
@@ -30,6 +31,10 @@ func NewMetrics() *Metrics {
 			Name: "omnifeed_requests_total",
 			Help: "Total /crawl requests by engine, tenant, status, and failure reason.",
 		}, []string{"engine", "tenant", "status", "reason"}),
+		RequestAttempts: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "omnifeed_request_attempts_total",
+			Help: `HTTP attempts by the retrying crawl client, split into the first try and retries. attempt="retry" is retry volume; it drops when a non-transient block stops being re-driven.`,
+		}, []string{"attempt"}),
 		RequestSecs: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name:    "omnifeed_request_seconds",
 			Help:    "Crawl latency by engine and status.",
@@ -50,7 +55,7 @@ func NewMetrics() *Metrics {
 			Buckets: prometheus.ExponentialBuckets(0.05, 2, 10),
 		}, []string{"searcher", "status"}),
 	}
-	reg.MustRegister(m.RequestsTotal, m.RequestSecs, m.RedditRounds, m.SearchesTotal, m.SearchSecs)
+	reg.MustRegister(m.RequestsTotal, m.RequestAttempts, m.RequestSecs, m.RedditRounds, m.SearchesTotal, m.SearchSecs)
 	reg.MustRegister(
 		collectors.NewGoCollector(),
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
@@ -63,6 +68,17 @@ func NewMetrics() *Metrics {
 func (m *Metrics) Observe(engine, tenant, status, reason string, duration time.Duration) {
 	m.RequestsTotal.WithLabelValues(engine, tenant, status, reason).Inc()
 	m.RequestSecs.WithLabelValues(engine, status).Observe(duration.Seconds())
+}
+
+// ObserveAttempt records one HTTP attempt from the retrying crawl client. retry
+// is false for the first try and true for each retry, so attempt="retry" counts
+// the re-drives that #2's RetryableStatus veto removes for non-transient blocks.
+func (m *Metrics) ObserveAttempt(retry bool) {
+	attempt := "first"
+	if retry {
+		attempt = "retry"
+	}
+	m.RequestAttempts.WithLabelValues(attempt).Inc()
 }
 
 // ObserveSearch records a single search query result. reason classifies WHY a

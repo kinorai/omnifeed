@@ -1,6 +1,6 @@
 # Benchmark Results — omnifeed vs native web tools (dev/devops)
 
-Head-to-head run of the matrix in [`BENCHMARK.md`](./BENCHMARK.md), executed live on **2026-06-25** against this deployment
+Head-to-head run of the matrix in [`BENCHMARK_INSTRUCTIONS.md`](../BENCHMARK_INSTRUCTIONS.md), executed live on **2026-06-25** against this deployment
 (omnifeed `0.11.2`, crawl4ai `0.8.9`, SearXNG `2026.6.15`) running under Apple `container`.
 
 - **A — omnifeed**: `mcp__omnifeed__web_search` + `mcp__omnifeed__fetch_url`
@@ -156,7 +156,7 @@ omnifeed's own binary is lean (RSS ≈ **15.5 MB**); crawl4ai's browser pool gre
 | **X2** `x.com/dhh` | `canceled` (context) | anti-bot: `minimal_text, no_content_elements (22724 bytes, 31 chars visible)`, retried 2/2 ×3, ~28 s each | Profile timeline renders but is JS-lazy/near-empty; anti-bot heuristic retries the whole render repeatedly until the MCP call is canceled |
 | **E1** PDFs | `bot_block: upstream 500` | anti-bot: `minimal_text… (237 bytes, 0 chars visible)`, retried 2/2 | crawl4ai's browser doesn't extract PDF text (empty DOM) → anti-bot **misclassifies the empty PDF as a bot block**, retries 3×, returns 500 |
 
-> Two of the three failure classes (X timelines, PDFs) are **anti-bot false positives** — the content genuinely wasn't there to render, but the heuristic treated "empty DOM" as "blocked" and paid the full retry cost. This is the single biggest efficiency win available (see [`IMPROVEMENTS.md`](./IMPROVEMENTS.md)).
+> Two of the three failure classes (X timelines, PDFs) are **anti-bot false positives** — the content genuinely wasn't there to render, but the heuristic treated "empty DOM" as "blocked" and paid the full retry cost. This is the single biggest efficiency win available (see [`IMPROVEMENTS.md`](../../IMPROVEMENTS.md)).
 
 ### SearXNG engine health (from searxng logs)
 

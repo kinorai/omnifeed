@@ -18,3 +18,20 @@ search:
   formats:
     - html
     - json
+
+# Disable engines that are dead weight for a dev/devops gateway. With
+# use_default_settings: true, listing an engine by name overrides its default
+# settings — here, turning it off:
+#   - ahmia / torch are Tor onion engines that fail to load without a Tor proxy
+#   - wikipedia / wikidata fire on every query but never help dev/devops lookups
+#     (wikidata also adds ~3s latency + log noise)
+# google / startpage / duckduckgo stay enabled and carry the queries.
+engines:
+  - name: wikidata
+    disabled: true
+  - name: wikipedia
+    disabled: true
+  - name: ahmia
+    disabled: true
+  - name: torch
+    disabled: true
