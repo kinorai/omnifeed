@@ -20,10 +20,11 @@ import (
 // Engine sends URLs to crawl4ai's /crawl endpoint and extracts the best-fit
 // markdown body. It is registered as the Registry fallback.
 type Engine struct {
-	endpoint  string
-	client    *httpx.Client
-	limiter   *httpx.DomainLimiter
-	keepLinks bool
+	endpoint       string
+	client         *httpx.Client
+	limiter        *httpx.DomainLimiter
+	keepLinks      bool
+	pruneThreshold float64
 }
 
 // Config configures the crawl4ai Engine.
@@ -35,11 +36,16 @@ type Config struct {
 	// extracted markdown. When false, both are stripped for leaner output. The
 	// default is owned by config (OMNIFEED_CRAWL4AI_KEEP_LINKS).
 	KeepLinks bool
+	// PruneThreshold is the PruningContentFilter score cutoff (0–1): nodes scoring
+	// below it are dropped, so a higher value strips more boilerplate/duplicated
+	// chrome from noisy pages. The default is owned by config
+	// (OMNIFEED_CRAWL4AI_PRUNE_THRESHOLD).
+	PruneThreshold float64
 }
 
 // New returns a crawl4ai fallback Engine wired with the given config.
 func New(cfg Config) *Engine {
-	return &Engine{endpoint: cfg.Endpoint, client: cfg.Client, limiter: cfg.Limiter, keepLinks: cfg.KeepLinks}
+	return &Engine{endpoint: cfg.Endpoint, client: cfg.Client, limiter: cfg.Limiter, keepLinks: cfg.KeepLinks, pruneThreshold: cfg.PruneThreshold}
 }
 
 // Name returns the engine identifier ("crawl4ai").
@@ -115,7 +121,7 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, _ domain.EngineOption
 						"content_filter": map[string]interface{}{
 							"type": "PruningContentFilter",
 							"params": map[string]interface{}{
-								"threshold":      0.48,
+								"threshold":      e.pruneThreshold,
 								"threshold_type": "fixed",
 							},
 						},

@@ -33,9 +33,10 @@ type Config struct {
 	AllowNoAuth bool
 
 	// Upstream crawl4ai.
-	Crawl4AIURL       string
-	Crawl4AITimeout   time.Duration
-	Crawl4AIKeepLinks bool // render hyperlink anchor text + keep external links in markdown
+	Crawl4AIURL            string
+	Crawl4AITimeout        time.Duration
+	Crawl4AIKeepLinks      bool    // render hyperlink anchor text + keep external links in markdown
+	Crawl4AIPruneThreshold float64 // PruningContentFilter cutoff for the generic engine (0–1; higher strips more boilerplate)
 
 	// Upstream SearXNG (optional). Empty disables the `search` MCP tool.
 	SearXNGURL     string
@@ -96,6 +97,9 @@ func Load() (Config, error) {
 		return c, err
 	}
 	if c.Crawl4AIKeepLinks, err = envBool("OMNIFEED_CRAWL4AI_KEEP_LINKS", true); err != nil {
+		return c, err
+	}
+	if c.Crawl4AIPruneThreshold, err = envFloat("OMNIFEED_CRAWL4AI_PRUNE_THRESHOLD", 0.48); err != nil {
 		return c, err
 	}
 	if c.SearXNGTimeout, err = envDuration("OMNIFEED_SEARXNG_TIMEOUT", 15*time.Second); err != nil {
@@ -164,6 +168,10 @@ func Load() (Config, error) {
 		return c, fmt.Errorf("OMNIFEED_SEARCH_MAX_RESULTS must be between 1 and 100, got %d", c.SearchMaxResults)
 	}
 
+	if c.Crawl4AIPruneThreshold < 0 || c.Crawl4AIPruneThreshold > 1 {
+		return c, fmt.Errorf("OMNIFEED_CRAWL4AI_PRUNE_THRESHOLD must be between 0 and 1, got %v", c.Crawl4AIPruneThreshold)
+	}
+
 	// crawl4ai is required for ALL engines now: the Reddit engine fetches
 	// through crawl4ai's headless browser (Reddit blocks non-browser clients),
 	// and the generic fallback obviously needs it too. Fail fast rather than
@@ -204,6 +212,18 @@ func envInt(key string, fallback int) (int, error) {
 		return 0, fmt.Errorf("env %s: %w", key, err)
 	}
 	return n, nil
+}
+
+func envFloat(key string, fallback float64) (float64, error) {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback, nil
+	}
+	f, err := strconv.ParseFloat(v, 64)
+	if err != nil {
+		return 0, fmt.Errorf("env %s: %w", key, err)
+	}
+	return f, nil
 }
 
 func envDuration(key string, fallback time.Duration) (time.Duration, error) {

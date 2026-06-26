@@ -1,6 +1,6 @@
 # omnifeed — improvement plan (from the 2026-06-25 benchmark)
 
-Derived from [`BENCHMARK_RESULTS.md`](./BENCHMARK_RESULTS.md) plus the server-side telemetry captured during that run
+Derived from [`BENCHMARK_RESULTS_2026-06-25.md`](./benchmark/results/BENCHMARK_RESULTS_2026-06-25.md) plus the server-side telemetry captured during that run
 (omnifeed/crawl4ai logs + Prometheus `/metrics`). Every item is tied to concrete evidence and a code location.
 
 omnifeed already *wins the matchup that matters* — it reaches Reddit, Stack Exchange, X, npm, and SPAs that the native
