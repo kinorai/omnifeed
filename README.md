@@ -4,9 +4,7 @@
 </p>
 
 <p align="center">
-  <img src="https://readme-typing-svg.demolab.com?font=Fira+Code&weight=700&size=28&color=F97316&center=true&vCenter=true&repeat=false&width=860&height=50&lines=Self-hosted+web+search+%2B+LLM-friendly+crawling" alt="Self-hosted web search + LLM-friendly crawling"/>
-  <br/>
-  <img src="https://readme-typing-svg.demolab.com?font=Fira+Code&weight=700&size=28&color=F97316&center=true&vCenter=true&repeat=false&width=860&height=50&lines=with+dedicated+Reddit+and+Hacker+News+engines" alt="with dedicated Reddit and Hacker News engines"/>
+  <img src="https://readme-typing-svg.demolab.com?font=Fira+Code&weight=700&size=28&color=F97316&center=true&vCenter=true&multiline=true&repeat=false&duration=1500&pause=500&width=860&height=110&lines=Self-hosted+web+search+%2B+LLM-friendly+crawling;with+dedicated+Reddit+and+Hacker+News+engines" alt="Self-hosted web search + LLM-friendly crawling, with dedicated Reddit and Hacker News engines"/>
 </p>
 
 <p align="center">
