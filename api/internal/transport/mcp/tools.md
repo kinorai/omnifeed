@@ -21,7 +21,7 @@ Package tools defines the MCP tools this proxy exposes — fetch\_url and web\_s
 func FetchURL(reg *engine.Registry, defaults reddit.Options, metrics *observability.Metrics) mcp.Tool
 ```
 
-FetchURL returns the \`fetch\_url\` tool: URL → LLM\-friendly content via the engine registry \(Reddit engine for reddit.com, crawl4ai fallback for the rest\).
+FetchURL returns the \`fetch\_url\` tool: URL → LLM\-friendly content via the engine registry \(Reddit engine for reddit.com, Hacker News engine for news.ycombinator.com, crawl4ai fallback for the rest\).
 
 <a name="WebSearch"></a>
 ## func WebSearch
