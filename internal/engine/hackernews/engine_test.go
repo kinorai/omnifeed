@@ -2,6 +2,7 @@ package hackernews
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -24,6 +25,8 @@ func TestMatches(t *testing.T) {
 		"https://news.ycombinator.com/ask",
 		"https://news.ycombinator.com/show",
 		"https://news.ycombinator.com/item?id=43307229",
+		"https://news.ycombinator.com/item/?id=43307229", // trailing slash
+		"https://news.ycombinator.com/news/",             // trailing slash
 	}
 	for _, u := range claim {
 		if !e.Matches(u) {
@@ -163,5 +166,35 @@ func TestCrawlCommentPermalink(t *testing.T) {
 		if !strings.Contains(doc.PageContent, want) {
 			t.Errorf("output missing %q:\n%s", want, doc.PageContent)
 		}
+	}
+}
+
+// A non-200 from Algolia must surface as a typed FetchError, not a fake success.
+func TestCrawlHTTPError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "nope", http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	e := New(Config{Client: httpx.New(nil), APIBase: srv.URL})
+	_, err := e.Crawl(context.Background(), "https://news.ycombinator.com/item?id=1", domain.EngineOptions{})
+	var fe *domain.FetchError
+	if !errors.As(err, &fe) || fe.StatusCode != http.StatusNotFound {
+		t.Fatalf("want *FetchError with 404, got %v", err)
+	}
+}
+
+// A 200 with an unparseable body must classify as KindBadResponse.
+func TestCrawlParseError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, "not json")
+	}))
+	defer srv.Close()
+
+	e := New(Config{Client: httpx.New(nil), APIBase: srv.URL})
+	_, err := e.Crawl(context.Background(), "https://news.ycombinator.com/item?id=1", domain.EngineOptions{})
+	var fe *domain.FetchError
+	if !errors.As(err, &fe) || fe.Kind != domain.KindBadResponse {
+		t.Fatalf("want KindBadResponse, got %v", err)
 	}
 }
