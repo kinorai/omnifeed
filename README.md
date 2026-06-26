@@ -178,7 +178,7 @@ Rule of thumb: reach for the **upstream params** to fetch less from Reddit; reac
 Two ports answer two questions. The `Searcher` port answers *query → URLs*; the `Engine` port answers *URL → content*. MCP tools and REST handlers compose them; transports stay thin.
 
 ```mermaid
-%%{init: {"theme":"base","themeVariables":{"background":"transparent","mainBkg":"#161b22","primaryColor":"#161b22","primaryTextColor":"#e6edf3","primaryBorderColor":"#F97316","lineColor":"#8b949e","secondaryColor":"#161b22","tertiaryColor":"#161b22","fontFamily":"Inter, system-ui, sans-serif"},"flowchart":{"curve":"basis","htmlLabels":true}}}%%
+%%{init: {"theme":"base","themeVariables":{"background":"transparent","mainBkg":"#161b22","primaryColor":"#161b22","primaryTextColor":"#e6edf3","primaryBorderColor":"#F97316","lineColor":"#8b949e","secondaryColor":"#161b22","tertiaryColor":"#161b22"},"flowchart":{"curve":"basis","htmlLabels":false}}}%%
 flowchart TB
   crawl["POST /crawl"] e1@--> owt["Open WebUI<br/>transport"]
   search["POST /search"] e2@--> sat["SearchAPI<br/>transport"]
@@ -191,17 +191,19 @@ flowchart TB
   mcp -- search tool --> searcher
 
   reg e7@--> reddit["Reddit engine<br/>(TOON)"]
+  reg e12@--> hn["Hacker News engine<br/>(TOON)"]
   reg e8@--> generic["Generic fallback<br/>(markdown)"]
   reddit e9@--> c4["crawl4ai upstream<br/>(headless browser)"]
   generic e10@--> c4
+  hn e13@--> algolia["Algolia HN API<br/>(hn.algolia.com)"]
   searcher e11@--> sx["SearXNG upstream<br/>(Google / Bing / DDG)"]
 
   classDef box fill:#161b22,stroke:#30363d,stroke-width:1px,color:#e6edf3;
   classDef accent fill:#0d1117,stroke:#F97316,stroke-width:2px,color:#ffd9b3;
   classDef animate stroke:#F97316,stroke-width:2px,stroke-dasharray:10 6,stroke-dashoffset:900,animation:dash 14s linear infinite;
   class crawl,search,mcpStdio,mcpHTTP,owt,sat box;
-  class mcp,reg,searcher,reddit,generic,c4,sx accent;
-  class e1,e2,e3,e4,e5,e6,e7,e8,e9,e10,e11 animate;
+  class mcp,reg,searcher,reddit,hn,generic,c4,sx,algolia accent;
+  class e1,e2,e3,e4,e5,e6,e7,e8,e9,e10,e11,e12,e13 animate;
 ```
 
 ### <img src="https://raw.githubusercontent.com/Tarikul-Islam-Anik/Animated-Fluent-Emojis/master/Emojis/Objects/Shield.png" width="22" height="22" /> Reddit anti-bot handling
