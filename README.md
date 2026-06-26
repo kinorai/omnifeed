@@ -21,7 +21,7 @@ with a dedicated Reddit engine that returns <b>full comment trees as <a href="ht
 </p>
 
 - **`web_search`** queries a SearXNG instance (Google/Bing/DDG, Reddit included) and returns ranked URLs with titles and snippets.
-- **`fetch_url`** renders any URL through crawl4ai as clean markdown — and Reddit URLs come back as the full comment tree encoded in TOON.
+- **`fetch_url`** renders any URL through crawl4ai as clean markdown — and Reddit URLs (threads *and* `/r/{sub}` listings) come back as TOON, as do Hacker News threads and front-page / Ask / Show feeds (read directly from the Algolia HN API).
 
 <img src="https://user-images.githubusercontent.com/74038190/212284100-561aa473-3905-4a80-b561-0d28506553ee.gif" width="100%">
 
@@ -130,7 +130,7 @@ Everything is configured with `OMNIFEED_`-prefixed environment variables. In pra
 | Variable | Default | Purpose |
 |---|---|---|
 | `OMNIFEED_API_KEY` | _(unset)_ | Bearer token for `/crawl`, `/search`, `/mcp`. If unset, the proxy refuses to start unless `OMNIFEED_DEV_NO_AUTH=true`. Stdio MCP is unaffected. |
-| `OMNIFEED_CRAWL4AI_URL` | _(required)_ | Upstream crawl4ai endpoint. Every engine fetches through it; if empty, the proxy exits at startup. |
+| `OMNIFEED_CRAWL4AI_URL` | _(required)_ | Upstream crawl4ai endpoint. Reddit + the generic fallback fetch through it (the Hacker News engine reads `hn.algolia.com` directly); if empty, the proxy exits at startup. |
 | `OMNIFEED_SEARXNG_URL` | _(unset)_ | Upstream SearXNG base URL (e.g. `http://searxng:8080`). When unset, `web_search` / `/search` are not exposed. The instance must enable the `json` format. |
 | `OMNIFEED_DEV_NO_AUTH` | `false` | Run the HTTP transports with **no** auth when no key is set (local/dev only). Ignored if a key is set. |
 | `OMNIFEED_LISTEN_ADDR` | `:8080` | HTTP listen address (`/crawl`, `/search`) |
