@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -25,7 +24,7 @@ const (
 )
 
 // hostMatcher matches news.ycombinator.com and its subdomains.
-var hostMatcher = regexp.MustCompile(`(?i)(^|\.)news\.ycombinator\.com$`)
+var hostMatcher = httpx.HostMatcher("news.ycombinator.com")
 
 // pathFeed maps a front-page-style path to a feed label.
 var pathFeed = map[string]string{
