@@ -28,6 +28,15 @@ type Config struct {
     Endpoint string
     Client   *httpx.Client
     Limiter  *httpx.DomainLimiter
+    // KeepLinks renders hyperlink anchor text and retains external links in the
+    // extracted markdown. When false, both are stripped for leaner output. The
+    // default is owned by config (OMNIFEED_CRAWL4AI_KEEP_LINKS).
+    KeepLinks bool
+    // PruneThreshold is the PruningContentFilter score cutoff (0–1): nodes scoring
+    // below it are dropped, so a higher value strips more boilerplate/duplicated
+    // chrome from noisy pages. The default is owned by config
+    // (OMNIFEED_CRAWL4AI_PRUNE_THRESHOLD).
+    PruneThreshold float64
 }
 ```
 

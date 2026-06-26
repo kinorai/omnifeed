@@ -21,6 +21,7 @@ Package observability wires structured logging, Prometheus metrics, and Kubernet
 - [type Metrics](<#Metrics>)
   - [func NewMetrics\(\) \*Metrics](<#NewMetrics>)
   - [func \(m \*Metrics\) Observe\(engine, tenant, status, reason string, duration time.Duration\)](<#Metrics.Observe>)
+  - [func \(m \*Metrics\) ObserveAttempt\(retry bool\)](<#Metrics.ObserveAttempt>)
   - [func \(m \*Metrics\) ObserveSearch\(searcher, status, reason string, duration time.Duration\)](<#Metrics.ObserveSearch>)
   - [func \(m \*Metrics\) RegisterMetrics\(mux \*http.ServeMux\)](<#Metrics.RegisterMetrics>)
 - [type ReadyCheck](<#ReadyCheck>)
@@ -113,11 +114,12 @@ Metrics holds Prometheus collectors emitted by the proxy.
 
 ```go
 type Metrics struct {
-    RequestsTotal *prometheus.CounterVec   // engine, tenant, status, reason
-    RequestSecs   *prometheus.HistogramVec // engine, status
-    RedditRounds  prometheus.Histogram
-    SearchesTotal *prometheus.CounterVec   // searcher, status, reason
-    SearchSecs    *prometheus.HistogramVec // searcher, status
+    RequestsTotal   *prometheus.CounterVec   // engine, tenant, status, reason
+    RequestAttempts *prometheus.CounterVec   // attempt (first|retry)
+    RequestSecs     *prometheus.HistogramVec // engine, status
+    RedditRounds    prometheus.Histogram
+    SearchesTotal   *prometheus.CounterVec   // searcher, status, reason
+    SearchSecs      *prometheus.HistogramVec // searcher, status
     // contains filtered or unexported fields
 }
 ```
@@ -139,6 +141,15 @@ func (m *Metrics) Observe(engine, tenant, status, reason string, duration time.D
 ```
 
 Observe records a single crawl result. reason is a bounded classification of WHY a request failed \(see Reason\); it is "ok" on success.
+
+<a name="Metrics.ObserveAttempt"></a>
+### func \(\*Metrics\) ObserveAttempt
+
+```go
+func (m *Metrics) ObserveAttempt(retry bool)
+```
+
+ObserveAttempt records one HTTP attempt from the retrying crawl client. retry is false for the first try and true for each retry, so attempt="retry" counts the re\-drives that \#2's RetryableStatus veto removes for non\-transient blocks.
 
 <a name="Metrics.ObserveSearch"></a>
 ### func \(\*Metrics\) ObserveSearch
