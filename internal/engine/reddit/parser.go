@@ -335,7 +335,12 @@ func NormalizePermalink(rawURL string) (string, error) {
 // sort — and nothing deeper. It deliberately does NOT match /r/{sub}/comments/…
 // (a thread), /r/{sub}/s/… (a share link), /r/{sub}/wiki/…, or /user/…; those
 // keep falling through to the comments path or the generic fallback.
-var listingRE = regexp.MustCompile(`(?i)^/r/([^/]+)(?:/(hot|new|top|rising|best|controversial))?/?$`)
+// listingRE matches a subreddit listing path after the trailing slash and any
+// `.json` suffix are stripped. The sub capture excludes `/?#` (like permalinkRE)
+// so an injected query/fragment can't slip into the fetch URL, and the sort
+// alternation lists only the real subreddit sorts — `best` is a site-wide feed,
+// not a subreddit sort, so /r/sub/best falls through to the generic engine.
+var listingRE = regexp.MustCompile(`(?i)^/r/([^/?#]+)(?:/(hot|new|top|rising|controversial))?$`)
 
 // ParseListingURL extracts the subreddit and sort from a subreddit listing URL.
 // Sort defaults to "hot" (Reddit's default view) when the path omits it. ok is
@@ -345,7 +350,12 @@ func ParseListingURL(rawURL string) (sub, sort string, ok bool) {
 	if err != nil {
 		return "", "", false
 	}
-	m := listingRE.FindStringSubmatch(u.Path)
+	// Strip a trailing slash and an optional `.json` suffix — people paste both
+	// `/r/go` and `/r/go.json` — mirroring NormalizePermalink's handling so the
+	// listing path doesn't capture `.json` into the subreddit name.
+	path := strings.TrimSuffix(u.Path, "/")
+	path = strings.TrimSuffix(path, ".json")
+	m := listingRE.FindStringSubmatch(path)
 	if m == nil {
 		return "", "", false
 	}

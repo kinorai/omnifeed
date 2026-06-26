@@ -133,7 +133,10 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, eo domain.EngineOptio
 	// The per-domain limiter spans the whole crawl including all expansion
 	// rounds — concurrent crawls of different reddit URLs serialize here.
 	// Fine for single-tenant deployments.
-	release := e.limiter.Acquire("https://reddit.com" + permalink)
+	// Key the limiter on the same host the fetch actually hits (redditOrigin =
+	// www.reddit.com) so thread and listing crawls share one per-domain slot —
+	// DomainLimiter buckets by Hostname(), and "reddit.com" != "www.reddit.com".
+	release := e.limiter.Acquire(redditOrigin + permalink)
 	defer release()
 
 	threadJSON, err := e.fetcher.FetchThread(ctx, permalink, opts.FetchLimit, opts.Depth, opts.Sort)

@@ -284,3 +284,28 @@ func TestResolveShareURL(t *testing.T) {
 		t.Error("expected error when share link resolves to a non-thread URL")
 	}
 }
+
+// FetchListing must request /r/{sub}/{sort}.json (same-origin, browser path) and
+// return Reddit's listing body unwrapped from the crawl4ai envelope.
+func TestFetchListing(t *testing.T) {
+	const listing = `{"kind":"Listing","data":{"children":[]}}`
+	var reqBody string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		reqBody = string(b)
+		_, _ = w.Write(crawl4aiOK(200, listing))
+	}))
+	defer srv.Close()
+
+	f := NewFetcher(httpx.New(nil), srv.URL)
+	got, err := f.FetchListing(context.Background(), "golang", "hot", 25)
+	if err != nil {
+		t.Fatalf("FetchListing: %v", err)
+	}
+	if string(got) != listing {
+		t.Errorf("body = %q, want %q", got, listing)
+	}
+	if !strings.Contains(reqBody, `/r/golang/hot.json`) {
+		t.Errorf("crawl4ai request js_code missing the listing .json URL; got %s", reqBody)
+	}
+}
