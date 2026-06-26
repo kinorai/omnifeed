@@ -10,6 +10,9 @@ func TestCleanHTML(t *testing.T) {
 		{"a &amp; b &lt;c&gt;", "a & b <c>"},
 		{`see <a href="https://x.com" rel="nofollow">https://x.com</a>`, "see https://x.com"},
 		{"line1<p><p><p>line2", "line1\n\nline2"},
+		// Code blocks must survive as Markdown fences (entity-encoded chars decoded inside).
+		{"<pre><code>x := 1</code></pre>", "```\nx := 1\n```"},
+		{"<pre><code>if a &gt; b {}</code></pre>", "```\nif a > b {}\n```"},
 	}
 	for _, tc := range cases {
 		if got := cleanHTML(tc.in); got != tc.want {

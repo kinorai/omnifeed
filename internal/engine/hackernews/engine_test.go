@@ -108,3 +108,60 @@ func TestCrawlFrontPage(t *testing.T) {
 		}
 	}
 }
+
+// /ask and /show must hit search_by_date (recency), not search (all-time top).
+func TestCrawlFeedUsesSearchByDate(t *testing.T) {
+	for _, feed := range []struct{ path, tag string }{
+		{"/ask", "ask_hn"},
+		{"/show", "show_hn"},
+		{"/newest", "story"},
+	} {
+		t.Run(feed.path, func(t *testing.T) {
+			var gotPath, gotTags string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotPath, gotTags = r.URL.Path, r.URL.Query().Get("tags")
+				_, _ = io.WriteString(w, `{"hits":[]}`)
+			}))
+			defer srv.Close()
+
+			e := New(Config{Client: httpx.New(nil), APIBase: srv.URL})
+			if _, err := e.Crawl(context.Background(), "https://news.ycombinator.com"+feed.path, domain.EngineOptions{}); err != nil {
+				t.Fatalf("Crawl: %v", err)
+			}
+			if !strings.HasSuffix(gotPath, "/search_by_date") {
+				t.Errorf("%s hit %q, want .../search_by_date", feed.path, gotPath)
+			}
+			if gotTags != feed.tag {
+				t.Errorf("%s tags=%q, want %q", feed.path, gotTags, feed.tag)
+			}
+		})
+	}
+}
+
+// A comment permalink (/item?id=<commentID>) resolves to a type:"comment" item;
+// it must be emitted as a comment (not a blank-titled story) with the enclosing
+// story id in the header.
+func TestCrawlCommentPermalink(t *testing.T) {
+	const comment = `{"id":99,"type":"comment","author":"bob","text":"<p>my point","parent_id":50,"story_id":42,"created_at_i":1700000000,"children":[
+		{"id":100,"type":"comment","author":"carol","text":"a reply","parent_id":99,"children":[]}
+	]}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, comment)
+	}))
+	defer srv.Close()
+
+	e := New(Config{Client: httpx.New(nil), APIBase: srv.URL})
+	doc, err := e.Crawl(context.Background(), "https://news.ycombinator.com/item?id=99", domain.EngineOptions{})
+	if err != nil {
+		t.Fatalf("Crawl: %v", err)
+	}
+	// Root comment (#99) + its reply (#100) both emitted.
+	if doc.Metadata["comments"] != "2" {
+		t.Fatalf("comments = %q, want 2\n%s", doc.Metadata["comments"], doc.PageContent)
+	}
+	for _, want := range []string{"my point", "bob", "a reply", "carol"} {
+		if !strings.Contains(doc.PageContent, want) {
+			t.Errorf("output missing %q:\n%s", want, doc.PageContent)
+		}
+	}
+}

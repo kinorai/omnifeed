@@ -31,11 +31,15 @@ var pathFeed = map[string]string{
 }
 
 // feedQuery maps a feed label to the Algolia endpoint + tag that serves it.
+// feedQuery maps a feed label to the Algolia endpoint + tag that serves it.
+// /ask and /show use search_by_date: plain /search returns all-time top by points,
+// not the current listing those pages represent. front_page keeps /search (the
+// front_page tag is curated; Story carries no positional rank — see types.go).
 var feedQuery = map[string]struct{ endpoint, tag string }{
 	"front_page": {"search", "front_page"},
 	"newest":     {"search_by_date", "story"},
-	"ask":        {"search", "ask_hn"},
-	"show":       {"search", "show_hn"},
+	"ask":        {"search_by_date", "ask_hn"},
+	"show":       {"search_by_date", "show_hn"},
 }
 
 // Engine implements domain.Engine for Hacker News URLs via the Algolia API.

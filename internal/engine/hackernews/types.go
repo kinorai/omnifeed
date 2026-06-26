@@ -10,8 +10,9 @@
 package hackernews
 
 // Story is one Hacker News front-page entry, stripped to LLM-relevant fields.
+// No rank field: the Algolia feed is ordered by points, not HN's live gravity
+// rank, so a positional rank would misrepresent the front page.
 type Story struct {
-	Rank        int    `json:"rank" toon:"rank"`
 	ID          int    `json:"id" toon:"id"`
 	Title       string `json:"title" toon:"title"`
 	URL         string `json:"url,omitempty" toon:"url,omitempty"`
@@ -61,11 +62,14 @@ type Thread struct {
 type algoliaItem struct {
 	ID       int           `json:"id"`
 	CreatedI int64         `json:"created_at_i"`
+	Type     string        `json:"type"` // "story" | "comment" | "poll" | …
 	Author   string        `json:"author"`
 	Title    string        `json:"title"`
 	URL      string        `json:"url"`
 	Text     string        `json:"text"`
 	Points   int           `json:"points"`
+	ParentID int           `json:"parent_id"` // set on comments
+	StoryID  int           `json:"story_id"`  // the enclosing story, set on comments
 	Children []algoliaItem `json:"children"`
 }
 
