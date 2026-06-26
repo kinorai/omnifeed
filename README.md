@@ -139,6 +139,7 @@ Everything is configured with `OMNIFEED_`-prefixed environment variables. In pra
 | `OMNIFEED_METRICS_ADDR` | `:9090` | Prometheus + health listen address |
 | `OMNIFEED_CRAWL4AI_TIMEOUT` | `90s` | Per-call timeout to crawl4ai |
 | `OMNIFEED_CRAWL4AI_KEEP_LINKS` | `true` | Keep hyperlink anchor text + external links in fetched markdown. Set `false` for leaner, link-stripped output (loses link-dense content like HN titles). |
+| `OMNIFEED_CRAWL4AI_PRUNE_THRESHOLD` | `0.48` | PruningContentFilter cutoff (0–1) for the generic engine. Raise it to strip more boilerplate/duplicated chrome from noisy pages; lower it to keep more. |
 | `OMNIFEED_SEARXNG_TIMEOUT` | `15s` | Per-query timeout to SearXNG |
 | `OMNIFEED_SEARCH_MAX_RESULTS` | `25` | Hard cap on the search `limit` argument (1–100) |
 | `OMNIFEED_REDDIT_TIMEOUT` | `4m` | Wall-clock cap for a Reddit thread expansion |

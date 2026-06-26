@@ -62,6 +62,9 @@ func run(cfg config.Config, logger *slog.Logger) error {
 	httpClient := httpx.New(&http.Client{Timeout: cfg.Crawl4AITimeout})
 	limiter := httpx.NewDomainLimiter(cfg.PerDomainConcurrency, cfg.PerDomainDelay)
 	metrics := observability.NewMetrics()
+	// Count every HTTP attempt the crawl client makes (first try + retries) so
+	// retry waste shows up in metrics, not just reconstructed from logs.
+	httpClient.OnAttempt = metrics.ObserveAttempt
 
 	// --- Engines ---
 
@@ -88,10 +91,11 @@ func run(cfg config.Config, logger *slog.Logger) error {
 		Metrics:     metrics,
 	})
 	crawl4aiEngine := crawl4ai.New(crawl4ai.Config{
-		Endpoint:  cfg.Crawl4AIURL,
-		Client:    httpClient,
-		Limiter:   limiter,
-		KeepLinks: cfg.Crawl4AIKeepLinks,
+		Endpoint:       cfg.Crawl4AIURL,
+		Client:         httpClient,
+		Limiter:        limiter,
+		KeepLinks:      cfg.Crawl4AIKeepLinks,
+		PruneThreshold: cfg.Crawl4AIPruneThreshold,
 	})
 
 	// The Hacker News engine reads the public Algolia HN API directly (it is not

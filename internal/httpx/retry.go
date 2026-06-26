@@ -43,6 +43,11 @@ func (c *RetryConfig) defaults() {
 // Client wraps http.Client with retry-on-429/5xx and Retry-After honoring.
 type Client struct {
 	HTTP *http.Client
+	// OnAttempt, when non-nil, is called once per HTTP attempt DoRetry makes.
+	// retry is false for the first try and true for every retry, so a caller can
+	// count retry volume — the wasted work #2's RetryableStatus veto cuts. Set on
+	// the shared crawl client; nil elsewhere.
+	OnAttempt func(retry bool)
 }
 
 // New returns a Client wrapping the given http.Client. If nil is passed, a
@@ -101,6 +106,9 @@ func (c *Client) DoRetry(
 			req.Header.Set(k, v)
 		}
 
+		if c.OnAttempt != nil {
+			c.OnAttempt(attempt > 0)
+		}
 		resp, err := c.HTTP.Do(req)
 		if err != nil {
 			lastErr = err

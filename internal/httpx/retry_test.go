@@ -132,3 +132,61 @@ func TestDoRetryRespectsRetryableStatus(t *testing.T) {
 		})
 	}
 }
+
+// OnAttempt fires once per HTTP attempt — the first try plus every retry — so the
+// metrics layer can count retry volume. A 200 is one attempt; a retried 5xx
+// reports the first try and each retry.
+func TestDoRetryReportsAttempts(t *testing.T) {
+	t.Run("single attempt on success", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}))
+		defer srv.Close()
+
+		var firsts, retries int
+		c := New(nil)
+		c.OnAttempt = func(retry bool) {
+			if retry {
+				retries++
+			} else {
+				firsts++
+			}
+		}
+		resp, err := c.DoRetry(context.Background(), http.MethodGet, srv.URL, nil, nil, RetryConfig{})
+		if err != nil {
+			t.Fatalf("DoRetry() error = %v", err)
+		}
+		_ = resp.Body.Close()
+		if firsts != 1 || retries != 0 {
+			t.Fatalf("attempts: first=%d retry=%d, want 1/0", firsts, retries)
+		}
+	})
+
+	t.Run("counts retries on 5xx", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError)
+		}))
+		defer srv.Close()
+
+		var firsts, retries int
+		c := New(nil)
+		c.OnAttempt = func(retry bool) {
+			if retry {
+				retries++
+			} else {
+				firsts++
+			}
+		}
+		resp, err := c.DoRetry(context.Background(), http.MethodGet, srv.URL, nil, nil,
+			RetryConfig{MaxAttempts: 3, BaseDelay: time.Microsecond})
+		if resp != nil {
+			_ = resp.Body.Close()
+		}
+		if err == nil {
+			t.Fatal("DoRetry() error = nil, want a 5xx failure")
+		}
+		if firsts != 1 || retries != 2 {
+			t.Fatalf("attempts: first=%d retry=%d, want 1/2", firsts, retries)
+		}
+	})
+}
