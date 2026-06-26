@@ -21,6 +21,14 @@ func cleanHTML(s string) string {
 	if s == "" {
 		return s
 	}
+	// Fence code blocks BEFORE stripping tags so HN's <pre><code> survives as a
+	// Markdown fence — the in-comment code fidelity this engine exists to provide.
+	// (Tag-strip then unescape order means entity-encoded code chars like &lt;
+	// survive the strip and are decoded inside the fence.)
+	s = strings.ReplaceAll(s, "<pre><code>", "\n```\n")
+	s = strings.ReplaceAll(s, "</code></pre>", "\n```\n")
+	s = strings.ReplaceAll(s, "<pre>", "\n```\n")
+	s = strings.ReplaceAll(s, "</pre>", "\n```\n")
 	s = strings.ReplaceAll(s, "<p>", "\n\n")
 	s = strings.ReplaceAll(s, "</p>", "")
 	s = hnTagRE.ReplaceAllString(s, "")
@@ -59,6 +67,22 @@ func parseThread(raw []byte) (Thread, error) {
 		return Thread{}, err
 	}
 	var comments []Comment
+
+	// A comment permalink (/item?id=<commentID>) resolves to a type:"comment" item
+	// with a null title — don't render it as a blank-titled story. Emit the comment
+	// itself (then its replies), with a header that points at the enclosing story.
+	if it.Type == "comment" {
+		comments = append(comments, Comment{
+			ID:       it.ID,
+			ParentID: it.ParentID,
+			Author:   it.Author,
+			Body:     cleanHTML(it.Text),
+			Created:  it.CreatedI,
+		})
+		flattenComments(it.Children, it.ID, &comments)
+		return Thread{Story: Item{ID: it.StoryID}, Comments: comments}, nil
+	}
+
 	flattenComments(it.Children, it.ID, &comments)
 	return Thread{
 		Story: Item{
@@ -81,10 +105,9 @@ func parseFrontPage(raw []byte, feed string) (FrontPage, error) {
 		return FrontPage{}, err
 	}
 	stories := make([]Story, 0, len(s.Hits))
-	for i, h := range s.Hits {
+	for _, h := range s.Hits {
 		id, _ := strconv.Atoi(h.ObjectID)
 		stories = append(stories, Story{
-			Rank:        i + 1,
 			ID:          id,
 			Title:       h.Title,
 			URL:         h.URL,
