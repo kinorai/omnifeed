@@ -346,9 +346,12 @@ func TestParseListingURL(t *testing.T) {
 		{"https://www.reddit.com/r/golang", "golang", "hot", true},
 		{"https://old.reddit.com/r/golang/top", "golang", "top", true},
 		{"https://www.reddit.com/r/golang/new/", "golang", "new", true},
-		{"https://www.reddit.com/r/news/comments/1t056xf", "", "", false}, // a thread
-		{"https://www.reddit.com/r/golang/wiki/index", "", "", false},     // wiki page
-		{"https://www.reddit.com/user/spez", "", "", false},               // profile
+		{"https://www.reddit.com/r/golang.json", "golang", "hot", true},     // .json suffix stripped
+		{"https://www.reddit.com/r/golang/top.json", "golang", "top", true}, // sort + .json
+		{"https://www.reddit.com/r/news/comments/1t056xf", "", "", false},   // a thread
+		{"https://www.reddit.com/r/golang/wiki/index", "", "", false},       // wiki page
+		{"https://www.reddit.com/r/golang/best", "", "", false},             // 'best' is not a subreddit sort
+		{"https://www.reddit.com/user/spez", "", "", false},                 // profile
 	}
 	for _, tc := range cases {
 		sub, sort, ok := ParseListingURL(tc.url)
