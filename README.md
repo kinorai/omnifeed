@@ -1,15 +1,15 @@
 <!-- markdownlint-disable MD033 MD041 -->
 <p align="center">
-  <img src="https://capsule-render.vercel.app/api?type=waving&color=0:F97316,100:7C3AED&height=220&section=header&text=omnifeed&fontSize=82&fontColor=ffffff&animation=fadeIn&fontAlignY=36" alt="omnifeed" width="100%"/>
+  <img src="https://capsule-render.vercel.app/api?type=waving&color=0:FF4500,100:7C3AED&height=220&section=header&text=omnifeed&fontSize=82&fontColor=ffffff&animation=fadeIn&fontAlignY=36" alt="omnifeed" width="100%"/>
 </p>
 
 <p align="center">
-  <img src="https://readme-typing-svg.demolab.com?font=Fira+Code&weight=700&size=28&color=F97316&center=true&vCenter=true&multiline=true&repeat=false&duration=1500&pause=500&width=860&height=110&lines=Self-hosted+web+search+%2B+LLM-friendly+crawling;with+dedicated+Reddit+and+Hacker+News+engines" alt="Self-hosted web search + LLM-friendly crawling, with dedicated Reddit and Hacker News engines"/>
+  <img src="https://readme-typing-svg.demolab.com?font=Fira+Code&weight=700&size=28&color=FF4500&center=true&vCenter=true&multiline=true&repeat=false&duration=1500&pause=500&width=860&height=110&lines=Self-hosted+web+search+%2B+LLM-friendly+crawling;with+dedicated+Reddit+and+Hacker+News+engines" alt="Self-hosted web search + LLM-friendly crawling, with dedicated Reddit and Hacker News engines"/>
 </p>
 
 <p align="center">
   <a href="https://github.com/kinorai/omnifeed/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/kinorai/omnifeed/ci.yml?branch=main&label=CI&style=flat-square" alt="CI"/></a>
-  <a href="https://github.com/kinorai/omnifeed/releases"><img src="https://img.shields.io/github/v/release/kinorai/omnifeed?style=flat-square&color=F97316" alt="Release"/></a>
+  <a href="https://github.com/kinorai/omnifeed/releases"><img src="https://img.shields.io/github/v/release/kinorai/omnifeed?style=flat-square&color=FF4500" alt="Release"/></a>
   <a href="https://hub.docker.com/r/kinorai/omnifeed"><img src="https://img.shields.io/docker/pulls/kinorai/omnifeed?style=flat-square&logo=docker&logoColor=white&color=2496ED" alt="Docker pulls"/></a>
 </p>
 
@@ -176,7 +176,7 @@ Rule of thumb: reach for the **upstream params** to fetch less from Reddit; reac
 Two ports answer two questions. The `Searcher` port answers *query → URLs*; the `Engine` port answers *URL → content*. MCP tools and REST handlers compose them; transports stay thin.
 
 ```mermaid
-%%{init: {"theme":"base","themeVariables":{"background":"transparent","mainBkg":"#161b22","primaryColor":"#161b22","primaryTextColor":"#e6edf3","primaryBorderColor":"#F97316","lineColor":"#8b949e","secondaryColor":"#161b22","tertiaryColor":"#161b22"},"flowchart":{"curve":"basis","htmlLabels":false}}}%%
+%%{init: {"theme":"base","themeVariables":{"background":"transparent","mainBkg":"#161b22","primaryColor":"#161b22","primaryTextColor":"#e6edf3","primaryBorderColor":"#FF4500","lineColor":"#8b949e","secondaryColor":"#161b22","tertiaryColor":"#161b22"},"flowchart":{"curve":"basis","htmlLabels":false}}}%%
 flowchart TB
   crawl["POST /crawl"] e1@--> owt["Open WebUI<br/>transport"]
   search["POST /search"] e2@--> sat["SearchAPI<br/>transport"]
@@ -197,8 +197,8 @@ flowchart TB
   searcher e11@--> sx["SearXNG upstream<br/>(Google / Bing / DDG)"]
 
   classDef box fill:#161b22,stroke:#30363d,stroke-width:1px,color:#e6edf3;
-  classDef accent fill:#0d1117,stroke:#F97316,stroke-width:2px,color:#ffd9b3;
-  classDef animate stroke:#F97316,stroke-width:2px,stroke-dasharray:10 6,stroke-dashoffset:900,animation:dash 14s linear infinite;
+  classDef accent fill:#0d1117,stroke:#FF4500,stroke-width:2px,color:#ffd9b3;
+  classDef animate stroke:#FF4500,stroke-width:2px,stroke-dasharray:10 6,stroke-dashoffset:900,animation:dash 14s linear infinite;
   class crawl,search,mcpStdio,mcpHTTP,owt,sat box;
   class mcp,reg,searcher,reddit,hn,generic,c4,sx,algolia accent;
   class e1,e2,e3,e4,e5,e6,e7,e8,e9,e10,e11,e12,e13 animate;
@@ -246,7 +246,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full workflow, [SECURITY.md](SECU
 
 **Star it if it's useful — it helps other AI builders find omnifeed.**
 
-[![Star](https://img.shields.io/badge/⭐_Star_omnifeed-F97316?style=for-the-badge)](https://github.com/kinorai/omnifeed)
+[![Star](https://img.shields.io/badge/⭐_Star_omnifeed-FF4500?style=for-the-badge)](https://github.com/kinorai/omnifeed)
 [![Open an issue](https://img.shields.io/badge/🐛_Open_an_Issue-161b22?style=for-the-badge)](https://github.com/kinorai/omnifeed/issues/new)
 [![Submit a PR](https://img.shields.io/badge/🔧_Submit_a_PR-7C3AED?style=for-the-badge)](https://github.com/kinorai/omnifeed/pulls)
 
@@ -258,4 +258,4 @@ New engines, searchers, MCP tools, and transports are all welcome — start with
 
 [MIT](LICENSE) © kinorai
 
-<img src="https://capsule-render.vercel.app/api?type=waving&color=0:7C3AED,100:F97316&height=120&section=footer" width="100%"/>
+<img src="https://capsule-render.vercel.app/api?type=waving&color=0:7C3AED,100:FF4500&height=120&section=footer" width="100%"/>
