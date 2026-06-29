@@ -37,6 +37,12 @@ type Config struct {
     // chrome from noisy pages. The default is owned by config
     // (OMNIFEED_CRAWL4AI_PRUNE_THRESHOLD).
     PruneThreshold float64
+    // WaitUntil is crawl4ai's page-ready signal (Playwright wait_until):
+    // domcontentloaded (the default) fires before client-side frameworks hydrate,
+    // so JS-only SPAs render empty; networkidle waits for them at the cost of
+    // latency on every page. The default is owned by config
+    // (OMNIFEED_CRAWL4AI_WAIT_UNTIL); empty falls back to domcontentloaded.
+    WaitUntil string
 }
 ```
 
