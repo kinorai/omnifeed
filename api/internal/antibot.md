@@ -12,6 +12,7 @@ Package antibot recognizes bot\-wall / CAPTCHA / challenge pages that upstreams 
 
 - [func Detect\(body string\) \(marker string, blocked bool\)](<#Detect>)
 - [func IsBlockResponse\(body string\) bool](<#IsBlockResponse>)
+- [func IsStructuralBlock\(body string\) bool](<#IsStructuralBlock>)
 - [func RetryableStatus\(status int, body string\) bool](<#RetryableStatus>)
 
 
@@ -32,6 +33,15 @@ func IsBlockResponse(body string) bool
 ```
 
 IsBlockResponse reports whether an upstream error body is crawl4ai's anti\-bot block verdict — a non\-transient content block \(served as a 5xx\), not a fault.
+
+<a name="IsStructuralBlock"></a>
+## func IsStructuralBlock
+
+```go
+func IsStructuralBlock(body string) bool
+```
+
+IsStructuralBlock reports whether a crawl4ai block verdict is its own content\-gate \(a thin / empty / unparseable render\) rather than a genuine anti\-bot wall. Only meaningful when IsBlockResponse\(body\) is already true.
 
 <a name="RetryableStatus"></a>
 ## func RetryableStatus
