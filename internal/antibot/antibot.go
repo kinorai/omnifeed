@@ -60,6 +60,33 @@ func IsBlockResponse(body string) bool {
 	return strings.Contains(strings.ToLower(body), blockResponseMarker)
 }
 
+// structuralMarkers identify crawl4ai's own content-gate verdicts: it rejected
+// the page not because of a real wall but because it rendered too little usable
+// content — a JS-only SPA shell ("no <body> tag"), a PDF/binary the headless
+// browser can't extract, or a near-empty page ("minimal_text"). crawl4ai labels
+// these "Structural: <reason>" and ships them carrying the same
+// blockResponseMarker phrase as genuine walls, so IsBlockResponse alone can't
+// tell them apart.
+var structuralMarkers = []string{
+	"structural:",
+	"minimal_text",
+	"no_content_elements",
+	"no <body",
+}
+
+// IsStructuralBlock reports whether a crawl4ai block verdict is its own
+// content-gate (a thin / empty / unparseable render) rather than a genuine
+// anti-bot wall. Only meaningful when IsBlockResponse(body) is already true.
+func IsStructuralBlock(body string) bool {
+	lower := strings.ToLower(body)
+	for _, m := range structuralMarkers {
+		if strings.Contains(lower, m) {
+			return true
+		}
+	}
+	return false
+}
+
 // RetryableStatus is an httpx.RetryConfig predicate shared by the Reddit and
 // generic crawl paths: retry genuine transient 429/5xx, but never a crawl4ai
 // anti-bot block (it recurs, and re-driving the crawl just pays the cost again).
