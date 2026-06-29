@@ -49,3 +49,28 @@ func TestRetryableStatus(t *testing.T) {
 		}
 	}
 }
+
+// IsStructuralBlock distinguishes crawl4ai's own content-gate verdicts (thin /
+// empty / unparseable renders — SPAs, PDFs, near-empty pages) from a genuine
+// anti-bot wall carrying the same blockResponseMarker phrase.
+func TestIsStructuralBlock(t *testing.T) {
+	structural := []string{
+		`{"error":"Blocked by anti-bot protection: Structural: minimal_text on small page (224 bytes, 9 chars visible)"}`,
+		`{"error":"Blocked by anti-bot protection: Structural: no <body> tag (6300 bytes)"}`,
+		`{"error":"Blocked by anti-bot protection: Structural: minimal_text, no_content_elements (237 bytes, 0 chars visible)"}`,
+	}
+	for _, b := range structural {
+		if !IsStructuralBlock(b) {
+			t.Errorf("IsStructuralBlock(%q) = false, want true", b)
+		}
+	}
+	walls := []string{
+		`{"error":"Blocked by anti-bot protection: Cloudflare JS challenge"}`,
+		`{"error":"internal server error"}`,
+	}
+	for _, b := range walls {
+		if IsStructuralBlock(b) {
+			t.Errorf("IsStructuralBlock(%q) = true, want false", b)
+		}
+	}
+}

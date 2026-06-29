@@ -170,7 +170,7 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, _ domain.EngineOption
 		}
 		kind := domain.KindUpstreamError
 		if antibot.IsBlockResponse(msg) {
-			kind = domain.KindBotBlock
+			kind = blockKind(msg)
 		}
 		return domain.Document{}, &domain.FetchError{Kind: kind, Err: fmt.Errorf("crawl failed: %s", msg)}
 	}
@@ -225,19 +225,31 @@ func truncate(s string, n int) string {
 	return s[:n] + "..."
 }
 
+// blockKind splits a crawl4ai block verdict (one that has already matched
+// antibot.IsBlockResponse) into its two meanings: crawl4ai's own structural
+// content-gate — a thin / empty / unparseable render (SPA shell, PDF, near-empty
+// page) — is thin_content; anything else is a genuine anti-bot wall (bot_block).
+func blockKind(body string) domain.FailureKind {
+	if antibot.IsStructuralBlock(body) {
+		return domain.KindThinContent
+	}
+	return domain.KindBotBlock
+}
+
 // classifyCrawlError turns a DoRetry transport error into a typed FetchError.
 // crawl4ai hard-errors a blocked or too-sparse page as a top-level HTTP 5xx whose
 // body names the block (antibot.IsBlockResponse); that is a content block, not an
-// upstream fault, so it is demoted from upstream_error to bot_block. It then drops
-// out of the OmnifeedCrawlErrors alert (which excludes bot_block) while staying a
-// distinct, visible metric series. A 5xx with any other body stays upstream_error
-// and still pages.
+// upstream fault, so it is demoted out of upstream_error (which still pages) via
+// blockKind — crawl4ai's content-gate (minimal_text / no <body>: a JS-only SPA, a
+// PDF, a near-empty page) becomes thin_content, while a genuine wall becomes
+// bot_block. Both drop out of the OmnifeedCrawlErrors alert while staying
+// distinct, visible metric series. A 5xx with any other body stays upstream_error.
 func classifyCrawlError(err error) *domain.FetchError {
 	fe := httpx.ClassifyClientError(err, domain.KindUpstreamError)
 	if fe != nil && fe.Kind == domain.KindUpstreamError {
 		var se *httpx.StatusError
 		if errors.As(err, &se) && antibot.IsBlockResponse(se.Body) {
-			fe.Kind = domain.KindBotBlock
+			fe.Kind = blockKind(se.Body)
 		}
 	}
 	return fe
