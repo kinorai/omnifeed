@@ -25,8 +25,13 @@ func TestClassifyCrawlError(t *testing.T) {
 		want domain.FailureKind
 	}{
 		{
-			"anti-bot 5xx demotes to bot_block",
+			"structural content-gate 5xx demotes to thin_content",
 			&httpx.StatusError{StatusCode: 500, Body: `{"error":"Blocked by anti-bot protection: Structural: minimal_text on small page (224 bytes, 9 chars visible)"}`},
+			domain.KindThinContent,
+		},
+		{
+			"genuine wall 5xx demotes to bot_block",
+			&httpx.StatusError{StatusCode: 500, Body: `{"error":"Blocked by anti-bot protection: Cloudflare JS challenge"}`},
 			domain.KindBotBlock,
 		},
 		{"generic 5xx stays upstream_error", &httpx.StatusError{StatusCode: 500, Body: `{"error":"internal server error"}`}, domain.KindUpstreamError},
@@ -58,8 +63,13 @@ func TestCrawlClassifiesUnsuccessfulResponse(t *testing.T) {
 		wantBody string
 	}{
 		{
-			"success=false anti-bot to bot_block",
+			"success=false structural content-gate to thin_content",
 			map[string]interface{}{"success": false, "error": "Blocked by anti-bot protection: Structural: minimal_text on small page"},
+			true, domain.KindThinContent, "",
+		},
+		{
+			"success=false genuine wall to bot_block",
+			map[string]interface{}{"success": false, "error": "Blocked by anti-bot protection: Cloudflare JS challenge"},
 			true, domain.KindBotBlock, "",
 		},
 		{
