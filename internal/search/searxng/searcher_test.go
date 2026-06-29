@@ -2,6 +2,7 @@ package searxng
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -86,13 +87,31 @@ func TestSearch_EmptyQueryRejected(t *testing.T) {
 	}
 }
 
-func TestSearch_Non200IsError(t *testing.T) {
-	s := newTestSearcher(t, func(w http.ResponseWriter, _ *http.Request) {
-		// 403 is what SearXNG returns when the json format is not enabled.
-		w.WriteHeader(http.StatusForbidden)
-	})
-
-	if _, err := s.Search(context.Background(), "q", domain.SearchOptions{}); err == nil {
-		t.Fatal("want error on 403, got nil")
+// A non-200 must surface as a typed *domain.FetchError so the reason label
+// distinguishes a SearXNG config break (403, json format disabled) from an
+// upstream outage (5xx) — both used to collapse to reason=error.
+func TestSearch_Non200IsTypedError(t *testing.T) {
+	cases := []struct {
+		name   string
+		status int
+		want   domain.FailureKind
+	}{
+		{"403 json-format-disabled", http.StatusForbidden, domain.KindHTTP403},
+		{"5xx upstream", http.StatusBadGateway, domain.KindUpstreamError},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newTestSearcher(t, func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(tc.status)
+			})
+			_, err := s.Search(context.Background(), "q", domain.SearchOptions{})
+			var fe *domain.FetchError
+			if !errors.As(err, &fe) {
+				t.Fatalf("want *domain.FetchError, got %T: %v", err, err)
+			}
+			if fe.Kind != tc.want {
+				t.Fatalf("Kind = %q, want %q", fe.Kind, tc.want)
+			}
+		})
 	}
 }

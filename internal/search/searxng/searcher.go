@@ -77,7 +77,7 @@ func (s *Searcher) Search(ctx context.Context, query string, opts domain.SearchO
 	resp, err := s.client.DoRetry(ctx, http.MethodGet, s.searchURL+"?"+params.Encode(),
 		nil, nil, httpx.RetryConfig{})
 	if err != nil {
-		return nil, fmt.Errorf("searxng request: %w", err)
+		return nil, httpx.ClassifyClientError(err, domain.KindUpstreamError)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -86,7 +86,11 @@ func (s *Searcher) Search(ctx context.Context, query string, opts domain.SearchO
 		return nil, fmt.Errorf("read response: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("searxng returned %d (is the json format enabled in settings.yml?)", resp.StatusCode)
+		return nil, &domain.FetchError{
+			Kind:       domain.KindForStatus(resp.StatusCode),
+			StatusCode: resp.StatusCode,
+			Err:        fmt.Errorf("searxng returned %d (is the json format enabled in settings.yml?)", resp.StatusCode),
+		}
 	}
 
 	var sr searchResponse
