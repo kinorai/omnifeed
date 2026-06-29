@@ -37,6 +37,7 @@ type Config struct {
 	Crawl4AITimeout        time.Duration
 	Crawl4AIKeepLinks      bool    // render hyperlink anchor text + keep external links in markdown
 	Crawl4AIPruneThreshold float64 // PruningContentFilter cutoff for the generic engine (0–1; higher strips more boilerplate)
+	Crawl4AIWaitUntil      string  // page-ready signal for the generic engine: domcontentloaded (default) | load | networkidle | commit
 
 	// Upstream SearXNG (optional). Empty disables the `search` MCP tool.
 	SearXNGURL     string
@@ -68,16 +69,17 @@ type Config struct {
 // required variable is malformed. Defaults are documented inline.
 func Load() (Config, error) {
 	c := Config{
-		ListenAddr:    env("OMNIFEED_LISTEN_ADDR", ":8080"),
-		MCPListenAddr: env("OMNIFEED_MCP_LISTEN_ADDR", ":8081"),
-		MetricsAddr:   env("OMNIFEED_METRICS_ADDR", ":9090"),
-		LogLevel:      env("OMNIFEED_LOG_LEVEL", "info"),
-		LogFormat:     env("OMNIFEED_LOG_FORMAT", "json"),
-		APIKey:        os.Getenv("OMNIFEED_API_KEY"),
-		Crawl4AIURL:   env("OMNIFEED_CRAWL4AI_URL", ""),
-		SearXNGURL:    env("OMNIFEED_SEARXNG_URL", ""),
-		RedditFormat:  env("OMNIFEED_REDDIT_FORMAT", "toon"),
-		RedditSort:    env("OMNIFEED_REDDIT_SORT", domain.DefaultRedditSort),
+		ListenAddr:        env("OMNIFEED_LISTEN_ADDR", ":8080"),
+		MCPListenAddr:     env("OMNIFEED_MCP_LISTEN_ADDR", ":8081"),
+		MetricsAddr:       env("OMNIFEED_METRICS_ADDR", ":9090"),
+		LogLevel:          env("OMNIFEED_LOG_LEVEL", "info"),
+		LogFormat:         env("OMNIFEED_LOG_FORMAT", "json"),
+		APIKey:            os.Getenv("OMNIFEED_API_KEY"),
+		Crawl4AIURL:       env("OMNIFEED_CRAWL4AI_URL", ""),
+		Crawl4AIWaitUntil: env("OMNIFEED_CRAWL4AI_WAIT_UNTIL", "domcontentloaded"),
+		SearXNGURL:        env("OMNIFEED_SEARXNG_URL", ""),
+		RedditFormat:      env("OMNIFEED_REDDIT_FORMAT", "toon"),
+		RedditSort:        env("OMNIFEED_REDDIT_SORT", domain.DefaultRedditSort),
 	}
 
 	var err error
@@ -170,6 +172,12 @@ func Load() (Config, error) {
 
 	if c.Crawl4AIPruneThreshold < 0 || c.Crawl4AIPruneThreshold > 1 {
 		return c, fmt.Errorf("OMNIFEED_CRAWL4AI_PRUNE_THRESHOLD must be between 0 and 1, got %v", c.Crawl4AIPruneThreshold)
+	}
+
+	switch c.Crawl4AIWaitUntil {
+	case "domcontentloaded", "load", "networkidle", "commit":
+	default:
+		return c, fmt.Errorf("OMNIFEED_CRAWL4AI_WAIT_UNTIL must be one of domcontentloaded, load, networkidle, commit, got %q", c.Crawl4AIWaitUntil)
 	}
 
 	// crawl4ai is required for ALL engines now: the Reddit engine fetches
