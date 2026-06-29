@@ -96,6 +96,7 @@ func run(cfg config.Config, logger *slog.Logger) error {
 		Limiter:        limiter,
 		KeepLinks:      cfg.Crawl4AIKeepLinks,
 		PruneThreshold: cfg.Crawl4AIPruneThreshold,
+		WaitUntil:      cfg.Crawl4AIWaitUntil,
 	})
 
 	// The Hacker News engine reads the public Algolia HN API directly (it is not
