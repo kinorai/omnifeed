@@ -25,6 +25,7 @@ type Engine struct {
 	limiter        *httpx.DomainLimiter
 	keepLinks      bool
 	pruneThreshold float64
+	waitUntil      string
 }
 
 // Config configures the crawl4ai Engine.
@@ -41,11 +42,21 @@ type Config struct {
 	// chrome from noisy pages. The default is owned by config
 	// (OMNIFEED_CRAWL4AI_PRUNE_THRESHOLD).
 	PruneThreshold float64
+	// WaitUntil is crawl4ai's page-ready signal (Playwright wait_until):
+	// domcontentloaded (the default) fires before client-side frameworks hydrate,
+	// so JS-only SPAs render empty; networkidle waits for them at the cost of
+	// latency on every page. The default is owned by config
+	// (OMNIFEED_CRAWL4AI_WAIT_UNTIL); empty falls back to domcontentloaded.
+	WaitUntil string
 }
 
 // New returns a crawl4ai fallback Engine wired with the given config.
 func New(cfg Config) *Engine {
-	return &Engine{endpoint: cfg.Endpoint, client: cfg.Client, limiter: cfg.Limiter, keepLinks: cfg.KeepLinks, pruneThreshold: cfg.PruneThreshold}
+	waitUntil := cfg.WaitUntil
+	if waitUntil == "" {
+		waitUntil = "domcontentloaded"
+	}
+	return &Engine{endpoint: cfg.Endpoint, client: cfg.Client, limiter: cfg.Limiter, keepLinks: cfg.KeepLinks, pruneThreshold: cfg.PruneThreshold, waitUntil: waitUntil}
 }
 
 // Name returns the engine identifier ("crawl4ai").
@@ -104,7 +115,7 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, _ domain.EngineOption
 			"type": "CrawlerRunConfig",
 			"params": map[string]interface{}{
 				"word_count_threshold":       10,
-				"wait_until":                 "domcontentloaded",
+				"wait_until":                 e.waitUntil,
 				"delay_before_return_html":   1.0,
 				"page_timeout":               90000,
 				"scan_full_page":             true,

@@ -210,3 +210,39 @@ func TestCrawlRequestPruneThreshold(t *testing.T) {
 		t.Errorf("threshold = %v, want 0.72", got)
 	}
 }
+
+// WaitUntil must drive crawl4ai's page-ready signal so operators can switch the
+// generic engine to networkidle for JS-SPAs (OMNIFEED_CRAWL4AI_WAIT_UNTIL)
+// without a rebuild.
+func TestCrawlRequestWaitUntil(t *testing.T) {
+	var got string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		var req map[string]any
+		if err := json.Unmarshal(raw, &req); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+		params := req["crawler_config"].(map[string]any)["params"].(map[string]any)
+		got = params["wait_until"].(string)
+
+		resp := map[string]any{"success": true, "results": []any{map[string]any{
+			"success": true, "status_code": 200, "markdown": map[string]any{"raw_markdown": "# ok"},
+		}}}
+		b, _ := json.Marshal(resp)
+		_, _ = w.Write(b)
+	}))
+	defer srv.Close()
+
+	e := New(Config{
+		Endpoint:  srv.URL,
+		Client:    httpx.New(nil),
+		Limiter:   httpx.NewDomainLimiter(2, 0),
+		WaitUntil: "networkidle",
+	})
+	if _, err := e.Crawl(context.Background(), "https://example.com/page", domain.EngineOptions{}); err != nil {
+		t.Fatalf("Crawl() error = %v", err)
+	}
+	if got != "networkidle" {
+		t.Errorf("wait_until = %q, want networkidle", got)
+	}
+}
