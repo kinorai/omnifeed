@@ -1,7 +1,11 @@
 package mcp
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -110,5 +114,29 @@ func TestToolsList_SerializesAnnotations(t *testing.T) {
 	}
 	if !resp.Result.Tools[0].Annotations["readOnlyHint"] {
 		t.Fatalf("readOnlyHint: got %v, want true", resp.Result.Tools[0].Annotations)
+	}
+}
+
+// A failed tool call must log the call arguments (e.g. the target url) so a
+// failure is triageable from omnifeed's own logs without pivoting to the
+// upstream's. The transport stays generic — it logs p.Arguments wholesale, not
+// any tool-specific field.
+func TestToolsCall_LogsArgsOnFailure(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+	srv := New(Config{
+		Logger: logger,
+		Tools: []Tool{{
+			Name:        "fetch_url",
+			InputSchema: map[string]any{"type": "object"},
+			Handle: func(context.Context, map[string]any) (ToolResult, error) {
+				return ToolResult{}, errors.New("boom")
+			},
+		}},
+	})
+	post(t, srv, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"fetch_url","arguments":{"url":"https://example.com/doc.pdf"}}}`)
+
+	if !strings.Contains(buf.String(), "https://example.com/doc.pdf") {
+		t.Fatalf("failure log missing the call args/url; got: %s", buf.String())
 	}
 }

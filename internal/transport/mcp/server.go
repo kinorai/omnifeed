@@ -278,7 +278,7 @@ func (s *Server) handleToolsCall(ctx context.Context, req rpcRequest) rpcRespons
 		if errors.As(err, &paramErr) {
 			return errorResp(req.ID, codeInvalidParams, paramErr.Error())
 		}
-		s.logger.Warn("mcp tool call failed", "tool", p.Name, "err", err)
+		s.logger.Warn("mcp tool call failed", "tool", p.Name, "args", p.Arguments, "err", err)
 		return errorResp(req.ID, codeInternalError, p.Name+" failed")
 	}
 

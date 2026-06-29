@@ -20,23 +20,24 @@ import (
 // pay the cost of driving real retries.
 func TestClassifyCrawlError(t *testing.T) {
 	cases := []struct {
-		name string
-		err  error
-		want domain.FailureKind
+		name    string
+		err     error
+		want    domain.FailureKind
+		wantErr string // substring the rendered error must contain (verdict enrichment); "" skips
 	}{
 		{
 			"structural content-gate 5xx demotes to thin_content",
 			&httpx.StatusError{StatusCode: 500, Body: `{"error":"Blocked by anti-bot protection: Structural: minimal_text on small page (224 bytes, 9 chars visible)"}`},
-			domain.KindThinContent,
+			domain.KindThinContent, "minimal_text",
 		},
 		{
 			"genuine wall 5xx demotes to bot_block",
 			&httpx.StatusError{StatusCode: 500, Body: `{"error":"Blocked by anti-bot protection: Cloudflare JS challenge"}`},
-			domain.KindBotBlock,
+			domain.KindBotBlock, "Cloudflare JS challenge",
 		},
-		{"generic 5xx stays upstream_error", &httpx.StatusError{StatusCode: 500, Body: `{"error":"internal server error"}`}, domain.KindUpstreamError},
-		{"5xx with empty body stays upstream_error", &httpx.StatusError{StatusCode: 503}, domain.KindUpstreamError},
-		{"403 is unaffected", &httpx.StatusError{StatusCode: 403}, domain.KindHTTP403},
+		{"generic 5xx stays upstream_error", &httpx.StatusError{StatusCode: 500, Body: `{"error":"internal server error"}`}, domain.KindUpstreamError, ""},
+		{"5xx with empty body stays upstream_error", &httpx.StatusError{StatusCode: 503}, domain.KindUpstreamError, ""},
+		{"403 is unaffected", &httpx.StatusError{StatusCode: 403}, domain.KindHTTP403, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -46,6 +47,9 @@ func TestClassifyCrawlError(t *testing.T) {
 			}
 			if fe.Kind != tc.want {
 				t.Fatalf("Kind = %q, want %q", fe.Kind, tc.want)
+			}
+			if tc.wantErr != "" && !strings.Contains(fe.Error(), tc.wantErr) {
+				t.Fatalf("Error() = %q, want it to contain %q", fe.Error(), tc.wantErr)
 			}
 		})
 	}

@@ -261,6 +261,10 @@ func classifyCrawlError(err error) *domain.FetchError {
 		var se *httpx.StatusError
 		if errors.As(err, &se) && antibot.IsBlockResponse(se.Body) {
 			fe.Kind = blockKind(se.Body)
+			// Surface crawl4ai's verdict (the StatusError body) so the log/metric
+			// says WHY — minimal_text / no <body> / which wall — instead of the
+			// bare "upstream returned 500".
+			fe.Err = fmt.Errorf("crawl4ai %d: %s", se.StatusCode, truncate(se.Body, 200))
 		}
 	}
 	return fe
