@@ -38,6 +38,7 @@ type Config struct {
 	Crawl4AIKeepLinks      bool    // render hyperlink anchor text + keep external links in markdown
 	Crawl4AIPruneThreshold float64 // PruningContentFilter cutoff for the generic engine (0–1; higher strips more boilerplate)
 	Crawl4AIWaitUntil      string  // page-ready signal for the generic engine: domcontentloaded (default) | load | networkidle | commit
+	Crawl4AIToken          string  // bearer token sent to crawl4ai (its CRAWL4AI_API_TOKEN); empty = no Authorization header
 
 	// Upstream SearXNG (optional). Empty disables the `search` MCP tool.
 	SearXNGURL     string
@@ -77,6 +78,7 @@ func Load() (Config, error) {
 		APIKey:            os.Getenv("OMNIFEED_API_KEY"),
 		Crawl4AIURL:       env("OMNIFEED_CRAWL4AI_URL", ""),
 		Crawl4AIWaitUntil: env("OMNIFEED_CRAWL4AI_WAIT_UNTIL", "domcontentloaded"),
+		Crawl4AIToken:     env("OMNIFEED_CRAWL4AI_TOKEN", ""),
 		SearXNGURL:        env("OMNIFEED_SEARXNG_URL", ""),
 		RedditFormat:      env("OMNIFEED_REDDIT_FORMAT", "toon"),
 		RedditSort:        env("OMNIFEED_REDDIT_SORT", domain.DefaultRedditSort),
