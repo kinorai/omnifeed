@@ -1,0 +1,283 @@
+#!/usr/bin/env bash
+# Launch the omnifeed stack on Apple's native `container` runtime (macOS, Apple
+# Silicon) — the compose-less equivalent of `docker compose up`. Apple `container`
+# has no `compose` subcommand and no first-class container-to-container DNS, so
+# this script plays that role: it runs the three services, resolves the upstreams'
+# container IPs, and wires omnifeed to them. No `sudo`, no host DNS config.
+#
+#   ./scripts/container up        # start searxng + crawl4ai + omnifeed (tokenless)
+#   ./scripts/container down      # stop + remove the three containers
+#   ./scripts/container status    # show state / IP / health at a glance
+#   ./scripts/container logs [svc] [-f]   # tail logs (svc: omnifeed|searxng|crawl4ai)
+#   ./scripts/container restart   # down + up
+#   ./scripts/container update    # pull newer images, then recreate
+#   ./scripts/container build     # build omnifeed from local source, then up
+#   ./scripts/container mcp        # one-shot stdio MCP server (for stdio-only clients)
+#
+# Requires: Apple `container` (>= 1.0.0) and macOS 26 (Tahoe). Nothing else —
+# no jq, no Docker. Prefer this over Docker on Apple Silicon; if you'd rather run
+# the existing docker-compose.yml unchanged, see the socktainer note in README.md.
+set -euo pipefail
+export PATH="/usr/local/bin:/opt/homebrew/bin:$PATH"
+
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# ---- config (all overridable via env) --------------------------------------
+# All three track moving tags so `update` pulls the newest build. crawl4ai 0.9.x
+# serves on the network only with CRAWL4AI_API_TOKEN set (else loopback) and gates
+# its API on it, and the Reddit engine needs POST /execute_js enabled — so up()
+# generates a shared token, hands it to both sides, and turns on execute_js. Every
+# image is overridable; `--platform` below fails fast if a tag lacks arm64.
+SEARXNG_IMAGE="${SEARXNG_IMAGE:-searxng/searxng:latest}"
+CRAWL4AI_IMAGE="${CRAWL4AI_IMAGE:-unclecode/crawl4ai:latest}"
+OMNIFEED_IMAGE="${OMNIFEED_IMAGE:-kinorai/omnifeed:latest}"
+PLATFORM="${OMNIFEED_PLATFORM:-linux/arm64}"
+
+# A name prefix lets you run this alongside the Docker stack (or a second copy)
+# without colliding on container names / host ports.
+PREFIX="${OMNIFEED_PREFIX:-}"
+SEARXNG="${PREFIX}searxng"
+CRAWL4AI="${PREFIX}crawl4ai"
+OMNIFEED="${PREFIX}omnifeed"
+
+# Host ports. omnifeed is published for you to use; crawl4ai is published so the
+# health-wait can reach it (Apple `container` IPs are not routable from the host).
+# searxng needs no host port — omnifeed reaches it by container IP.
+PORT_HTTP="${OMNIFEED_PORT_HTTP:-8080}"       # /crawl (Open WebUI) + /search
+PORT_MCP="${OMNIFEED_PORT_MCP:-8081}"         # MCP HTTP/SSE
+PORT_METRICS="${OMNIFEED_PORT_METRICS:-9090}" # Prometheus + /livez /readyz
+CRAWL4AI_PORT="${OMNIFEED_CRAWL4AI_PORT:-11235}"
+CRAWL4AI_MEMORY="${OMNIFEED_CRAWL4AI_MEMORY:-4G}"  # headless Chromium; 1G default OOMs
+
+# ---- helpers ---------------------------------------------------------------
+log()  { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
+warn() { printf '\033[1;33m[warn]\033[0m %s\n' "$*" >&2; }
+die()  { printf '\033[1;31m[error]\033[0m %s\n' "$*" >&2; exit 1; }
+
+# Ensure the container daemon is up AND answering before issuing commands
+# (at login the apiserver needs a moment — apple/container#158).
+ensure_system() {
+  container system start >/dev/null 2>&1 || true
+  local i
+  for i in $(seq 1 15); do
+    container system status >/dev/null 2>&1 && return 0
+    sleep 1
+  done
+  warn "container system did not become ready in time"
+}
+
+exists()     { container inspect "$1" >/dev/null 2>&1; }
+is_running() { exists "$1" && container inspect "$1" 2>/dev/null \
+                 | grep -o '"state"[[:space:]]*:[[:space:]]*"[^"]*"' | grep -qi running; }
+
+# ip_of NAME -> prints the container's IPv4 (no mask); empty if unassigned.
+# jq-free on purpose (macOS ships no jq): grab the ipv4Address field's dotted quad.
+# `|| true`: grep exits 1 on no match, which pipefail+set -e would treat as fatal.
+ip_of() {
+  container inspect "$1" 2>/dev/null \
+    | grep -o '"ipv4Address"[^,]*' | head -1 \
+    | grep -oE '[0-9]{1,3}(\.[0-9]{1,3}){3}' | head -1 || true
+}
+
+# token_of NAME -> the container's CRAWL4AI_API_TOKEN env value (empty if none).
+token_of() {
+  container inspect "$1" 2>/dev/null | grep -o 'CRAWL4AI_API_TOKEN=[^"]*' | head -1 | cut -d= -f2- || true
+}
+
+# gen_token -> a fresh random hex token (openssl ships with macOS).
+gen_token() { openssl rand -hex 24; }
+
+# wait_http URL [tries] — poll until the endpoint answers (2s between tries).
+wait_http() {
+  local url="$1" tries="${2:-30}" i
+  for i in $(seq 1 "$tries"); do
+    curl -fsS -o /dev/null --max-time 3 "$url" 2>/dev/null && return 0
+    sleep 2
+  done
+  return 1
+}
+
+# Start the container if it already exists, otherwise create it.
+run_or_start() {
+  local name="$1"; shift
+  if exists "$name"; then
+    log "start $name (reusing existing container)"
+    container start "$name" >/dev/null 2>&1 || true
+  else
+    log "run   $name"
+    container run -d --name "$name" --platform "$PLATFORM" "$@" >/dev/null
+  fi
+}
+
+rm_one() {
+  container stop "$1" >/dev/null 2>&1 || true
+  container rm   "$1" >/dev/null 2>&1 || true
+}
+
+# ---- commands --------------------------------------------------------------
+up() {
+  ensure_system
+
+  # 1. Upstreams (reused if already present — crawl4ai is slow to boot).
+  run_or_start "$SEARXNG" \
+    -e SEARXNG_SECRET=dev-only-change-me \
+    -v "$REPO/searxng/settings.yml:/etc/searxng/settings.yml" \
+    "$SEARXNG_IMAGE"
+
+  # crawl4ai 0.9.x serves non-loopback only with CRAWL4AI_API_TOKEN set, and then
+  # gates /crawl on it — so use a shared token. A running crawl4ai is the source of
+  # truth (it is reused, not recreated); recreate it only when the token must change.
+  local token current
+  token="${OMNIFEED_CRAWL4AI_TOKEN:-}"
+  if exists "$CRAWL4AI"; then
+    current="$(token_of "$CRAWL4AI")"
+    if [ -n "$token" ] && [ "$token" != "$current" ]; then
+      log "crawl4ai token changed — recreating it"; rm_one "$CRAWL4AI"
+    elif [ -z "$token" ] && [ -z "$current" ]; then
+      log "existing crawl4ai has no API token — recreating it"; rm_one "$CRAWL4AI"; token="$(gen_token)"
+    else
+      token="${token:-$current}"
+    fi
+  fi
+  [ -n "$token" ] || token="$(gen_token)"
+
+  run_or_start "$CRAWL4AI" \
+    -p "${CRAWL4AI_PORT}:11235" \
+    -m "$CRAWL4AI_MEMORY" \
+    -e "CRAWL4AI_API_TOKEN=${token}" \
+    -e CRAWL4AI_EXECUTE_JS_ENABLED=true \
+    -e CRAWL4AI_HOOKS_ENABLED=false \
+    -e MAX_CONCURRENT_TASKS=25 \
+    "$CRAWL4AI_IMAGE"
+
+  log "waiting for crawl4ai (headless browser, ~30s first boot)…"
+  wait_http "http://localhost:${CRAWL4AI_PORT}/health" 30 \
+    || warn "crawl4ai not healthy yet; omnifeed will retry on its own"
+
+  # 2. Resolve upstream IPs. omnifeed reaches them by IP over the shared network —
+  #    no `container system dns` domain and no sudo required.
+  local searxng_ip crawl4ai_ip
+  crawl4ai_ip="$(ip_of "$CRAWL4AI")"
+  searxng_ip="$(ip_of "$SEARXNG")"
+  [ -n "$crawl4ai_ip" ] || die "could not resolve crawl4ai container IP (is it running?)"
+  [ -n "$searxng_ip" ]  || warn "could not resolve searxng IP — web_search will be disabled"
+  log "upstreams: crawl4ai=${crawl4ai_ip} searxng=${searxng_ip:-<none>}"
+
+  # 3. omnifeed — always recreated so it is wired to the CURRENT upstream IPs.
+  #    Tokenless, mirroring `docker compose up` (OMNIFEED_DEV_NO_AUTH=true).
+  rm_one "$OMNIFEED"
+  local env_args=(
+    -e "OMNIFEED_CRAWL4AI_URL=http://${crawl4ai_ip}:11235/crawl"
+    -e "OMNIFEED_CRAWL4AI_TOKEN=${token}"
+    -e OMNIFEED_DEV_NO_AUTH=true
+    -e OMNIFEED_LOG_LEVEL=info
+    -e OMNIFEED_LOG_FORMAT=json
+  )
+  [ -n "$searxng_ip" ] && env_args+=( -e "OMNIFEED_SEARXNG_URL=http://${searxng_ip}:8080" )
+  log "run   $OMNIFEED"
+  container run -d --name "$OMNIFEED" --platform "$PLATFORM" \
+    -p "${PORT_HTTP}:8080" -p "${PORT_MCP}:8081" -p "${PORT_METRICS}:9090" \
+    "${env_args[@]}" \
+    "$OMNIFEED_IMAGE" >/dev/null
+
+  log "waiting for omnifeed…"
+  if wait_http "http://localhost:${PORT_METRICS}/readyz" 30; then
+    log "omnifeed ready → http://localhost:${PORT_HTTP}  (MCP :${PORT_MCP}/mcp · metrics :${PORT_METRICS})"
+  else
+    warn "omnifeed did not report ready; check:  $0 logs"
+  fi
+}
+
+down() {
+  rm_one "$OMNIFEED"
+  rm_one "$CRAWL4AI"
+  rm_one "$SEARXNG"
+  log "down complete (containers removed)"
+}
+
+update() {
+  ensure_system
+  log "pulling latest images…"
+  container image pull "$SEARXNG_IMAGE"  >/dev/null || warn "pull failed: $SEARXNG_IMAGE"
+  container image pull "$CRAWL4AI_IMAGE" >/dev/null || warn "pull failed: $CRAWL4AI_IMAGE"
+  container image pull "$OMNIFEED_IMAGE" >/dev/null || warn "pull failed: $OMNIFEED_IMAGE"
+  log "recreating stack with updated images…"
+  down
+  up
+}
+
+build() {
+  ensure_system
+  local tag="${PREFIX}omnifeed:local"
+  log "building ${tag} from ${REPO}/Dockerfile…"
+  container build -t "$tag" "$REPO"
+  log "starting stack with locally-built image (${tag})"
+  OMNIFEED_IMAGE="$tag" up
+}
+
+logs() {
+  local target="$OMNIFEED"
+  case "${1:-}" in
+    searxng)  target="$SEARXNG";  shift ;;
+    crawl4ai) target="$CRAWL4AI"; shift ;;
+    omnifeed) target="$OMNIFEED"; shift ;;
+  esac
+  container logs "$@" "$target"
+}
+
+status() {
+  printf '%-12s %-9s %-16s %s\n' SERVICE STATE IP CONTAINER
+  local pair label cname st
+  for pair in "searxng:$SEARXNG" "crawl4ai:$CRAWL4AI" "omnifeed:$OMNIFEED"; do
+    label="${pair%%:*}"; cname="${pair#*:}"
+    if ! exists "$cname"; then
+      printf '%-12s %-9s %-16s %s\n' "$label" absent - "$cname"
+    else
+      is_running "$cname" && st=running || st=stopped
+      printf '%-12s %-9s %-16s %s\n' "$label" "$st" "$(ip_of "$cname")" "$cname"
+    fi
+  done
+  echo
+  if curl -fsS -o /dev/null --max-time 3 "http://localhost:${PORT_METRICS}/readyz" 2>/dev/null; then
+    log "omnifeed: ready — http://localhost:${PORT_HTTP} · MCP :${PORT_MCP}/mcp · metrics :${PORT_METRICS}"
+  else
+    warn "omnifeed: not answering /readyz on :${PORT_METRICS}"
+  fi
+}
+
+# One-shot stdio MCP server for clients that only speak stdio (Claude Desktop,
+# etc.). The HTTP transport on :${PORT_MCP}/mcp already works once `up` is done,
+# so prefer that. Needs the stack up (to resolve upstream IPs). Keeps stdout
+# clean for JSON-RPC — status goes to stderr.
+mcp() {
+  local crawl4ai_ip searxng_ip token
+  crawl4ai_ip="$(ip_of "$CRAWL4AI")"
+  searxng_ip="$(ip_of "$SEARXNG")"
+  token="$(token_of "$CRAWL4AI")"
+  [ -n "$crawl4ai_ip" ] || die "crawl4ai is not running — start the stack first:  $0 up"
+  local env_args=( -e "OMNIFEED_CRAWL4AI_URL=http://${crawl4ai_ip}:11235/crawl" )
+  [ -n "$token" ]      && env_args+=( -e "OMNIFEED_CRAWL4AI_TOKEN=${token}" )
+  [ -n "$searxng_ip" ] && env_args+=( -e "OMNIFEED_SEARXNG_URL=http://${searxng_ip}:8080" )
+  exec container run --rm -i --platform "$PLATFORM" "${env_args[@]}" "$OMNIFEED_IMAGE" --mcp-stdio
+}
+
+usage() {
+  # Print the header comment block (everything after the shebang up to the first
+  # non-comment line), stripping the leading "# ".
+  awk 'NR==1 {next} /^#/ {sub(/^# ?/, ""); print; next} {exit}' "${BASH_SOURCE[0]}"
+}
+
+# ---- dispatch --------------------------------------------------------------
+cmd="${1:-}"; shift || true
+case "$cmd" in
+  up)         up ;;
+  down)       down ;;
+  restart)    down; up ;;
+  update)     update ;;
+  build)      build ;;
+  logs)       logs "$@" ;;
+  status|ps)  status ;;
+  mcp)        mcp ;;
+  ""|-h|--help|help) usage ;;
+  *) warn "unknown command: $cmd"; usage; exit 1 ;;
+esac

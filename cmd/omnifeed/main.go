@@ -83,7 +83,7 @@ func run(cfg config.Config, logger *slog.Logger) error {
 	// The Reddit engine fetches through crawl4ai (a real browser) because
 	// Reddit's edge blocks non-browser HTTP clients — see reddit.Fetcher.
 	redditEngine := reddit.New(reddit.Config{
-		Fetcher:     reddit.NewFetcher(httpClient, cfg.Crawl4AIURL),
+		Fetcher:     reddit.NewFetcher(httpClient, cfg.Crawl4AIURL, cfg.Crawl4AIToken),
 		Limiter:     limiter,
 		Timeout:     cfg.RedditTimeout,
 		DefaultOpts: redditDefaults,
@@ -92,6 +92,7 @@ func run(cfg config.Config, logger *slog.Logger) error {
 	})
 	crawl4aiEngine := crawl4ai.New(crawl4ai.Config{
 		Endpoint:       cfg.Crawl4AIURL,
+		Token:          cfg.Crawl4AIToken,
 		Client:         httpClient,
 		Limiter:        limiter,
 		KeepLinks:      cfg.Crawl4AIKeepLinks,

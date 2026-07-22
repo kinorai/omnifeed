@@ -104,6 +104,24 @@ compose-down: ## Stop the stack
 compose-logs: ## Tail logs from the stack
 	docker compose logs -f
 
+## --- Apple container (macOS, Apple Silicon — no Docker) ---
+
+.PHONY: container-up
+container-up: ## Start the stack on Apple `container` (compose-less; see scripts/container)
+	./scripts/container up
+
+.PHONY: container-down
+container-down: ## Stop + remove the Apple `container` stack
+	./scripts/container down
+
+.PHONY: container-status
+container-status: ## Show Apple `container` stack state / IP / health
+	./scripts/container status
+
+.PHONY: container-logs
+container-logs: ## Tail omnifeed logs from the Apple `container` stack
+	./scripts/container logs -f
+
 
 ## --- Release (delegated to goreleaser) ---
 
