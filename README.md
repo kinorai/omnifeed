@@ -58,6 +58,32 @@ docker compose up
 
 Starts omnifeed + SearXNG + crawl4ai — **tokenless out of the box** (the compose file sets `OMNIFEED_DEV_NO_AUTH=true`), so `docker compose up` just works. Point Open WebUI at `http://localhost:8080` with `WEB_LOADER_ENGINE=external`. (SearXNG is mounted with `searxng/settings.yml`, which enables the `json` format `web_search` needs.) See **Authentication** below to require a bearer token.
 
+### <img src="https://raw.githubusercontent.com/Tarikul-Islam-Anik/Animated-Fluent-Emojis/master/Emojis/Travel%20and%20places/Desktop%20Computer.png" width="22" height="22" /> On Apple Silicon — native `container`, no Docker
+
+On an Apple-Silicon Mac you can skip Docker entirely and run the stack on Apple's [`container`](https://github.com/apple/container) runtime (macOS 26+):
+
+```bash
+git clone https://github.com/kinorai/omnifeed.git && cd omnifeed
+./scripts/container up        # or: make container-up
+```
+
+Same result as `docker compose up` — SearXNG + crawl4ai + omnifeed, **tokenless out of the box** — with omnifeed on `http://localhost:8080` (`/crawl`, `/search`), MCP on `:8081/mcp`, and health + metrics on `:9090`. Apple `container` has no `compose` and no container-to-container DNS, so the script resolves the upstreams' IPs and wires omnifeed to them: **no `sudo`, no host DNS setup, and no dependency beyond `container` itself** (not even `jq`).
+
+| Command | Does |
+|---|---|
+| `./scripts/container up` | start the stack (`make container-up`) |
+| `./scripts/container down` | stop + remove it (`make container-down`) |
+| `./scripts/container status` | state / IP / health at a glance |
+| `./scripts/container logs [svc] [-f]` | tail logs (`omnifeed` \| `searxng` \| `crawl4ai`) |
+| `./scripts/container restart` | recreate the stack |
+| `./scripts/container update` | pull newer images, then recreate |
+| `./scripts/container build` | build omnifeed from local source, then start |
+| `./scripts/container mcp` | one-shot stdio MCP server (stdio-only clients) |
+
+All three images track `latest`. crawl4ai `0.9.x` serves on the network only with an API token (else loopback) and its Reddit path needs `POST /execute_js` — so `up` generates a shared token, wires it to both crawl4ai (`CRAWL4AI_API_TOKEN`) and omnifeed (`OMNIFEED_CRAWL4AI_TOKEN`), and enables `execute_js` automatically. Every image is overridable via env (`SEARXNG_IMAGE`, `CRAWL4AI_IMAGE`, `OMNIFEED_IMAGE`), and `OMNIFEED_PREFIX=foo-` runs a second copy alongside another stack without name/port clashes.
+
+> **Prefer real `docker compose`?** [socktainer](https://github.com/socktainer/socktainer) exposes a Docker-compatible API over Apple `container`, so `docker context use socktainer && docker compose up` runs the existing `docker-compose.yml` unchanged — Apple's own suggested path for Docker-CLI compatibility.
+
 ### <img src="https://raw.githubusercontent.com/Tarikul-Islam-Anik/Animated-Fluent-Emojis/master/Emojis/Objects/Electric%20Plug.png" width="22" height="22" /> As an MCP server
 
 Works with any MCP client — **Claude Code, Cursor, Codex, Gemini CLI, OpenCode, Windsurf, Pi**, and more.
@@ -131,6 +157,7 @@ Everything is configured with `OMNIFEED_`-prefixed environment variables. In pra
 |---|---|---|
 | `OMNIFEED_API_KEY` | _(unset)_ | Bearer token for `/crawl`, `/search`, `/mcp`. If unset, the proxy refuses to start unless `OMNIFEED_DEV_NO_AUTH=true`. Stdio MCP is unaffected. |
 | `OMNIFEED_CRAWL4AI_URL` | _(required)_ | Upstream crawl4ai endpoint. Reddit + the generic fallback fetch through it (the Hacker News engine reads `hn.algolia.com` directly); if empty, the proxy exits at startup. |
+| `OMNIFEED_CRAWL4AI_TOKEN` | _(unset)_ | Bearer token sent to crawl4ai (its `CRAWL4AI_API_TOKEN`). Needed when the upstream enforces auth — crawl4ai `0.9.x` binds non-loopback **only** when a token is set. Unset sends no `Authorization` header. |
 | `OMNIFEED_SEARXNG_URL` | _(unset)_ | Upstream SearXNG base URL (e.g. `http://searxng:8080`). When unset, `web_search` / `/search` are not exposed. The instance must enable the `json` format. |
 | `OMNIFEED_DEV_NO_AUTH` | `false` | Run the HTTP transports with **no** auth when no key is set (local/dev only). Ignored if a key is set. |
 | `OMNIFEED_LISTEN_ADDR` | `:8080` | HTTP listen address (`/crawl`, `/search`) |
@@ -207,7 +234,7 @@ flowchart TB
 
 ### <img src="https://raw.githubusercontent.com/Tarikul-Islam-Anik/Animated-Fluent-Emojis/master/Emojis/Objects/Shield.png" width="22" height="22" /> Reddit anti-bot handling
 
-Reddit's edge 403-blocks non-browser HTTP clients (it fingerprints the TLS/JA3 handshake), so the Reddit engine never calls Reddit directly. It drives crawl4ai's headless Chromium to a `www.reddit.com` page (which clears the bot wall), then runs a **same-origin `fetch()`** of the `.json` and `/api/morechildren` endpoints from inside that page. No Reddit auth, cookies, or API key. A per-thread crawl4ai `session_id` is reused across expansion rounds to keep one warmed context.
+Reddit's edge 403-blocks non-browser HTTP clients (it fingerprints the TLS/JA3 handshake), so the Reddit engine never calls Reddit directly. It drives crawl4ai's headless Chromium to a `www.reddit.com` page (which clears the bot wall), then runs a **same-origin `fetch()`** of the `.json` and `/api/morechildren` endpoints from inside that page. No Reddit auth, cookies, or API key. It reaches crawl4ai through the token-gated **`POST /execute_js`** endpoint (crawl4ai `0.9.x` rejects caller `js_code` on `/crawl`), so the upstream must run with `CRAWL4AI_EXECUTE_JS_ENABLED=true`.
 
 > Sustained scraping can raise your source IP's risk score. If fetches start returning the block page, slow down, keep `expand` modest, or route crawl4ai through a residential proxy.
 

@@ -215,6 +215,44 @@ func TestCrawlRequestPruneThreshold(t *testing.T) {
 	}
 }
 
+// Token, when set, must be sent as `Authorization: Bearer <token>` on every
+// crawl4ai call — required for crawl4ai 0.9.x, which binds non-loopback only when
+// CRAWL4AI_API_TOKEN is set (OMNIFEED_CRAWL4AI_TOKEN). Empty token → no header.
+func TestCrawlSendsBearerToken(t *testing.T) {
+	for _, tc := range []struct {
+		name, token, want string
+	}{
+		{"token sends bearer header", "sekret", "Bearer sekret"},
+		{"empty token sends no header", "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var gotAuth string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotAuth = r.Header.Get("Authorization")
+				resp := map[string]any{"success": true, "results": []any{map[string]any{
+					"success": true, "status_code": 200, "markdown": map[string]any{"raw_markdown": "# ok"},
+				}}}
+				b, _ := json.Marshal(resp)
+				_, _ = w.Write(b)
+			}))
+			defer srv.Close()
+
+			e := New(Config{
+				Endpoint: srv.URL,
+				Token:    tc.token,
+				Client:   httpx.New(nil),
+				Limiter:  httpx.NewDomainLimiter(2, 0),
+			})
+			if _, err := e.Crawl(context.Background(), "https://example.com/page", domain.EngineOptions{}); err != nil {
+				t.Fatalf("Crawl() error = %v", err)
+			}
+			if gotAuth != tc.want {
+				t.Fatalf("Authorization = %q, want %q", gotAuth, tc.want)
+			}
+		})
+	}
+}
+
 // WaitUntil must drive crawl4ai's page-ready signal so operators can switch the
 // generic engine to networkidle for JS-SPAs (OMNIFEED_CRAWL4AI_WAIT_UNTIL)
 // without a rebuild.

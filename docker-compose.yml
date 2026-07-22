@@ -9,7 +9,7 @@ name: omnifeed
 
 services:
   searxng:
-    image: searxng/searxng:2026.6.2-e964708c0
+    image: searxng/searxng:latest
     container_name: searxng
     volumes:
       - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
@@ -24,11 +24,17 @@ services:
     restart: unless-stopped
 
   crawl4ai:
-    image: unclecode/crawl4ai:0.8.6
+    image: unclecode/crawl4ai:latest
     container_name: crawl4ai
     ports:
       - "11235:11235"
     environment:
+      # crawl4ai 0.9.x binds loopback-only until a token is set, and gates its
+      # API on it — omnifeed sends the same value via OMNIFEED_CRAWL4AI_TOKEN.
+      CRAWL4AI_API_TOKEN: crawl4ai-dev-token
+      # The Reddit engine runs an in-page fetch via POST /execute_js, which 0.9.x
+      # ships disabled by default. Enable it (token-gated, reachable by this stack only).
+      CRAWL4AI_EXECUTE_JS_ENABLED: "true"
       CRAWL4AI_HOOKS_ENABLED: "false"
       MAX_CONCURRENT_TASKS: "25"
     healthcheck:
@@ -51,6 +57,7 @@ services:
     environment:
       OMNIFEED_CRAWL4AI_URL: http://crawl4ai:11235/crawl
       OMNIFEED_SEARXNG_URL: http://searxng:8080
+      OMNIFEED_CRAWL4AI_TOKEN: crawl4ai-dev-token  # must match crawl4ai's CRAWL4AI_API_TOKEN
       # Set OMNIFEED_API_KEY to require Authorization: Bearer ... on /crawl.
       # OMNIFEED_API_KEY: changeme
       # Without OMNIFEED_API_KEY the proxy refuses to start; this is the explicit
@@ -77,6 +84,7 @@ services:
     environment:
       OMNIFEED_CRAWL4AI_URL: http://crawl4ai:11235/crawl
       OMNIFEED_SEARXNG_URL: http://searxng:8080
+      OMNIFEED_CRAWL4AI_TOKEN: crawl4ai-dev-token  # must match crawl4ai's CRAWL4AI_API_TOKEN
     depends_on:
       crawl4ai:
         condition: service_healthy

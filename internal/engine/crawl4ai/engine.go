@@ -21,6 +21,7 @@ import (
 // markdown body. It is registered as the Registry fallback.
 type Engine struct {
 	endpoint       string
+	token          string
 	client         *httpx.Client
 	limiter        *httpx.DomainLimiter
 	keepLinks      bool
@@ -31,8 +32,13 @@ type Engine struct {
 // Config configures the crawl4ai Engine.
 type Config struct {
 	Endpoint string
-	Client   *httpx.Client
-	Limiter  *httpx.DomainLimiter
+	// Token, when set, is sent as `Authorization: Bearer <token>` on every crawl4ai
+	// request — required when the upstream runs with CRAWL4AI_API_TOKEN (crawl4ai
+	// 0.9.x binds non-loopback only when a token is set). The default is owned by
+	// config (OMNIFEED_CRAWL4AI_TOKEN); empty sends no Authorization header.
+	Token   string
+	Client  *httpx.Client
+	Limiter *httpx.DomainLimiter
 	// KeepLinks renders hyperlink anchor text and retains external links in the
 	// extracted markdown. When false, both are stripped for leaner output. The
 	// default is owned by config (OMNIFEED_CRAWL4AI_KEEP_LINKS).
@@ -56,7 +62,7 @@ func New(cfg Config) *Engine {
 	if waitUntil == "" {
 		waitUntil = "domcontentloaded"
 	}
-	return &Engine{endpoint: cfg.Endpoint, client: cfg.Client, limiter: cfg.Limiter, keepLinks: cfg.KeepLinks, pruneThreshold: cfg.PruneThreshold, waitUntil: waitUntil}
+	return &Engine{endpoint: cfg.Endpoint, token: cfg.Token, client: cfg.Client, limiter: cfg.Limiter, keepLinks: cfg.KeepLinks, pruneThreshold: cfg.PruneThreshold, waitUntil: waitUntil}
 }
 
 // Name returns the engine identifier ("crawl4ai").
@@ -64,6 +70,16 @@ func (*Engine) Name() string { return "crawl4ai" }
 
 // Matches returns false: this engine is the fallback only.
 func (*Engine) Matches(string) bool { return false }
+
+// headers are the crawl4ai request headers, adding a bearer token when one is
+// configured (the upstream's CRAWL4AI_API_TOKEN).
+func (e *Engine) headers() map[string]string {
+	h := map[string]string{"Content-Type": "application/json"}
+	if e.token != "" {
+		h["Authorization"] = "Bearer " + e.token
+	}
+	return h
+}
 
 // --- crawl4ai wire types ---
 
@@ -151,7 +167,7 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, _ domain.EngineOption
 	}
 
 	resp, err := e.client.DoRetry(ctx, http.MethodPost, e.endpoint, body,
-		map[string]string{"Content-Type": "application/json"},
+		e.headers(),
 		httpx.RetryConfig{RetryableStatus: antibot.RetryableStatus})
 	if err != nil {
 		return domain.Document{}, classifyCrawlError(err)
