@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -17,19 +16,16 @@ import (
 
 func mustJSON(v interface{}) []byte { b, _ := json.Marshal(v); return b }
 
-// crawl4aiOK builds a successful /crawl response whose single result's
-// js_execution_result wraps a {s,b} fetch envelope — the exact 4-layer shape
-// browserFetch must unwrap (crawl4ai resp → results[0].js_execution_result.
-// results[0] → JSON-encoded string → {s,b} → reddit body).
+// crawl4aiOK builds a successful /execute_js response whose js_execution_result
+// wraps a {s,b} fetch envelope — the exact shape browserFetch must unwrap
+// (crawl4ai resp → js_execution_result.results[0] → JSON-encoded string → {s,b}
+// → reddit body).
 func crawl4aiOK(fetchStatus int, fetchBody string) []byte {
 	env := mustJSON(fetchEnvelope{S: fetchStatus, B: fetchBody})
 	return mustJSON(map[string]interface{}{
-		"success": true,
-		"results": []interface{}{map[string]interface{}{
-			"success":             true,
-			"status_code":         200,
-			"js_execution_result": map[string]interface{}{"results": []interface{}{string(env)}},
-		}},
+		"success":             true,
+		"status_code":         200,
+		"js_execution_result": map[string]interface{}{"results": []interface{}{string(env)}},
 	})
 }
 
@@ -55,13 +51,11 @@ func TestFetchThread(t *testing.T) {
 		{"crawl4ai 5xx (anti-bot)", 500, []byte(`{"error":"Blocked by anti-bot protection"}`), "", "500", domain.KindBotBlock},
 		{"crawl4ai 4xx", 400, []byte(`{"error":"bad request"}`), "", "crawl4ai returned 400", domain.KindError},
 		{"crawl4ai result failed", 200, mustJSON(map[string]interface{}{
-			"success": true,
-			"results": []interface{}{map[string]interface{}{"success": false, "error_message": "nav timeout"}},
-		}), "", "result failed", domain.KindBotBlock},
+			"success": false, "error_message": "nav timeout",
+		}), "", "nav timeout", domain.KindBotBlock},
 		{"empty js result", 200, mustJSON(map[string]interface{}{
-			"success": true,
-			"results": []interface{}{map[string]interface{}{
-				"success": true, "js_execution_result": map[string]interface{}{"results": []interface{}{}}}},
+			"success":             true,
+			"js_execution_result": map[string]interface{}{"results": []interface{}{}},
 		}), "", "no js result", domain.KindBotBlock},
 	}
 
@@ -73,7 +67,7 @@ func TestFetchThread(t *testing.T) {
 			}))
 			defer srv.Close()
 
-			f := NewFetcher(httpx.New(nil), srv.URL)
+			f := NewFetcher(httpx.New(nil), srv.URL, "")
 			got, err := f.FetchThread(context.Background(), permalink, 500, 20, "top")
 
 			if tc.wantErr != "" {
@@ -104,15 +98,44 @@ func TestFetchThread(t *testing.T) {
 // TestFetcherMissingEndpoint: with no crawl4ai URL, fetches fail fast (mirrors
 // the config-level guard for the same reason).
 func TestFetcherMissingEndpoint(t *testing.T) {
-	f := NewFetcher(httpx.New(nil), "")
+	f := NewFetcher(httpx.New(nil), "", "")
 	if _, err := f.FetchThread(context.Background(), "/r/news/comments/abc/t/", 500, 20, "top"); err == nil {
 		t.Fatal("expected error when crawl4ai URL is empty")
 	}
 }
 
-// TestRequestShape locks the crawl4ai knobs the binary sends: stealth on,
-// magic/simulate_user OFF (the D decision), and the session reuse / js_only
-// split between thread (navigate) and morechildren (reuse).
+// TestFetcherSendsBearerToken: when a token is configured, every crawl4ai call
+// carries `Authorization: Bearer <token>` — required for crawl4ai 0.9.x, which
+// binds non-loopback only when CRAWL4AI_API_TOKEN is set. Empty token → no header.
+func TestFetcherSendsBearerToken(t *testing.T) {
+	for _, tc := range []struct {
+		name, token, want string
+	}{
+		{"token sends bearer header", "sekret", "Bearer sekret"},
+		{"empty token sends no header", "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var gotAuth string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotAuth = r.Header.Get("Authorization")
+				_, _ = w.Write(crawl4aiOK(200, `[{"kind":"Listing","data":{"children":[]}}]`))
+			}))
+			defer srv.Close()
+
+			f := NewFetcher(httpx.New(nil), srv.URL, tc.token)
+			if _, err := f.FetchThread(context.Background(), "/r/news/comments/abc/t/", 500, 20, "top"); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if gotAuth != tc.want {
+				t.Fatalf("Authorization = %q, want %q", gotAuth, tc.want)
+			}
+		})
+	}
+}
+
+// TestRequestShape locks the /execute_js request the binary sends: {url, scripts}
+// with the Reddit fetch params carried in the script, and morechildren
+// re-navigating the thread page (crawl4ai's /execute_js has no session reuse).
 func TestRequestShape(t *testing.T) {
 	var captured []byte
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -120,73 +143,46 @@ func TestRequestShape(t *testing.T) {
 		_, _ = w.Write(crawl4aiOK(200, `[{"kind":"Listing","data":{"children":[]}}]`))
 	}))
 	defer srv.Close()
-	f := NewFetcher(httpx.New(nil), srv.URL)
+	f := NewFetcher(httpx.New(nil), srv.URL, "")
 
-	decode := func() c4aRequest {
+	decode := func() execJSRequest {
 		t.Helper()
-		var req c4aRequest
+		var req execJSRequest
 		if err := json.Unmarshal(captured, &req); err != nil {
 			t.Fatalf("decode captured request: %v", err)
 		}
 		return req
 	}
 
-	// FetchThread navigates and creates the session.
+	// FetchThread navigates the thread page and fetches the .json.
 	if _, err := f.FetchThread(context.Background(), "/r/news/comments/abc123/some_title/", 123, 4, "new"); err != nil {
 		t.Fatal(err)
 	}
 	req := decode()
+	if len(req.Scripts) != 1 {
+		t.Fatalf("want exactly one script, got %d", len(req.Scripts))
+	}
 	// The Reddit fetch params must pass through into the in-page fetch() URL.
-	// jsLit JSON-escapes the URL, so the "&" query separators are unicode-
-	// escaped in the emitted JS; assert each key=value separately, not joined.
-	js := fmt.Sprint(req.CrawlerConfig.Params["js_code"])
+	// jsLit JSON-escapes the URL, so assert each key=value separately, not joined.
 	for _, want := range []string{"limit=123", "depth=4", "sort=new"} {
-		if !strings.Contains(js, want) {
-			t.Errorf("thread fetch URL missing %q; js_code = %s", want, js)
+		if !strings.Contains(req.Scripts[0], want) {
+			t.Errorf("thread fetch URL missing %q; script = %s", want, req.Scripts[0])
 		}
 	}
-	if req.BrowserConfig.Params["enable_stealth"] != true {
-		t.Error("enable_stealth must be set")
-	}
-	if req.CrawlerConfig.Params["override_navigator"] != true {
-		t.Error("override_navigator must be set")
-	}
-	if _, ok := req.CrawlerConfig.Params["magic"]; ok {
-		t.Error("magic must be omitted (D)")
-	}
-	if _, ok := req.CrawlerConfig.Params["simulate_user"]; ok {
-		t.Error("simulate_user must be omitted (D)")
-	}
-	if req.CrawlerConfig.Params["session_id"] != "carp-reddit-abc123" {
-		t.Errorf("session_id = %v, want carp-reddit-abc123", req.CrawlerConfig.Params["session_id"])
-	}
-	if _, ok := req.CrawlerConfig.Params["js_only"]; ok {
-		t.Error("FetchThread must navigate (no js_only)")
+	if !strings.Contains(req.URL, "/r/news/comments/abc123/") {
+		t.Errorf("FetchThread must navigate the thread page; url = %s", req.URL)
 	}
 
-	// FetchMoreChildren reuses the same warmed session without re-navigating.
+	// FetchMoreChildren re-navigates the thread page and POSTs morechildren.
 	if _, err := f.FetchMoreChildren(context.Background(), "t3_abc123", []string{"x1", "x2"}, "top"); err != nil {
 		t.Fatal(err)
 	}
 	req = decode()
-	if req.CrawlerConfig.Params["js_only"] != true {
-		t.Error("FetchMoreChildren must reuse the session (js_only)")
+	if !strings.Contains(req.URL, "/comments/abc123/") {
+		t.Errorf("morechildren must navigate the thread page; url = %s", req.URL)
 	}
-	if req.CrawlerConfig.Params["session_id"] != "carp-reddit-abc123" {
-		t.Errorf("morechildren session_id = %v, want carp-reddit-abc123", req.CrawlerConfig.Params["session_id"])
-	}
-}
-
-func TestThreadSession(t *testing.T) {
-	cases := map[string]string{
-		"/r/news/comments/abc123/some_title/": "carp-reddit-abc123",
-		"/r/news/comments/xyz/":               "carp-reddit-xyz",
-		"/r/news/":                            "",
-	}
-	for in, want := range cases {
-		if got := threadSession(in); got != want {
-			t.Errorf("threadSession(%q) = %q, want %q", in, got, want)
-		}
+	if !strings.Contains(req.Scripts[0], "morechildren") {
+		t.Errorf("morechildren script must POST /api/morechildren; script = %s", req.Scripts[0])
 	}
 }
 
@@ -250,15 +246,13 @@ func TestIsShareURL(t *testing.T) {
 	}
 }
 
-// crawl4aiRawJS builds a /crawl response whose js_execution_result returns a
-// plain string (e.g. location.href) rather than a {s,b} envelope.
+// crawl4aiRawJS builds an /execute_js response whose js_execution_result returns
+// a plain string (e.g. location.href) rather than a {s,b} envelope.
 func crawl4aiRawJS(jsReturn string) []byte {
 	return mustJSON(map[string]interface{}{
-		"success": true,
-		"results": []interface{}{map[string]interface{}{
-			"success": true, "status_code": 200,
-			"js_execution_result": map[string]interface{}{"results": []interface{}{jsReturn}},
-		}},
+		"success":             true,
+		"status_code":         200,
+		"js_execution_result": map[string]interface{}{"results": []interface{}{jsReturn}},
 	})
 }
 
@@ -268,7 +262,7 @@ func TestResolveShareURL(t *testing.T) {
 		_, _ = w.Write(crawl4aiRawJS(canonical))
 	}))
 	defer srv.Close()
-	f := NewFetcher(httpx.New(nil), srv.URL)
+	f := NewFetcher(httpx.New(nil), srv.URL, "")
 	got, err := f.ResolveShareURL(context.Background(), "https://www.reddit.com/r/news/s/abc")
 	if err != nil || got != canonical {
 		t.Fatalf("ResolveShareURL = %q, %v; want %q", got, err, canonical)
@@ -279,7 +273,7 @@ func TestResolveShareURL(t *testing.T) {
 		_, _ = w.Write(crawl4aiRawJS("https://www.reddit.com/r/news/"))
 	}))
 	defer srv2.Close()
-	f2 := NewFetcher(httpx.New(nil), srv2.URL)
+	f2 := NewFetcher(httpx.New(nil), srv2.URL, "")
 	if _, err := f2.ResolveShareURL(context.Background(), "https://www.reddit.com/r/news/s/abc"); err == nil {
 		t.Error("expected error when share link resolves to a non-thread URL")
 	}
@@ -297,7 +291,7 @@ func TestFetchListing(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	f := NewFetcher(httpx.New(nil), srv.URL)
+	f := NewFetcher(httpx.New(nil), srv.URL, "")
 	got, err := f.FetchListing(context.Background(), "golang", "hot", 25)
 	if err != nil {
 		t.Fatalf("FetchListing: %v", err)
