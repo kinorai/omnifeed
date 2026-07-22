@@ -67,7 +67,7 @@ git clone https://github.com/kinorai/omnifeed.git && cd omnifeed
 ./scripts/container up        # or: make container-up
 ```
 
-Same result as `docker compose up` — SearXNG + crawl4ai + omnifeed, **tokenless out of the box** — with omnifeed on `http://localhost:8080` (`/crawl`, `/search`), MCP on `:8081/mcp`, and health + metrics on `:9090`. Apple `container` has no `compose` and no container-to-container DNS, so the script resolves the upstreams' IPs and wires omnifeed to them: **no `sudo`, no host DNS setup, and no dependency beyond `container` itself** (not even `jq`).
+Same result as `docker compose up` — SearXNG + crawl4ai + omnifeed, **tokenless out of the box** — with omnifeed on `http://localhost:8080` (`/crawl`, `/search`), MCP on `:8081/mcp`, and health + metrics on `:9090`.
 
 | Command | Does |
 |---|---|
@@ -80,9 +80,7 @@ Same result as `docker compose up` — SearXNG + crawl4ai + omnifeed, **tokenles
 | `./scripts/container build` | build omnifeed from local source, then start |
 | `./scripts/container mcp` | one-shot stdio MCP server (stdio-only clients) |
 
-All three images track `latest`. crawl4ai `0.9.x` serves on the network only with an API token (else loopback) and its Reddit path needs `POST /execute_js` — so `up` generates a shared token, wires it to both crawl4ai (`CRAWL4AI_API_TOKEN`) and omnifeed (`OMNIFEED_CRAWL4AI_TOKEN`), and enables `execute_js` automatically. Every image is overridable via env (`SEARXNG_IMAGE`, `CRAWL4AI_IMAGE`, `OMNIFEED_IMAGE`), and `OMNIFEED_PREFIX=foo-` runs a second copy alongside another stack without name/port clashes.
-
-> **Prefer real `docker compose`?** [socktainer](https://github.com/socktainer/socktainer) exposes a Docker-compatible API over Apple `container`, so `docker context use socktainer && docker compose up` runs the existing `docker-compose.yml` unchanged — Apple's own suggested path for Docker-CLI compatibility.
+All three images track `latest`; crawl4ai `0.9.x` needs a token and routes Reddit through `POST /execute_js`, so `up` generates a shared token, wires it to crawl4ai (`CRAWL4AI_API_TOKEN`) and omnifeed (`OMNIFEED_CRAWL4AI_TOKEN`), and enables `execute_js` automatically.
 
 ### <img src="https://raw.githubusercontent.com/Tarikul-Islam-Anik/Animated-Fluent-Emojis/master/Emojis/Objects/Electric%20Plug.png" width="22" height="22" /> As an MCP server
 
