@@ -25,7 +25,7 @@ Package reddit implements the Reddit\-specific engine: fetches threads via the p
   - [func \(\*Engine\) Matches\(rawURL string\) bool](<#Engine.Matches>)
   - [func \(\*Engine\) Name\(\) string](<#Engine.Name>)
 - [type Fetcher](<#Fetcher>)
-  - [func NewFetcher\(client \*httpx.Client, crawl4aiURL string\) \*Fetcher](<#NewFetcher>)
+  - [func NewFetcher\(client \*httpx.Client, crawl4aiURL, token string\) \*Fetcher](<#NewFetcher>)
   - [func \(f \*Fetcher\) FetchListing\(ctx context.Context, sub, sort string, limit int\) \(\[\]byte, error\)](<#Fetcher.FetchListing>)
   - [func \(f \*Fetcher\) FetchMoreChildren\(ctx context.Context, linkID string, childIDs \[\]string, sort string\) \(\[\]byte, error\)](<#Fetcher.FetchMoreChildren>)
   - [func \(f \*Fetcher\) FetchThread\(ctx context.Context, permalink string, limit, depth int, sort string\) \(\[\]byte, error\)](<#Fetcher.FetchThread>)
@@ -184,7 +184,9 @@ Name returns the engine identifier.
 <a name="Fetcher"></a>
 ## type Fetcher
 
-Fetcher retrieves raw JSON from Reddit. Reddit's edge now hard\-blocks non\-browser HTTP clients \(Go's net/http gets a 403 "network security" wall keyed on TLS/JA3 fingerprint\), so we no longer hit Reddit directly. Instead every fetch is routed through the upstream crawl4ai instance: it drives a real headless Chromium to a reddit.com page \(which clears the bot challenge\), then runs a same\-origin fetch\(\) of the target JSON endpoint from inside that page and hands back the raw response text. The browser context is what passes the wall; the in\-page fetch inherits it, so the JSON comes back exactly as a logged\-out browser would see it — no auth, no cookies.
+Fetcher retrieves raw JSON from Reddit. Reddit's edge hard\-blocks non\-browser HTTP clients \(Go's net/http gets a 403 "network security" wall keyed on the TLS/JA3 fingerprint\), so we never hit Reddit directly. Instead every fetch is routed through crawl4ai's POST /execute\_js endpoint: it drives a real headless Chromium to a reddit.com page \(which clears the bot challenge\), then runs a same\-origin fetch\(\) of the target JSON endpoint from inside that page and hands back the raw response text. The browser context passes the wall; the in\-page fetch inherits it, so the JSON comes back exactly as a logged\-out browser would see it — no auth, no cookies.
+
+Why /execute\_js \(not /crawl\): crawl4ai 0.9.x rejects caller\-supplied js\_code on /crawl "from an untrusted request". /execute\_js is the sanctioned endpoint that runs caller JS — it builds the crawler config server\-side. It must be enabled on the crawl4ai side \(CRAWL4AI\_EXECUTE\_JS\_ENABLED=true\) and, once crawl4ai has a token, requires it \(sent via OMNIFEED\_CRAWL4AI\_TOKEN\). There is no session reuse on /execute\_js, so each call is a fresh navigation.
 
 ```go
 type Fetcher struct {
@@ -196,10 +198,10 @@ type Fetcher struct {
 ### func NewFetcher
 
 ```go
-func NewFetcher(client *httpx.Client, crawl4aiURL string) *Fetcher
+func NewFetcher(client *httpx.Client, crawl4aiURL, token string) *Fetcher
 ```
 
-NewFetcher constructs a Fetcher that drives crawl4ai's /crawl endpoint \(crawl4aiURL == OMNIFEED\_CRAWL4AI\_URL\) to reach Reddit through a browser.
+NewFetcher constructs a Fetcher that drives crawl4ai's /execute\_js endpoint to reach Reddit through a browser. crawl4aiURL is OMNIFEED\_CRAWL4AI\_URL \(the /crawl URL\); the sibling /execute\_js URL is derived from it. token, when set, is sent as \`Authorization: Bearer \<token\>\` \(crawl4ai's CRAWL4AI\_API\_TOKEN\).
 
 <a name="Fetcher.FetchListing"></a>
 ### func \(\*Fetcher\) FetchListing
@@ -217,7 +219,7 @@ FetchListing retrieves a subreddit listing \(hot/new/top/…\) via its .json end
 func (f *Fetcher) FetchMoreChildren(ctx context.Context, linkID string, childIDs []string, sort string) ([]byte, error)
 ```
 
-FetchMoreChildren expands collapsed reply branches via /api/morechildren. linkID must include the t3\_ prefix; childIDs are bare IDs \(no prefix\). It reuses the thread's warmed browser session \(js\_only: no re\-navigation\).
+FetchMoreChildren expands collapsed reply branches via /api/morechildren. linkID must include the t3\_ prefix; childIDs are bare IDs \(no prefix\). Each call navigates the thread page afresh \(crawl4ai's /execute\_js has no session reuse\), then runs the same\-origin POST from that page.
 
 <a name="Fetcher.FetchThread"></a>
 ### func \(\*Fetcher\) FetchThread
@@ -226,7 +228,7 @@ FetchMoreChildren expands collapsed reply branches via /api/morechildren. linkID
 func (f *Fetcher) FetchThread(ctx context.Context, permalink string, limit, depth int, sort string) ([]byte, error)
 ```
 
-FetchThread retrieves a thread via the .json endpoint, fetched from inside a real browser on the reddit.com origin. This call navigates the page, creating/warming the per\-thread crawl4ai session that subsequent FetchMoreChildren calls reuse. limit/depth/sort map directly onto Reddit's comments\-endpoint query params \(limit = max comments, depth = max subtree nesting\): https://www.reddit.com/dev/api/#GET_comments_{article}
+FetchThread retrieves a thread via the .json endpoint, fetched from inside a real browser on the reddit.com origin. limit/depth/sort map directly onto Reddit's comments\-endpoint query params \(limit = max comments, depth = max subtree nesting\): https://www.reddit.com/dev/api/#GET_comments_{article}
 
 <a name="Fetcher.ResolveShareURL"></a>
 ### func \(\*Fetcher\) ResolveShareURL

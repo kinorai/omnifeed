@@ -26,8 +26,13 @@ Config configures the crawl4ai Engine.
 ```go
 type Config struct {
     Endpoint string
-    Client   *httpx.Client
-    Limiter  *httpx.DomainLimiter
+    // Token, when set, is sent as `Authorization: Bearer <token>` on every crawl4ai
+    // request — required when the upstream runs with CRAWL4AI_API_TOKEN (crawl4ai
+    // 0.9.x binds non-loopback only when a token is set). The default is owned by
+    // config (OMNIFEED_CRAWL4AI_TOKEN); empty sends no Authorization header.
+    Token   string
+    Client  *httpx.Client
+    Limiter *httpx.DomainLimiter
     // KeepLinks renders hyperlink anchor text and retains external links in the
     // extracted markdown. When false, both are stripped for leaner output. The
     // default is owned by config (OMNIFEED_CRAWL4AI_KEEP_LINKS).
