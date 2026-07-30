@@ -28,8 +28,12 @@ failure is visible in the same JSON response: `unresponsive_engines` as
   fixed within hours-to-weeks, and the burst-blocking DDG failure specifically
   was fixed by PR #5943 (`Sec-Fetch-*` headers, merged 2026-04-04 — "blocked on
   the second consecutive search" → "4 concurrent tabs fine"). SearXNG publishes
-  no GitHub releases, only date-tagged images: verify the running image
-  postdates 2026-04-04 and pin a dated tag instead of `latest`.
+  no GitHub releases, only date-tagged images: pin a dated tag instead of
+  `latest`. RESOLVED 2026-07-30: running image digest `854f239d…` =
+  **2026.7.22-ef8f6470e** — fully current, already contains #5943 and the
+  google→google-cse swap. So the benchmark's suspensions happened *despite* a
+  current image: burst load alone trips the engines, which reweights this item
+  toward pool widening + braveapi + caller pacing + detection.
 - [ ] `searxng/settings.yml`: widen the engine pool so one suspension can't
   empty the result set — swap dead classic `google` (upstream `inactive: true`
   since ~2026-06, issue #6453) for `google cse` (active by default, no API key),
@@ -55,6 +59,20 @@ failure is visible in the same JSON response: `unresponsive_engines` as
     (422) closed not-planned, fix PR unmerged — triggered only by `time_range`
     values outside day/week/month/year; omnifeed's adapter only ever sends
     those four, so safe. Config: `engine: braveapi`, `api_key: …`.
+    DECIDED 2026-07-30: go with braveapi. Reddit-exclusion concern researched
+    and REFUTED: Brave kept Reddit through the 2024 crawler lockout (its
+    crawler deliberately hides its UA to avoid Google-only robots rules, plus
+    the Web Discovery Project ingestion path); fresh 2026 reddit.com results
+    verified live via site:reddit.com, x.com indexed too, and the API docs
+    have no excluded-domains policy. Exa likewise documents no reddit ban
+    (noindex-based exclusion only; Reddit blocks via robots.txt, not noindex).
+    Real risks instead: (a) storage-rights terms — caching API results for an
+    LLM needs a plan that grants storage; (b) quota cliff (~1,000/mo, down
+    from ~5,000 in 2025); (c) single-vendor 429. Mitigation: keep the scraping
+    engines registered BEHIND braveapi as overflow — do NOT special-case
+    reddit onto scrapers (the API index is the more reliable reddit source).
+    Before cutover: one keyed `site:reddit.com` API call diffed against the
+    scraping path.
   - `marginalia`: free non-commercial key by email; genuinely authenticated;
     niche small-web/blogs index — supplementary, not a primary.
   - `exaapi` (new, merged 2026-07-19): ~$10 credits/month ⇒ ~1,400 req/month;
@@ -122,8 +140,15 @@ subtree, protecting code.
   is available today and the benchmark corruption is confirmed to come from the
   fit_markdown path (the ≥0.7.8 scraper fix is already in the image). Pin
   `unclecode/crawl4ai:0.9.2` in docker-compose.yml instead of `latest`.
-- [ ] File the upstream issue (approved 2026-07-30): draft at
-  [crawl4ai-issue-draft.md](crawl4ai-issue-draft.md).
+- [ ] Upstream contribution (decided 2026-07-30: issue + PR combo, PR authored
+  by the orchestrator directly): patch written and verified locally — +8-line
+  guard in `PruningContentFilter._prune_tree` (skip `pre`/`code` subtrees,
+  mirroring the #1181 scraper guard) + `tests/test_pruning_code_whitespace.py`
+  (4 tests; 2 fail on unpatched code, all 24 filter tests pass patched, zero
+  regressions in the #1900 preserve-whitelist suite). Per CONTRIBUTING.md the
+  PR targets `develop` from a fork. Issue draft:
+  [crawl4ai-issue-draft.md](crawl4ai-issue-draft.md). Awaiting go-ahead to
+  fork/push/file under the owner's GitHub account.
 - [ ] `internal/engine/crawl4ai`: add to the content_filter params:
   `"preserve_tags":["pre","code"]` (+ `preserve_classes` for common highlighter
   wrappers: `highlight`, `chroma`, `highlighter-rouge`). Keep `table` OUT of
