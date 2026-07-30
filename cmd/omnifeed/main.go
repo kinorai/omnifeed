@@ -21,6 +21,7 @@ import (
 	"github.com/kinorai/omnifeed/internal/domain"
 	"github.com/kinorai/omnifeed/internal/engine"
 	"github.com/kinorai/omnifeed/internal/engine/crawl4ai"
+	"github.com/kinorai/omnifeed/internal/engine/discourse"
 	"github.com/kinorai/omnifeed/internal/engine/github"
 	"github.com/kinorai/omnifeed/internal/engine/hackernews"
 	"github.com/kinorai/omnifeed/internal/engine/reddit"
@@ -104,10 +105,10 @@ func run(cfg config.Config, logger *slog.Logger) error {
 		TargetElements:   cfg.Crawl4AITargetElements,
 	})
 
-	// The Hacker News and GitHub engines read their public JSON APIs directly
-	// (neither is bot-walled, unlike Reddit), so — exceptionally — they do NOT go
-	// through crawl4ai. They need outbound access to hn.algolia.com and
-	// api.github.com respectively.
+	// The Hacker News, GitHub, and Discourse engines read their public JSON APIs
+	// directly (none is bot-walled, unlike Reddit), so — exceptionally — they do
+	// NOT go through crawl4ai. They need outbound access to hn.algolia.com,
+	// api.github.com, and the configured Discourse hosts respectively.
 	hackerNewsEngine := hackernews.New(hackernews.Config{
 		Client:  httpClient,
 		Limiter: limiter,
@@ -121,11 +122,21 @@ func run(cfg config.Config, logger *slog.Logger) error {
 		Token:   cfg.GitHubToken,
 		Logger:  logger,
 	})
+	// Discourse runs on arbitrary self-hosted domains, so the engine claims only
+	// the hosts OMNIFEED_DISCOURSE_HOSTS lists; unlisted forums fall through to
+	// the browser fallback. An empty list makes it claim nothing.
+	discourseEngine := discourse.New(discourse.Config{
+		Client:  httpClient,
+		Limiter: limiter,
+		Hosts:   cfg.DiscourseHosts,
+		Logger:  logger,
+	})
 
 	registry := engine.New().
 		Register(redditEngine).
 		Register(hackerNewsEngine).
 		Register(gitHubEngine).
+		Register(discourseEngine).
 		Fallback(crawl4aiEngine).
 		BlockPrivateIPs(cfg.BlockPrivateIPs)
 
