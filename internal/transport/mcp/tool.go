@@ -1,6 +1,10 @@
 package mcp
 
-import "context"
+import (
+	"context"
+
+	"github.com/kinorai/omnifeed/internal/observability"
+)
 
 // Tool is one MCP tool: the schema surfaced by tools/list plus the handler
 // invoked by tools/call. The transport stays generic — domain-specific
@@ -34,3 +38,11 @@ func (e ParamError) Error() string { return e.msg }
 
 // InvalidParams returns a ParamError with the given message.
 func InvalidParams(msg string) error { return ParamError{msg: msg} }
+
+// toolFailureMessage is the JSON-RPC error message for a failed tools/call: the
+// tool name plus the classified reason, upstream status, and root cause that
+// observability already records as metric labels. A bare "<tool> failed" tells
+// the calling agent nothing about whether to retry, use another URL, or give up.
+func toolFailureMessage(tool string, err error) string {
+	return tool + " failed: " + observability.Explain(err)
+}

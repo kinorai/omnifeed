@@ -10,6 +10,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/kinorai/omnifeed/internal/domain"
 )
 
 // post sends a single JSON-RPC request to /mcp and returns the recorded
@@ -138,5 +140,94 @@ func TestToolsCall_LogsArgsOnFailure(t *testing.T) {
 
 	if !strings.Contains(buf.String(), "https://example.com/doc.pdf") {
 		t.Fatalf("failure log missing the call args/url; got: %s", buf.String())
+	}
+}
+
+// A tools/call failure must carry the classified reason (and the upstream status
+// when the error has one) into the JSON-RPC error message: a bare
+// "fetch_url failed" leaves the calling agent unable to tell a retryable
+// upstream fault from a bot wall. The code stays -32603 (no protocol change).
+func TestToolsCall_ErrorMessageCarriesReasonAndStatus(t *testing.T) {
+	cases := []struct {
+		name string
+		tool string
+		err  error
+		want string
+	}{
+		{
+			name: "fetch_error_with_kind_and_status",
+			tool: "fetch_url",
+			err: &domain.FetchError{
+				Kind:       domain.KindUpstreamError,
+				StatusCode: 500,
+				Err:        errors.New("crawl4ai returned 500: Internal Server Error"),
+			},
+			want: "fetch_url failed: upstream_error (HTTP 500): crawl4ai returned 500: Internal Server Error",
+		},
+		{
+			// Same error the searxng searcher returns for a degraded upstream. The
+			// reason prefix is dropped because the cause text already says it.
+			name: "degraded_search",
+			tool: "web_search",
+			err: &domain.FetchError{
+				Kind: domain.KindDegraded,
+				Err:  errors.New("search degraded: 2 engines unavailable (google: Suspended: too many requests, bing: timeout) — retry shortly"),
+			},
+			want: "web_search failed: search degraded: 2 engines unavailable (google: Suspended: too many requests, bing: timeout) — retry shortly",
+		},
+		{
+			name: "captcha_without_wrapped_error",
+			tool: "fetch_url",
+			err:  &domain.FetchError{Kind: domain.KindCaptcha, StatusCode: 403, Marker: "cf-challenge"},
+			want: `fetch_url failed: captcha (HTTP 403): matched block marker "cf-challenge"`,
+		},
+		{
+			name: "plain_error",
+			tool: "fetch_url",
+			err:  errors.New("boom"),
+			want: "fetch_url failed: boom",
+		},
+		{
+			// The upstream endpoint is a configured internal address — it must not
+			// reach the client.
+			name: "upstream_url_redacted",
+			tool: "fetch_url",
+			err: &domain.FetchError{
+				Kind: domain.KindUpstreamError,
+				Err:  errors.New(`Post "http://crawl4ai:11235/crawl": dial tcp: connection refused`),
+			},
+			want: `fetch_url failed: upstream_error: Post "[upstream]": dial tcp: connection refused`,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := New(Config{
+				Tools: []Tool{{
+					Name:        tc.tool,
+					InputSchema: map[string]any{"type": "object"},
+					Handle: func(context.Context, map[string]any) (ToolResult, error) {
+						return ToolResult{}, tc.err
+					},
+				}},
+			})
+			body := post(t, srv, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"`+tc.tool+`","arguments":{}}}`)
+
+			var resp struct {
+				Error struct {
+					Code    int    `json:"code"`
+					Message string `json:"message"`
+				} `json:"error"`
+			}
+			if err := json.Unmarshal(body, &resp); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			if resp.Error.Code != codeInternalError {
+				t.Fatalf("code: got %d, want %d", resp.Error.Code, codeInternalError)
+			}
+			if resp.Error.Message != tc.want {
+				t.Fatalf("message:\n got %q\nwant %q", resp.Error.Message, tc.want)
+			}
+		})
 	}
 }
