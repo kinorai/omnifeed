@@ -146,9 +146,13 @@ subtree, protecting code.
   mirroring the #1181 scraper guard) + `tests/test_pruning_code_whitespace.py`
   (4 tests; 2 fail on unpatched code, all 24 filter tests pass patched, zero
   regressions in the #1900 preserve-whitelist suite). Per CONTRIBUTING.md the
-  PR targets `develop` from a fork. Issue draft:
-  [crawl4ai-issue-draft.md](crawl4ai-issue-draft.md). Awaiting go-ahead to
-  fork/push/file under the owner's GitHub account.
+  PR targets `develop` from a fork. FILED 2026-07-30 (account kinorai):
+  issue https://github.com/unclecode/crawl4ai/issues/2110 + PR
+  https://github.com/unclecode/crawl4ai/pull/2111 (branch
+  `fix/pruning-preserve-code-whitespace`, rebased on develop, 24/24 green).
+  Until merged and released, omnifeed still ships the `preserve_tags`
+  payload workaround (next bullet). Draft kept at
+  [crawl4ai-issue-draft.md](crawl4ai-issue-draft.md).
 - [ ] `internal/engine/crawl4ai`: add to the content_filter params:
   `"preserve_tags":["pre","code"]` (+ `preserve_classes` for common highlighter
   wrappers: `highlight`, `chroma`, `highlighter-rouge`). Keep `table` OUT of
