@@ -19,87 +19,87 @@ func TestTruncateContent(t *testing.T) {
 		wantNext      int
 	}{
 		{
-			name: "shorter than cap returns everything unmarked",
+			name:    "shorter than cap returns everything unmarked",
 			content: "hello world", maxChars: 100,
 			wantText: "hello world", wantTotal: 11, wantReturned: 11, wantNext: 11,
 		},
 		{
-			name: "exactly at cap is not truncated",
+			name:    "exactly at cap is not truncated",
 			content: "hello", maxChars: 5,
 			wantText: "hello", wantTotal: 5, wantReturned: 5, wantNext: 5,
 		},
 		{
-			name: "over cap truncates and appends the marker",
+			name:    "over cap truncates and appends the marker",
 			content: "abcdefghij", maxChars: 4,
 			wantText: "abcd\n\n[omnifeed: content truncated at 4 of 10 characters. " +
 				"Call fetch_url again with start_char=4 to continue.]",
 			wantTruncated: true, wantTotal: 10, wantReturned: 4, wantNext: 4,
 		},
 		{
-			name: "continuation from an offset reports the next offset",
+			name:    "continuation from an offset reports the next offset",
 			content: "abcdefghij", maxChars: 3, startChar: 4,
 			wantText: "efg\n\n[omnifeed: content truncated at 7 of 10 characters. " +
 				"Call fetch_url again with start_char=7 to continue.]",
 			wantTruncated: true, wantTotal: 10, wantReturned: 3, wantNext: 7,
 		},
 		{
-			name: "final chunk gets no marker",
+			name:    "final chunk gets no marker",
 			content: "abcdefghij", maxChars: 5, startChar: 5,
 			wantText: "fghij", wantTotal: 10, wantReturned: 5, wantNext: 10,
 		},
 		{
-			name: "zero maxChars means unlimited",
+			name:    "zero maxChars means unlimited",
 			content: "abcdefghij", maxChars: 0,
 			wantText: "abcdefghij", wantTotal: 10, wantReturned: 10, wantNext: 10,
 		},
 		{
-			name: "unlimited still honors startChar",
+			name:    "unlimited still honors startChar",
 			content: "abcdefghij", maxChars: 0, startChar: 7,
 			wantText: "hij", wantTotal: 10, wantReturned: 3, wantNext: 10,
 		},
 		{
-			name: "offset past the end explains itself",
+			name:    "offset past the end explains itself",
 			content: "abcdefghij", maxChars: 5, startChar: 10,
-			wantText: "[omnifeed: no content at offset 10 — total 10 characters]",
+			wantText:  "[omnifeed: no content at offset 10 — total 10 characters]",
 			wantTotal: 10, wantReturned: 0, wantNext: 10,
 		},
 		{
-			name: "offset far past the end explains itself",
+			name:    "offset far past the end explains itself",
 			content: "abc", maxChars: 5, startChar: 999,
-			wantText: "[omnifeed: no content at offset 999 — total 3 characters]",
+			wantText:  "[omnifeed: no content at offset 999 — total 3 characters]",
 			wantTotal: 3, wantReturned: 0, wantNext: 3,
 		},
 		{
 			// Counting bytes here would slice mid-character and produce U+FFFD.
-			name: "multibyte content is counted and cut by rune",
+			name:    "multibyte content is counted and cut by rune",
 			content: "héllo wörld — ünïcode", maxChars: 5,
 			wantText: "héllo\n\n[omnifeed: content truncated at 5 of 21 characters. " +
 				"Call fetch_url again with start_char=5 to continue.]",
 			wantTruncated: true, wantTotal: 21, wantReturned: 5, wantNext: 5,
 		},
 		{
-			name: "multibyte startChar resumes on a rune boundary",
+			name:    "multibyte startChar resumes on a rune boundary",
 			content: "héllo wörld", maxChars: 4, startChar: 6,
 			wantText: "wörl\n\n[omnifeed: content truncated at 10 of 11 characters. " +
 				"Call fetch_url again with start_char=10 to continue.]",
 			wantTruncated: true, wantTotal: 11, wantReturned: 4, wantNext: 10,
 		},
 		{
-			name: "emoji are single characters",
+			name:    "emoji are single characters",
 			content: "ab🎉cd", maxChars: 3,
 			wantText: "ab🎉\n\n[omnifeed: content truncated at 3 of 5 characters. " +
 				"Call fetch_url again with start_char=3 to continue.]",
 			wantTruncated: true, wantTotal: 5, wantReturned: 3, wantNext: 3,
 		},
 		{
-			name: "negative startChar is clamped to 0",
+			name:    "negative startChar is clamped to 0",
 			content: "abc", maxChars: 2, startChar: -5,
 			wantText: "ab\n\n[omnifeed: content truncated at 2 of 3 characters. " +
 				"Call fetch_url again with start_char=2 to continue.]",
 			wantTruncated: true, wantTotal: 3, wantReturned: 2, wantNext: 2,
 		},
 		{
-			name: "empty content at offset 0 stays empty",
+			name:    "empty content at offset 0 stays empty",
 			content: "", maxChars: 10,
 			wantText: "", wantTotal: 0, wantReturned: 0, wantNext: 0,
 		},
