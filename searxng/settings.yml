@@ -25,7 +25,13 @@ search:
 #   - ahmia / torch are Tor onion engines that fail to load without a Tor proxy
 #   - wikipedia / wikidata fire on every query but never help dev/devops lookups
 #     (wikidata also adds ~3s latency + log noise)
-# google / startpage / duckduckgo stay enabled and carry the queries.
+#
+# The general-web pool that carries the queries is duckduckgo, brave, startpage,
+# google cse, mojeek, bing (+ braveapi once keyed). Classic `google` is NOT part
+# of it: upstream marks it inactive since ~2026-06, replaced by `google cse`.
+# Widened after the 2026-07-30 perf benchmark: engines suspended after a
+# 429/CAPTCHA are skipped without a network call, so a narrow pool returns an
+# empty result set as soon as one engine is in cooldown.
 engines:
   - name: wikidata
     disabled: true
@@ -35,3 +41,26 @@ engines:
     disabled: true
   - name: torch
     disabled: true
+
+  # Disabled by default upstream; enabled here to widen the general-web pool.
+  # `google cse` is already active by default on this image vintage, so it needs
+  # no entry. `qwant` is deliberately left disabled: it silently returns
+  # fabricated results when its server IP is blocked (upstream issue, 2026-07).
+  - name: mojeek
+    disabled: false
+  - name: bing
+    disabled: false
+  # Second duckduckgo variant: `duckduckgo` scrapes html.duckduckgo.com,
+  # `duckduckgo web` (engine duckduckgo_web) scrapes duckduckgo.com.
+  - name: duckduckgo web
+    disabled: false
+
+  # Authenticated Brave Search API — a contractual quota (~1,000 req/month free
+  # at 50 qps) instead of bot-detection, so it cannot be suspended by 429s.
+  # To activate: set your key and remove `inactive: true`. NEVER commit a real
+  # key. Note SearXNG fires ALL enabled engines on every query, so an active
+  # braveapi burns quota on every single search (~33/day on the free tier).
+  - name: braveapi
+    engine: braveapi
+    api_key: ""
+    inactive: true
