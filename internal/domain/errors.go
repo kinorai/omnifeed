@@ -23,6 +23,7 @@ const (
 	KindCanceled      FailureKind = "canceled"       // caller hung up before the fetch finished (client abort — not an omnifeed fault)
 	KindUpstreamError FailureKind = "upstream_error" // upstream 5xx or unreachable
 	KindBadResponse   FailureKind = "bad_response"   // unparseable or empty upstream response
+	KindDegraded      FailureKind = "degraded"       // upstream answered 200 but its own backends were unavailable (e.g. every SearXNG engine suspended) — empty output is a failure, not an honest zero
 	KindError         FailureKind = "error"          // anything else
 )
 
