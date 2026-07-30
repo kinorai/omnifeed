@@ -98,8 +98,13 @@ spans score ~0.26–0.36 < threshold 0.48 and get pruned. v0.9.1 added
 `preserve_tags`/`preserve_classes` (PR #1904): `_is_preserved` skips the whole
 subtree, protecting code.
 
-- [ ] Pin the crawl4ai image to a known ≥0.9.1 tag (compose currently `latest`,
-  running version unknown).
+- [ ] Pin the crawl4ai image: running instance resolved to **0.9.2** (digest
+  `bd36741e…` = tags `0.9.2`/`latest`, pushed 2026-07-15) — so `preserve_tags`
+  is available today and the benchmark corruption is confirmed to come from the
+  fit_markdown path (the ≥0.7.8 scraper fix is already in the image). Pin
+  `unclecode/crawl4ai:0.9.2` in docker-compose.yml instead of `latest`.
+- [ ] File the upstream issue (approved 2026-07-30): draft at
+  [crawl4ai-issue-draft.md](crawl4ai-issue-draft.md).
 - [ ] `internal/engine/crawl4ai`: add to the content_filter params:
   `"preserve_tags":["pre","code"]` (+ `preserve_classes` for common highlighter
   wrappers: `highlight`, `chroma`, `highlighter-rouge`). Keep `table` OUT of
