@@ -43,6 +43,10 @@ type Config struct {
 	// Upstream SearXNG (optional). Empty disables the `search` MCP tool.
 	SearXNGURL     string
 	SearXNGTimeout time.Duration
+	// SearXNGDegradedRetryDelay is the wait before the single retry of a
+	// degraded search (200 + zero results + unresponsive engines). 0 disables
+	// the retry.
+	SearXNGDegradedRetryDelay time.Duration
 
 	// Search tool limits.
 	SearchMaxResults int
@@ -109,6 +113,9 @@ func Load() (Config, error) {
 	if c.SearXNGTimeout, err = envDuration("OMNIFEED_SEARXNG_TIMEOUT", 15*time.Second); err != nil {
 		return c, err
 	}
+	if c.SearXNGDegradedRetryDelay, err = envDuration("OMNIFEED_SEARXNG_DEGRADED_RETRY_DELAY", 2*time.Second); err != nil {
+		return c, err
+	}
 	if c.SearchMaxResults, err = envInt("OMNIFEED_SEARCH_MAX_RESULTS", 25); err != nil {
 		return c, err
 	}
@@ -166,6 +173,10 @@ func Load() (Config, error) {
 	}
 	if c.RedditMaxTopLevel < 0 {
 		return c, fmt.Errorf("OMNIFEED_REDDIT_MAX_TOP_LEVEL must be >= 0 (0 = unlimited), got %d", c.RedditMaxTopLevel)
+	}
+
+	if c.SearXNGDegradedRetryDelay < 0 {
+		return c, fmt.Errorf("OMNIFEED_SEARXNG_DEGRADED_RETRY_DELAY must be >= 0 (0 disables the retry), got %v", c.SearXNGDegradedRetryDelay)
 	}
 
 	if c.SearchMaxResults < 1 || c.SearchMaxResults > 100 {
