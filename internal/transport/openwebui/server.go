@@ -124,6 +124,13 @@ func (s *Server) crawl(w http.ResponseWriter, r *http.Request) {
 	}
 
 	opts := s.buildEngineOptions(r)
+	// Size control here defaults to UNLIMITED — deliberately unlike the fetch_url
+	// MCP tool, which caps at OMNIFEED_FETCH_MAX_CHARS. RAG pipelines chunk and
+	// embed whatever they receive, so a cap would silently drop retrievable text;
+	// an LLM context window is what needs protecting, not a vector store.
+	q := r.URL.Query()
+	maxChars := parseIntDefault(q.Get("max_chars"), 0)
+	startChar := parseIntDefault(q.Get("start_char"), 0)
 
 	results := make([]loaderDocument, len(req.URLs))
 	var wg sync.WaitGroup
@@ -131,7 +138,8 @@ func (s *Server) crawl(w http.ResponseWriter, r *http.Request) {
 		wg.Add(1)
 		go func(idx int, rawURL string) {
 			defer wg.Done()
-			results[idx] = s.crawlOne(r.Context(), rawURL, opts, tenant)
+			doc := s.crawlOne(r.Context(), rawURL, opts, tenant)
+			results[idx] = sized(doc, maxChars, startChar)
 		}(i, u)
 	}
 	wg.Wait()
@@ -165,6 +173,29 @@ func (s *Server) crawlOne(ctx context.Context, rawURL string, opts domain.Engine
 		}
 	}
 	return loaderDocument{PageContent: doc.PageContent, Metadata: doc.Metadata}
+}
+
+// sized applies the ?max_chars= / ?start_char= character window to markdown
+// documents, recording the offsets in the document metadata. Structured content
+// (Reddit/HN TOON or JSON) is returned whole — see
+// domain.TruncatableContentType.
+func sized(doc loaderDocument, maxChars, startChar int) loaderDocument {
+	if !domain.TruncatableContentType(doc.Metadata[domain.ContentTypeKey]) || (maxChars <= 0 && startChar == 0) {
+		return doc
+	}
+	t := domain.TruncateContent(doc.PageContent, maxChars, startChar)
+	if !t.Truncated && t.ReturnedChars == t.TotalChars {
+		return doc
+	}
+	meta := make(map[string]string, len(doc.Metadata)+4)
+	for k, v := range doc.Metadata {
+		meta[k] = v
+	}
+	meta["truncated"] = strconv.FormatBool(t.Truncated)
+	meta["total_chars"] = strconv.Itoa(t.TotalChars)
+	meta["returned_chars"] = strconv.Itoa(t.ReturnedChars)
+	meta["next_start_char"] = strconv.Itoa(t.NextStartChar)
+	return loaderDocument{PageContent: t.Text, Metadata: meta}
 }
 
 // buildEngineOptions translates query-string knobs into a domain.EngineOptions.

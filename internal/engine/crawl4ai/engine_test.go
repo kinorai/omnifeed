@@ -113,6 +113,11 @@ func TestCrawlClassifiesUnsuccessfulResponse(t *testing.T) {
 				if !strings.Contains(doc.PageContent, tc.wantBody) {
 					t.Fatalf("PageContent = %q, want it to contain %q", doc.PageContent, tc.wantBody)
 				}
+				// Transports key size control off content_type: markdown is the
+				// only shape that is safe to cut mid-document.
+				if got := doc.Metadata[domain.ContentTypeKey]; got != domain.ContentTypeMarkdown {
+					t.Fatalf("content_type = %q, want %q", got, domain.ContentTypeMarkdown)
+				}
 				return
 			}
 			var fe *domain.FetchError

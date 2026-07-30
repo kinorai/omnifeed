@@ -231,3 +231,41 @@ func TestToolsCall_ErrorMessageCarriesReasonAndStatus(t *testing.T) {
 		})
 	}
 }
+
+// tools/list must serialize Tool.Meta as `_meta` — that is how fetch_url
+// declares anthropic/maxResultSizeChars — and must omit the field entirely for
+// tools that set no Meta, rather than sending a null or empty object.
+func TestToolsList_SerializesMeta(t *testing.T) {
+	srv := New(Config{Tools: []Tool{
+		{
+			Name:        "fetch_url",
+			InputSchema: map[string]any{"type": "object"},
+			Meta:        map[string]any{"anthropic/maxResultSizeChars": 500000},
+		},
+		{Name: "web_search", InputSchema: map[string]any{"type": "object"}},
+	}})
+	body := post(t, srv, `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)
+
+	var resp struct {
+		Result struct {
+			Tools []map[string]any `json:"tools"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(resp.Result.Tools) != 2 {
+		t.Fatalf("tools: got %d, want 2", len(resp.Result.Tools))
+	}
+
+	meta, isObject := resp.Result.Tools[0]["_meta"].(map[string]any)
+	if !isObject {
+		t.Fatalf("fetch_url _meta: got %v, want an object", resp.Result.Tools[0]["_meta"])
+	}
+	if meta["anthropic/maxResultSizeChars"] != float64(500000) {
+		t.Errorf("anthropic/maxResultSizeChars: got %v, want 500000", meta["anthropic/maxResultSizeChars"])
+	}
+	if _, exists := resp.Result.Tools[1]["_meta"]; exists {
+		t.Errorf("web_search must have no _meta key, got %v", resp.Result.Tools[1])
+	}
+}

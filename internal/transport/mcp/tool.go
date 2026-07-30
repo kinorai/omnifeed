@@ -19,7 +19,12 @@ type Tool struct {
 	// decide how much friction to put in front of a call (a read-only tool can
 	// be auto-approved). nil sends no annotations.
 	Annotations map[string]any
-	Handle      func(ctx context.Context, args map[string]any) (ToolResult, error)
+	// Meta is serialized as the tool's `_meta` object in tools/list — the MCP
+	// escape hatch for client-specific hints. fetch_url uses it to declare
+	// `anthropic/maxResultSizeChars`, which raises Claude Code's per-tool text
+	// cap; clients that don't know the key ignore it. nil sends no `_meta`.
+	Meta   map[string]any
+	Handle func(ctx context.Context, args map[string]any) (ToolResult, error)
 }
 
 // ToolResult is what a Tool handler returns: the text content plus optional
