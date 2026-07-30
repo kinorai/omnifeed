@@ -7,11 +7,13 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/kinorai/omnifeed/internal/domain"
 	"github.com/kinorai/omnifeed/internal/httpx"
+	"github.com/kinorai/omnifeed/internal/observability"
 )
 
 // classifyCrawlError reads StatusError.Body to tell crawl4ai's anti-bot block (a
@@ -286,5 +288,179 @@ func TestCrawlRequestWaitUntil(t *testing.T) {
 	}
 	if got != "networkidle" {
 		t.Errorf("wait_until = %q, want networkidle", got)
+	}
+}
+
+// The PruningContentFilter must be told to skip code subtrees, otherwise the
+// whitespace/operator spans a syntax highlighter emits score below the threshold
+// and get pruned, corrupting the code (upstream unclecode/crawl4ai#2110). "table"
+// must stay out of preserve_tags — it would re-admit chrome tables. page_timeout
+// must not exceed 60000 ms: crawl4ai silently clamps untrusted REST bodies there.
+func TestCrawlRequestPreservesCodeAndClampsTimeout(t *testing.T) {
+	var params, filter map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		var req map[string]any
+		if err := json.Unmarshal(raw, &req); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+		params = req["crawler_config"].(map[string]any)["params"].(map[string]any)
+		filter = params["markdown_generator"].(map[string]any)["params"].(map[string]any)["content_filter"].(map[string]any)["params"].(map[string]any)
+
+		resp := map[string]any{"success": true, "results": []any{map[string]any{
+			"success": true, "status_code": 200, "markdown": map[string]any{"raw_markdown": "# ok"},
+		}}}
+		b, _ := json.Marshal(resp)
+		_, _ = w.Write(b)
+	}))
+	defer srv.Close()
+
+	e := New(Config{
+		Endpoint: srv.URL,
+		Client:   httpx.New(nil),
+		Limiter:  httpx.NewDomainLimiter(2, 0),
+	})
+	if _, err := e.Crawl(context.Background(), "https://example.com/page", domain.EngineOptions{}); err != nil {
+		t.Fatalf("Crawl() error = %v", err)
+	}
+
+	strSlice := func(key string) []string {
+		raw, ok := filter[key].([]any)
+		if !ok {
+			t.Fatalf("%s = %#v, want a JSON array", key, filter[key])
+		}
+		out := make([]string, 0, len(raw))
+		for _, v := range raw {
+			out = append(out, v.(string))
+		}
+		return out
+	}
+	tags := strSlice("preserve_tags")
+	for _, want := range []string{"pre", "code"} {
+		if !slices.Contains(tags, want) {
+			t.Errorf("preserve_tags = %v, want it to contain %q", tags, want)
+		}
+	}
+	if slices.Contains(tags, "table") {
+		t.Errorf("preserve_tags = %v, must NOT contain \"table\"", tags)
+	}
+	classes := strSlice("preserve_classes")
+	for _, want := range []string{"highlight", "chroma", "highlighter-rouge", "codehilite"} {
+		if !slices.Contains(classes, want) {
+			t.Errorf("preserve_classes = %v, want it to contain %q", classes, want)
+		}
+	}
+
+	timeout, ok := params["page_timeout"].(float64)
+	if !ok {
+		t.Fatalf("page_timeout = %#v, want a number", params["page_timeout"])
+	}
+	if timeout > 60000 {
+		t.Errorf("page_timeout = %v, want <= 60000 (crawl4ai clamps untrusted bodies)", timeout)
+	}
+}
+
+// fit_markdown normally wins, but the pruning filter that produces it can still
+// eat fenced code blocks whose highlighter classes aren't in preserve_classes.
+// When fit_markdown has lost every fence raw_markdown has, raw_markdown is the
+// more faithful rendering and must be used instead.
+func TestCrawlPrefersRawMarkdownWhenFitLosesFences(t *testing.T) {
+	const fenced = "Intro\n\n```go\nfunc main() {}\n```\n"
+	cases := []struct {
+		name, fit, raw, want string
+	}{
+		{"fit without fences falls back to raw", "Intro\n\nfunc main() {}\n", fenced, fenced},
+		{"both fenced keeps fit", "Fit\n\n```go\nfit()\n```\n", fenced, "fit()"},
+		{"neither fenced keeps fit", "just prose", "raw prose", "just prose"},
+		{"empty fit still falls back to raw", "", fenced, fenced},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				resp := map[string]any{"success": true, "results": []any{map[string]any{
+					"success": true, "status_code": 200,
+					"markdown": map[string]any{"raw_markdown": tc.raw, "fit_markdown": tc.fit},
+				}}}
+				b, _ := json.Marshal(resp)
+				_, _ = w.Write(b)
+			}))
+			defer srv.Close()
+
+			e := New(Config{
+				Endpoint: srv.URL,
+				Client:   httpx.New(nil),
+				Limiter:  httpx.NewDomainLimiter(2, 0),
+			})
+			doc, err := e.Crawl(context.Background(), "https://example.com/page", domain.EngineOptions{})
+			if err != nil {
+				t.Fatalf("Crawl() error = %v", err)
+			}
+			if !strings.Contains(doc.PageContent, tc.want) {
+				t.Fatalf("PageContent = %q, want it to contain %q", doc.PageContent, tc.want)
+			}
+		})
+	}
+}
+
+// crawl4ai has no "extracted nothing" flag: a page it failed to render comes back
+// as success with every content field empty. That must be a thin_content failure
+// with the diagnostic lengths, not a successful empty document handed to the LLM.
+func TestCrawlEmptyExtractionIsThinContent(t *testing.T) {
+	cases := []struct {
+		name             string
+		markdown         map[string]any
+		cleanedHTML      string
+		wantErr          bool
+		wantReasonOrBody string
+	}{
+		{"all fields empty", map[string]any{"raw_markdown": "", "fit_markdown": ""}, "", true, "thin_content"},
+		{"whitespace only", map[string]any{"raw_markdown": "  \n", "fit_markdown": "\t"}, "   ", true, "thin_content"},
+		{"real content succeeds", map[string]any{"raw_markdown": "# Hello"}, "", false, "# Hello"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				resp := map[string]any{"success": true, "results": []any{map[string]any{
+					"success": true, "status_code": 200,
+					"markdown": tc.markdown, "cleaned_html": tc.cleanedHTML,
+				}}}
+				b, _ := json.Marshal(resp)
+				_, _ = w.Write(b)
+			}))
+			defer srv.Close()
+
+			e := New(Config{
+				Endpoint: srv.URL,
+				Client:   httpx.New(nil),
+				Limiter:  httpx.NewDomainLimiter(2, 0),
+			})
+			doc, err := e.Crawl(context.Background(), "https://example.com/page", domain.EngineOptions{})
+
+			if !tc.wantErr {
+				if err != nil {
+					t.Fatalf("Crawl() error = %v, want success", err)
+				}
+				if !strings.Contains(doc.PageContent, tc.wantReasonOrBody) {
+					t.Fatalf("PageContent = %q, want it to contain %q", doc.PageContent, tc.wantReasonOrBody)
+				}
+				return
+			}
+			var fe *domain.FetchError
+			if !errors.As(err, &fe) {
+				t.Fatalf("want *domain.FetchError, got %T: %v", err, err)
+			}
+			if fe.Kind != domain.KindThinContent {
+				t.Fatalf("Kind = %q, want %q", fe.Kind, domain.KindThinContent)
+			}
+			if !strings.Contains(fe.Error(), "0 chars") {
+				t.Fatalf("Error() = %q, want it to contain %q", fe.Error(), "0 chars")
+			}
+			if got := observability.Reason(err); got != tc.wantReasonOrBody {
+				t.Fatalf("observability.Reason(err) = %q, want %q", got, tc.wantReasonOrBody)
+			}
+			if doc.PageContent != "" {
+				t.Fatalf("PageContent = %q, want empty on failure", doc.PageContent)
+			}
+		})
 	}
 }
