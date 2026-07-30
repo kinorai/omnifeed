@@ -1,5 +1,24 @@
 # Optimization plan — from the 2026-07-30 perf benchmark
 
+## Status (2026-07-30, end of day)
+
+Implemented on `perf-improvements`:
+- `e1b81c8` feat(searxng): degraded-search detection (§1 detection — MCP error,
+  `degraded` reason, 3 table tests)
+- `26c9a46` fix(crawl4ai): preserve_tags/classes payload, raw-markdown fence
+  fallback, empty-extraction guard (KindThinContent), page_timeout 60s clamp
+  (§3 + §6)
+- `b11ac88` feat(mcp): classified reason + HTTP status in tool error messages,
+  same enrichment in openwebui/searchapi, URL redaction (§7)
+- `9dde05e` chore(compose): images pinned (crawl4ai 0.9.2, searxng 2026.7.22),
+  engine pool widened (mojeek, bing, duckduckgo web), braveapi block staged
+  inactive awaiting the owner's key (§1 config)
+- Upstream: crawl4ai issue #2110 + PR #2111 filed.
+
+Still open: §1 caller-side pacing/retry-on-degraded; §2 size control; §3 golden
+fixtures validation; §5 chrome pruning (gated); §4 GitHub then Discourse
+engines. Stack restart required to pick up the pins + settings.
+
 Scope decided 2026-07-30: implement candidates 1–6 from [REPORT.md](REPORT.md)
 plus clearer errors (7). PDF *support* declined. Candidate 8 (Reddit caps)
 dropped — already fully configurable and documented (README Reddit knobs +
