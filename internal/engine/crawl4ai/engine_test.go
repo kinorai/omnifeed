@@ -365,6 +365,99 @@ func TestCrawlRequestPreservesCodeAndClampsTimeout(t *testing.T) {
 	}
 }
 
+// crawlParams drives one crawl against a fake crawl4ai and returns the
+// crawler_config params the engine sent, so payload knobs can be asserted
+// without a live upstream.
+func crawlParams(t *testing.T, cfg Config) map[string]any {
+	t.Helper()
+	var params map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		var req map[string]any
+		if err := json.Unmarshal(raw, &req); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+		params = req["crawler_config"].(map[string]any)["params"].(map[string]any)
+		resp := map[string]any{"success": true, "results": []any{map[string]any{
+			"success": true, "status_code": 200, "markdown": map[string]any{"raw_markdown": "# ok"},
+		}}}
+		b, _ := json.Marshal(resp)
+		_, _ = w.Write(b)
+	}))
+	defer srv.Close()
+
+	cfg.Endpoint = srv.URL
+	cfg.Client = httpx.New(nil)
+	cfg.Limiter = httpx.NewDomainLimiter(2, 0)
+	if _, err := New(cfg).Crawl(context.Background(), "https://example.com/page", domain.EngineOptions{}); err != nil {
+		t.Fatalf("Crawl() error = %v", err)
+	}
+	return params
+}
+
+func jsonStrings(t *testing.T, params map[string]any, key string) []string {
+	t.Helper()
+	raw, ok := params[key].([]any)
+	if !ok {
+		t.Fatalf("%s = %#v, want a JSON array", key, params[key])
+	}
+	out := make([]string, 0, len(raw))
+	for _, v := range raw {
+		out = append(out, v.(string))
+	}
+	return out
+}
+
+// Chrome trimming: script/style/noscript join the excluded tags, consent popups
+// are removed, and the conservative excluded_selector default ships on by
+// default. target_elements is opt-in, so it must be absent unless configured.
+func TestCrawlRequestChromeDefaults(t *testing.T) {
+	params := crawlParams(t, Config{})
+
+	tags := jsonStrings(t, params, "excluded_tags")
+	for _, want := range []string{"nav", "footer", "header", "form", "aside", "script", "style", "noscript"} {
+		if !slices.Contains(tags, want) {
+			t.Errorf("excluded_tags = %v, want it to contain %q", tags, want)
+		}
+	}
+	if params["remove_consent_popups"] != true {
+		t.Errorf("remove_consent_popups = %#v, want true", params["remove_consent_popups"])
+	}
+	if got := params["excluded_selector"]; got != DefaultExcludedSelector {
+		t.Errorf("excluded_selector = %#v, want %q", got, DefaultExcludedSelector)
+	}
+	if _, ok := params["target_elements"]; ok {
+		t.Errorf("target_elements = %#v, want the key absent by default", params["target_elements"])
+	}
+}
+
+// The excluded_selector override is a tri-state: an explicit empty value means
+// "exclude nothing", which must omit the field rather than send "".
+func TestCrawlRequestExcludedSelectorOverride(t *testing.T) {
+	custom := ".ad,.promo"
+	params := crawlParams(t, Config{ExcludedSelector: &custom})
+	if got := params["excluded_selector"]; got != custom {
+		t.Errorf("excluded_selector = %#v, want %q", got, custom)
+	}
+
+	empty := ""
+	params = crawlParams(t, Config{ExcludedSelector: &empty})
+	if _, ok := params["excluded_selector"]; ok {
+		t.Errorf("excluded_selector = %#v, want the key absent when explicitly emptied", params["excluded_selector"])
+	}
+}
+
+// A non-empty OMNIFEED_CRAWL4AI_TARGET_ELEMENTS arrives as one comma-separated
+// string and must reach crawl4ai as a trimmed list.
+func TestCrawlRequestTargetElements(t *testing.T) {
+	params := crawlParams(t, Config{TargetElements: "article, main , [role=main]"})
+	got := jsonStrings(t, params, "target_elements")
+	want := []string{"article", "main", "[role=main]"}
+	if !slices.Equal(got, want) {
+		t.Errorf("target_elements = %v, want %v", got, want)
+	}
+}
+
 // fit_markdown normally wins, but the pruning filter that produces it can still
 // eat fenced code blocks whose highlighter classes aren't in preserve_classes.
 // When fit_markdown has lost every fence raw_markdown has, raw_markdown is the

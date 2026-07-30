@@ -39,6 +39,14 @@ type Config struct {
 	Crawl4AIPruneThreshold float64 // PruningContentFilter cutoff for the generic engine (0–1; higher strips more boilerplate)
 	Crawl4AIWaitUntil      string  // page-ready signal for the generic engine: domcontentloaded (default) | load | networkidle | commit
 	Crawl4AIToken          string  // bearer token sent to crawl4ai (its CRAWL4AI_API_TOKEN); empty = no Authorization header
+	// Crawl4AIExcludedSelector overrides the generic engine's chrome selector
+	// list. Tri-state, hence the pointer: nil = the engine's conservative default,
+	// a set value replaces it, and a set-but-empty value excludes nothing.
+	Crawl4AIExcludedSelector *string
+	// Crawl4AITargetElements is a comma-separated CSS selector list. Empty (the
+	// default) keeps the feature off; non-empty restricts extraction to matching
+	// containers, which can yield no content at all on pages without them.
+	Crawl4AITargetElements string
 
 	// Upstream SearXNG (optional). Empty disables the `search` MCP tool.
 	SearXNGURL     string
@@ -87,9 +95,13 @@ func Load() (Config, error) {
 		Crawl4AIURL:       env("OMNIFEED_CRAWL4AI_URL", ""),
 		Crawl4AIWaitUntil: env("OMNIFEED_CRAWL4AI_WAIT_UNTIL", "domcontentloaded"),
 		Crawl4AIToken:     env("OMNIFEED_CRAWL4AI_TOKEN", ""),
-		SearXNGURL:        env("OMNIFEED_SEARXNG_URL", ""),
-		RedditFormat:      env("OMNIFEED_REDDIT_FORMAT", "toon"),
-		RedditSort:        env("OMNIFEED_REDDIT_SORT", domain.DefaultRedditSort),
+
+		Crawl4AIExcludedSelector: envPtr("OMNIFEED_CRAWL4AI_EXCLUDED_SELECTOR"),
+		Crawl4AITargetElements:   env("OMNIFEED_CRAWL4AI_TARGET_ELEMENTS", ""),
+
+		SearXNGURL:   env("OMNIFEED_SEARXNG_URL", ""),
+		RedditFormat: env("OMNIFEED_REDDIT_FORMAT", "toon"),
+		RedditSort:   env("OMNIFEED_REDDIT_SORT", domain.DefaultRedditSort),
 	}
 
 	var err error
@@ -220,6 +232,17 @@ func env(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// envPtr returns nil when key is not present in the environment, and a pointer
+// to its (possibly empty) value when it is — the only way to tell "operator said
+// nothing, use the default" from "operator explicitly set it to empty".
+func envPtr(key string) *string {
+	v, ok := os.LookupEnv(key)
+	if !ok {
+		return nil
+	}
+	return &v
 }
 
 func envBool(key string, fallback bool) (bool, error) {
