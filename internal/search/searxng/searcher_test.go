@@ -5,10 +5,12 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/kinorai/omnifeed/internal/domain"
 	"github.com/kinorai/omnifeed/internal/httpx"
+	"github.com/kinorai/omnifeed/internal/observability"
 )
 
 const fixture = `{
@@ -111,6 +113,71 @@ func TestSearch_Non200IsTypedError(t *testing.T) {
 			}
 			if fe.Kind != tc.want {
 				t.Fatalf("Kind = %q, want %q", fe.Kind, tc.want)
+			}
+		})
+	}
+}
+
+// A 200 with no results is ambiguous: it means "degraded upstream" when SearXNG
+// also reports unresponsive engines (suspended after a 429/CAPTCHA, so they were
+// never queried), and "no hits" when it doesn't. Only the first is an error.
+func TestSearch_ZeroResultsClassification(t *testing.T) {
+	cases := []struct {
+		name        string
+		body        string
+		wantErr     bool
+		wantResults int
+		wantSubstr  []string
+	}{
+		{
+			name:       "degraded — every engine suspended",
+			body:       `{"results":[],"unresponsive_engines":[["brave","Suspended: too many requests"]]}`,
+			wantErr:    true,
+			wantSubstr: []string{"brave", "Suspended"},
+		},
+		{
+			name:        "honest zero — no failure report",
+			body:        `{"results":[]}`,
+			wantErr:     false,
+			wantResults: 0,
+		},
+		{
+			name: "partial — results despite an unresponsive engine",
+			body: `{"results":[{"title":"First","url":"https://example.com/a","engine":"google"}],` +
+				`"unresponsive_engines":[["duckduckgo","timeout"]]}`,
+			wantErr:     false,
+			wantResults: 1,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newTestSearcher(t, func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write([]byte(tc.body))
+			})
+			results, err := s.Search(context.Background(), "q", domain.SearchOptions{})
+			if !tc.wantErr {
+				if err != nil {
+					t.Fatalf("Search: unexpected error %v", err)
+				}
+				if len(results) != tc.wantResults {
+					t.Fatalf("results: got %d, want %d", len(results), tc.wantResults)
+				}
+				return
+			}
+			var fe *domain.FetchError
+			if !errors.As(err, &fe) {
+				t.Fatalf("want *domain.FetchError, got %T: %v", err, err)
+			}
+			if fe.Kind != domain.KindDegraded {
+				t.Fatalf("Kind = %q, want %q", fe.Kind, domain.KindDegraded)
+			}
+			if got := observability.Reason(err); got != "degraded" {
+				t.Fatalf("Reason = %q, want %q", got, "degraded")
+			}
+			for _, want := range tc.wantSubstr {
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("error %q does not contain %q", err.Error(), want)
+				}
 			}
 		})
 	}

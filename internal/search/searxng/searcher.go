@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -24,6 +25,7 @@ const maxResponseBytes = 10 << 20
 type Config struct {
 	Endpoint string // base URL of the SearXNG instance, e.g. http://searxng:8080
 	Client   *httpx.Client
+	Logger   *slog.Logger
 }
 
 // Searcher queries a SearXNG instance and reshapes results into the canonical
@@ -31,13 +33,18 @@ type Config struct {
 type Searcher struct {
 	searchURL string
 	client    *httpx.Client
+	logger    *slog.Logger
 }
 
 // New returns a Searcher wired with the given config.
 func New(cfg Config) *Searcher {
+	if cfg.Logger == nil {
+		cfg.Logger = slog.Default()
+	}
 	return &Searcher{
 		searchURL: strings.TrimRight(cfg.Endpoint, "/") + "/search",
 		client:    cfg.Client,
+		logger:    cfg.Logger,
 	}
 }
 
@@ -48,6 +55,13 @@ func (*Searcher) Name() string { return "searxng" }
 
 type searchResponse struct {
 	Results []searchHit `json:"results"`
+	// UnresponsiveEngines is SearXNG's per-query failure report, emitted on the
+	// HTTP 200 path as [[engine_name, message], …] — message is e.g.
+	// "Suspended: too many requests" or "timeout". A suspended engine is skipped
+	// without a network call, so an all-suspended query returns 200 + no results
+	// near-instantly; without this field that is indistinguishable from an
+	// honest zero-hit search.
+	UnresponsiveEngines [][]string `json:"unresponsive_engines"`
 }
 
 type searchHit struct {
@@ -98,6 +112,23 @@ func (s *Searcher) Search(ctx context.Context, query string, opts domain.SearchO
 		return nil, fmt.Errorf("decode response: %w", err)
 	}
 
+	// Zero results with a failure report means the engines never ran (suspended
+	// after a 429/CAPTCHA, or timed out) — a degraded upstream, not "nothing
+	// matched". Return it as an error so callers retry instead of concluding the
+	// query has no answers; Reason() reads KindDegraded off the FetchError.
+	if len(sr.Results) == 0 && len(sr.UnresponsiveEngines) > 0 {
+		return nil, &domain.FetchError{
+			Kind: domain.KindDegraded,
+			Err: fmt.Errorf("search degraded: %d engines unavailable (%s) — retry shortly",
+				len(sr.UnresponsiveEngines), formatUnresponsive(sr.UnresponsiveEngines)),
+		}
+	}
+	if len(sr.UnresponsiveEngines) > 0 {
+		s.logger.Warn("searxng returned partial results",
+			"unresponsive_engines", formatUnresponsive(sr.UnresponsiveEngines),
+			"results", len(sr.Results))
+	}
+
 	results := make([]domain.SearchResult, 0, len(sr.Results))
 	for _, hit := range sr.Results {
 		results = append(results, domain.SearchResult{
@@ -112,4 +143,22 @@ func (s *Searcher) Search(ctx context.Context, query string, opts domain.SearchO
 		}
 	}
 	return results, nil
+}
+
+// formatUnresponsive renders SearXNG's [[engine, message], …] pairs as
+// "brave: Suspended: too many requests; duckduckgo: timeout". Entries are
+// tolerated with a missing message (SearXNG has emitted 1-element pairs).
+func formatUnresponsive(pairs [][]string) string {
+	parts := make([]string, 0, len(pairs))
+	for _, pair := range pairs {
+		switch len(pair) {
+		case 0:
+			continue
+		case 1:
+			parts = append(parts, pair[0])
+		default:
+			parts = append(parts, pair[0]+": "+pair[1])
+		}
+	}
+	return strings.Join(parts, "; ")
 }

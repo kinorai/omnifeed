@@ -124,6 +124,7 @@ func run(cfg config.Config, logger *slog.Logger) error {
 		searcher = searxng.New(searxng.Config{
 			Endpoint: cfg.SearXNGURL,
 			Client:   searxngClient,
+			Logger:   logger,
 		})
 	} else {
 		logger.Info("search tool disabled (OMNIFEED_SEARXNG_URL not set)")
