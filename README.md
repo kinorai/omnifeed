@@ -167,6 +167,7 @@ Everything is configured with `OMNIFEED_`-prefixed environment variables. In pra
 | `OMNIFEED_CRAWL4AI_PRUNE_THRESHOLD` | `0.48` | PruningContentFilter cutoff (0–1) for the generic engine. Raise it to strip more boilerplate/duplicated chrome from noisy pages; lower it to keep more. |
 | `OMNIFEED_CRAWL4AI_WAIT_UNTIL` | `domcontentloaded` | crawl4ai page-ready signal (`domcontentloaded` \| `load` \| `networkidle` \| `commit`). `domcontentloaded` fires before client-side frameworks hydrate, so JS-only SPAs can render empty; set `networkidle` to wait for them (slower on every page). |
 | `OMNIFEED_SEARXNG_TIMEOUT` | `15s` | Per-query timeout to SearXNG |
+| `OMNIFEED_SEARXNG_DEGRADED_RETRY_DELAY` | `2s` | Wait before retrying a **degraded** search once (SearXNG returned 200 with zero results because its engines were suspended after a 429/CAPTCHA). The suspension is per-engine and time-boxed, so a delayed retry often recovers results. `0` disables the retry. |
 | `OMNIFEED_SEARCH_MAX_RESULTS` | `25` | Hard cap on the search `limit` argument (1–100) |
 | `OMNIFEED_REDDIT_TIMEOUT` | `4m` | Wall-clock cap for a Reddit thread expansion |
 | `OMNIFEED_REDDIT_MAX_ROUNDS` | `3` | Default `/api/morechildren` rounds (max 40 via `?expand=full`) |

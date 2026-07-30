@@ -6,12 +6,14 @@ package searxng
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/kinorai/omnifeed/internal/domain"
 	"github.com/kinorai/omnifeed/internal/httpx"
@@ -25,15 +27,25 @@ const maxResponseBytes = 10 << 20
 type Config struct {
 	Endpoint string // base URL of the SearXNG instance, e.g. http://searxng:8080
 	Client   *httpx.Client
-	Logger   *slog.Logger
+	// Limiter paces outbound queries to the SearXNG host. Upstream SearXNG has
+	// no outbound rate limiting of its own (rejected twice: PRs #998, #1273), so
+	// bursts trip its engines' bot detection and get them suspended — pacing can
+	// only live here. Optional; nil disables pacing.
+	Limiter *httpx.DomainLimiter
+	// DegradedRetryDelay is how long to wait before the single retry of a
+	// degraded search (see Search). 0 disables the retry.
+	DegradedRetryDelay time.Duration
+	Logger             *slog.Logger
 }
 
 // Searcher queries a SearXNG instance and reshapes results into the canonical
 // domain.SearchResult.
 type Searcher struct {
-	searchURL string
-	client    *httpx.Client
-	logger    *slog.Logger
+	searchURL          string
+	client             *httpx.Client
+	limiter            *httpx.DomainLimiter
+	degradedRetryDelay time.Duration
+	logger             *slog.Logger
 }
 
 // New returns a Searcher wired with the given config.
@@ -42,9 +54,11 @@ func New(cfg Config) *Searcher {
 		cfg.Logger = slog.Default()
 	}
 	return &Searcher{
-		searchURL: strings.TrimRight(cfg.Endpoint, "/") + "/search",
-		client:    cfg.Client,
-		logger:    cfg.Logger,
+		searchURL:          strings.TrimRight(cfg.Endpoint, "/") + "/search",
+		client:             cfg.Client,
+		limiter:            cfg.Limiter,
+		degradedRetryDelay: cfg.DegradedRetryDelay,
+		logger:             cfg.Logger,
 	}
 }
 
@@ -73,9 +87,46 @@ type searchHit struct {
 }
 
 // Search runs the query against SearXNG and returns up to opts.Limit results.
+//
+// A degraded upstream (engines suspended after a 429/CAPTCHA, so the query
+// returned 200 + zero results) is retried exactly once after
+// DegradedRetryDelay: the suspension is per-engine and time-boxed, so a delayed
+// retry genuinely recovers results. Whatever the retry yields — results or a
+// second degraded error — is returned as-is. Metrics stay caller-side
+// (metrics.ObserveSearch wraps this call), so the retry is folded into one
+// logical search rather than counted twice; the first degraded attempt is
+// visible in the logs.
 func (s *Searcher) Search(ctx context.Context, query string, opts domain.SearchOptions) ([]domain.SearchResult, error) {
+	results, err := s.query(ctx, query, opts)
+	if err == nil || s.degradedRetryDelay <= 0 || !isDegraded(err) {
+		return results, err
+	}
+
+	s.logger.Warn("searxng search degraded, retrying once",
+		"delay", s.degradedRetryDelay.String(), "error", err)
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-time.After(s.degradedRetryDelay):
+	}
+	return s.query(ctx, query, opts)
+}
+
+// isDegraded reports whether err is the degraded-upstream signal.
+func isDegraded(err error) bool {
+	var fe *domain.FetchError
+	return errors.As(err, &fe) && fe.Kind == domain.KindDegraded
+}
+
+// query performs one SearXNG search attempt.
+func (s *Searcher) query(ctx context.Context, query string, opts domain.SearchOptions) ([]domain.SearchResult, error) {
 	if strings.TrimSpace(query) == "" {
 		return nil, fmt.Errorf("query is empty")
+	}
+
+	if s.limiter != nil {
+		release := s.limiter.Acquire(s.searchURL)
+		defer release()
 	}
 
 	params := url.Values{}
