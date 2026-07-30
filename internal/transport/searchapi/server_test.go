@@ -3,6 +3,7 @@ package searchapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -146,5 +147,54 @@ func TestSearch_Unauthorized(t *testing.T) {
 func TestNew_DefaultMaxResults(t *testing.T) {
 	if got := New(Config{}).maxResults; got != 25 {
 		t.Fatalf("default maxResults: got %d, want 25", got)
+	}
+}
+
+// The 502 body must name the classified reason and cause, not just "upstream
+// failed" — same enrichment as the MCP tool errors, so a REST caller can tell a
+// degraded SearXNG (retry) from a hard failure.
+func TestSearch_UpstreamErrorBodyCarriesReason(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{
+			name: "degraded",
+			err: &domain.FetchError{
+				Kind: domain.KindDegraded,
+				Err:  errors.New("search degraded: 2 engines unavailable (google: Suspended: too many requests) — retry shortly"),
+			},
+			want: "search upstream failed: search degraded: 2 engines unavailable (google: Suspended: too many requests) — retry shortly",
+		},
+		{
+			name: "status_carried",
+			err:  &domain.FetchError{Kind: domain.KindHTTP429, StatusCode: 429, Err: errors.New("searxng returned 429")},
+			want: "search upstream failed: http_429 (HTTP 429): searxng returned 429",
+		},
+		{
+			name: "plain_error",
+			err:  errors.New("boom"),
+			want: "search upstream failed: boom",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := newServer(&fakeSearcher{err: tc.err}, auth.AlwaysAllow{})
+
+			rec := do(srv, http.MethodPost, `{"query":"q"}`, nil)
+
+			if rec.Code != http.StatusBadGateway {
+				t.Fatalf("status: got %d, want 502", rec.Code)
+			}
+			var body map[string]string
+			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			if body["error"] != tc.want {
+				t.Fatalf("error:\n got %q\nwant %q", body["error"], tc.want)
+			}
+		})
 	}
 }

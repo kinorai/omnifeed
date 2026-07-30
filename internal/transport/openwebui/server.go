@@ -160,7 +160,7 @@ func (s *Server) crawlOne(ctx context.Context, rawURL string, opts domain.Engine
 	}
 	if err != nil {
 		return loaderDocument{
-			PageContent: "Error crawling URL (see server logs for details)",
+			PageContent: "Error crawling URL: " + observability.Explain(err),
 			Metadata:    map[string]string{"source": rawURL, "error": "true"},
 		}
 	}

@@ -3,6 +3,7 @@ package openwebui
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -158,6 +159,48 @@ func TestBuildEngineOptions(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, "/crawl?"+c.query, nil)
 			if got := srv.buildEngineOptions(req); got != c.want {
 				t.Fatalf("query %q: got %+v, want %+v", c.query, got, c.want)
+			}
+		})
+	}
+}
+
+// The error document's text must name the classified reason and cause instead of
+// pointing at the server logs — Open WebUI hands this string straight to the
+// model, so an opaque message is a dead end for the caller.
+func TestCrawl_ErrorDocCarriesReasonAndStatus(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{
+			name: "kind_and_status",
+			err: &domain.FetchError{
+				Kind:       domain.KindUpstreamError,
+				StatusCode: 500,
+				Err:        errors.New("crawl4ai returned 500: Internal Server Error"),
+			},
+			want: "Error crawling URL: upstream_error (HTTP 500): crawl4ai returned 500: Internal Server Error",
+		},
+		{
+			name: "plain_error",
+			err:  errors.New("boom"),
+			want: "Error crawling URL: boom",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := do(newTestServer(fakeEngine{err: tc.err}, auth.AlwaysAllow{}, 30), http.MethodPost, `{"urls":["https://example.com"]}`, nil)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status: got %d, want 200", rec.Code)
+			}
+			var got []loaderDocument
+			if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			if len(got) != 1 || got[0].PageContent != tc.want {
+				t.Fatalf("page content:\n got %+v\nwant %q", got, tc.want)
 			}
 		})
 	}

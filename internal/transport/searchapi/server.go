@@ -117,7 +117,7 @@ func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		s.logger.Warn("search failed", "query", req.Query, "reason", observability.Reason(err), "err", err)
-		writeError(w, http.StatusBadGateway, "search upstream failed (see server logs for details)")
+		writeError(w, http.StatusBadGateway, "search upstream failed: "+observability.Explain(err))
 		return
 	}
 
