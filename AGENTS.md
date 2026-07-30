@@ -59,7 +59,7 @@ cmd/omnifeed/    entry point + wiring
 
 ## Adding things
 
-- **New engine**: create `internal/engine/<name>/engine.go` implementing `domain.Engine`; register it in `main.go` **before** the fallback; add a `*_test.go` with a fixture covering URL matching. `internal/engine/hackernews` is a worked example (and the one engine that fetches its upstream directly rather than through crawl4ai).
+- **New engine**: create `internal/engine/<name>/engine.go` implementing `domain.Engine`; register it in `main.go` **before** the fallback; add a `*_test.go` with a fixture covering URL matching. `internal/engine/hackernews` is a worked example (it and `internal/engine/github` are the engines that fetch their upstream directly rather than through crawl4ai).
 - **New searcher** (e.g. Brave): implement `domain.Searcher`; wire in `main.go`.
 - **New MCP tool**: add a constructor in `internal/transport/mcp/tools`; append it to `mcpTools` in `main.go`. The MCP server itself never changes.
 - **New transport**: create `internal/transport/<name>/server.go` taking the port(s) it needs; mount it from `main.go`. (`searchapi` is the smallest example to copy.)
@@ -74,7 +74,7 @@ cmd/omnifeed/    entry point + wiring
 
 ## Gotchas
 
-- **crawl4ai is mandatory.** `OMNIFEED_CRAWL4AI_URL` must be set or the binary exits at startup — the Reddit engine and the generic fallback both fetch through it. **Exception:** the Hacker News engine reads the public Algolia HN API (`hn.algolia.com`) directly — it is CORS-open and not bot-walled, so a headless browser would only add latency — and therefore needs outbound access to `hn.algolia.com`.
+- **crawl4ai is mandatory.** `OMNIFEED_CRAWL4AI_URL` must be set or the binary exits at startup — the Reddit engine and the generic fallback both fetch through it. **Exceptions:** the Hacker News engine reads the public Algolia HN API (`hn.algolia.com`) and the GitHub engine reads the public GitHub REST API (`api.github.com`) directly — neither is bot-walled, so a headless browser would only add latency (and lose comments) — and they therefore need outbound access to those two hosts.
 - **Never call Reddit directly.** Reddit 403-blocks non-browser clients; the Reddit engine fetches through crawl4ai's headless browser. See `internal/engine/reddit`.
 - **HTTP transports fail closed.** No `OMNIFEED_API_KEY` → the binary refuses to start, unless `OMNIFEED_DEV_NO_AUTH=true` (local only). Stdio MCP is unauthenticated by design.
 - **SSRF:** validate caller-supplied URLs with `httpx.ValidateURL`; `OMNIFEED_BLOCK_PRIVATE_IPS` defaults to on.
