@@ -15,9 +15,32 @@ Implemented on `perf-improvements`:
   inactive awaiting the owner's key (§1 config)
 - Upstream: crawl4ai issue #2110 + PR #2111 filed.
 
-Still open: §1 caller-side pacing/retry-on-degraded; §2 size control; §3 golden
-fixtures validation; §5 chrome pruning (gated); §4 GitHub then Discourse
-engines. Stack restart required to pick up the pins + settings.
+Second batch (same day):
+- `5baeaf8` feat(searxng): per-domain pacing + one retry on degraded
+  (OMNIFEED_SEARXNG_DEGRADED_RETRY_DELAY, default 2s) — §1 complete
+- `58840b5` feat(fetch): max_chars/start_char + OMNIFEED_FETCH_MAX_CHARS
+  (default 120000) + anthropic/maxResultSizeChars annotation; engines stamp
+  content_type; TOON/JSON never byte-truncated; openwebui default unlimited — §2 complete
+- `850ae3b` feat(crawl4ai): chrome trim (script/style/noscript, consent popups,
+  OMNIFEED_CRAWL4AI_EXCLUDED_SELECTOR default-on; OMNIFEED_CRAWL4AI_TARGET_ELEMENTS
+  gated off) — §5 code complete
+- `9e62951` style: gofmt drift
+- `3aa2934` feat(github): dedicated issues/PR engine (REST, optional
+  OMNIFEED_GITHUB_TOKEN, 500-comment / 30KB-diff caps) — §4 first half complete
+- `2fd43a2` feat(discourse): topic engine (OMNIFEED_DISCOURSE_HOSTS allowlist,
+  print-view + batched fallback, 500-post cap) — §4 second half complete
+
+Remaining — validation, not code (needs the rebuilt binary + restarted stack):
+1. Rebuild omnifeed + `compose up` with the new pins/settings.
+2. Owner: put the Brave key into searxng/settings.yml locally (braveapi block,
+   remove `inactive: true`; never commit the key); one keyed `site:reddit.com`
+   diff vs the scrapers.
+3. Live regression pass vs the benchmark raw data: the 7 empty-search queries;
+   W1/W2/D2/P3 code-block fidelity (§3 golden fixtures); SO3 (chrome canary);
+   W4 (must now error thin_content, not empty-ok); the 5 overflow URLs with the
+   default cap; G2/G3 via the GitHub engine and D3 via the Discourse engine
+   (completeness + server-side latency vs crawl4ai numbers).
+4. Push `perf-improvements` and open the single MR.
 
 Scope decided 2026-07-30: implement candidates 1–6 from [REPORT.md](REPORT.md)
 plus clearer errors (7). PDF *support* declined. Candidate 8 (Reddit caps)
