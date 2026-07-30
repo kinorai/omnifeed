@@ -21,8 +21,8 @@ failure is visible in the same JSON response: `unresponsive_engines` as
 - [ ] `internal/search/searxng`: add `UnresponsiveEngines [][]string` to the wire
   struct. Rule: `len(results)==0 && len(unresponsive_engines)>0` → degraded
   upstream (distinct `observability.Reason`, e.g. `degraded`, + metric label +
-  log), vs honest zero hits. Surface the degraded case to the MCP caller (error
-  or explicit notice) so an agent retries instead of concluding "no results".
+  log), vs honest zero hits. Decided 2026-07-30: surface the degraded case as an
+  **MCP error** (an agent seeing bare `[]` wrongly concludes "no results exist").
 - [ ] **Keep the SearXNG image current and date-pin it** (community finding #1,
   gh-CLI pass 2026-07-30): every 429/CAPTCHA wave in the upstream record was
   fixed within hours-to-weeks, and the burst-blocking DDG failure specifically
@@ -47,6 +47,25 @@ failure is visible in the same JSON response: `unresponsive_engines` as
   existing `httpx` per-domain limiter to the SearXNG search path, plus one
   delayed retry on the degraded signal (suspension is per-engine and
   time-boxed, so a retry genuinely recovers).
+- [ ] **Authenticated engines** (researched 2026-07-30 — auth eliminates the
+  suspension class outright, since 429/CAPTCHA comes from bot-detection on HTML
+  endpoints; contractual APIs replace the *rate* problem with a *volume* quota):
+  - `braveapi` (separate module from the scraping `brave` engine): $5 free
+    credits/month at $5/1k ⇒ ~1,000 req/month, 50 qps. Known trap: issue #6173
+    (422) closed not-planned, fix PR unmerged — triggered only by `time_range`
+    values outside day/week/month/year; omnifeed's adapter only ever sends
+    those four, so safe. Config: `engine: braveapi`, `api_key: …`.
+  - `marginalia`: free non-commercial key by email; genuinely authenticated;
+    niche small-web/blogs index — supplementary, not a primary.
+  - `exaapi` (new, merged 2026-07-19): ~$10 credits/month ⇒ ~1,400 req/month;
+    neural index, unproven engine — optional third.
+  - Dead ends, do not pursue: `google_cse` **cannot authenticate** (it scrapes a
+    `cse_tok` from cse.google.com; your key/quota is never used; the official
+    JSON API is closed to new customers and ends 2027-01-01) — keyless
+    pool-member only; Mojeek has no free tier and no searxng API engine; Bing
+    Search APIs retired 2025-08-11; Kagi is paid-only; Yep has no auth knob.
+  - Keys are secrets: keep them out of the committed dev settings.yml (env
+    interpolation or an uncommitted overlay).
 - Explicitly rejected (community-validated): touching SearXNG's `limiter`
   (inbound-only, irrelevant to upstream 429s), hardcoded token workarounds
   (#4437 pattern), evasion forks / proxy rotation (unmerged POCs, "an arms race
