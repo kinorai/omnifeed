@@ -188,9 +188,10 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, eo domain.EngineOptio
 	return domain.Document{
 		PageContent: string(encoded),
 		Metadata: map[string]string{
-			"source":         "https://www.reddit.com" + thread.Post.Permalink,
-			"status_code":    "200",
-			"format":         opts.Format,
+			"source":              "https://www.reddit.com" + thread.Post.Permalink,
+			"status_code":         "200",
+			"format":              opts.Format,
+			domain.ContentTypeKey: opts.Format,
 			"comments":       strconv.Itoa(len(thread.Comments)),
 			"gaps":           strconv.Itoa(len(thread.Gaps)),
 			"total_comments": strconv.Itoa(thread.Post.NumComments),
@@ -337,10 +338,11 @@ func (e *Engine) crawlListing(ctx context.Context, rawURL, sub, sort string, opt
 	return domain.Document{
 		PageContent: string(encoded),
 		Metadata: map[string]string{
-			"source":      rawURL, // echo the caller's URL, not a fabricated /sort/ path
-			"status_code": "200",
-			"format":      opts.Format,
-			"posts":       strconv.Itoa(len(posts)),
+			"source":              rawURL, // echo the caller's URL, not a fabricated /sort/ path
+			"status_code":         "200",
+			"format":              opts.Format,
+			domain.ContentTypeKey: opts.Format,
+			"posts":               strconv.Itoa(len(posts)),
 		},
 	}, nil
 }

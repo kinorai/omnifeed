@@ -24,10 +24,18 @@ const mcpTenant = "mcp"
 // defaultSearchLimit is the result count when the caller omits `limit`.
 const defaultSearchLimit = 10
 
+// MaxFetchChars is the ceiling on fetch_url's `max_chars`, and the value
+// declared to clients as `anthropic/maxResultSizeChars`. 500000 is the maximum
+// that annotation accepts, so a caller can never ask for more text than the
+// client is willing to render.
+const MaxFetchChars = 500000
+
 // FetchURL returns the `fetch_url` tool: URL → LLM-friendly content via the
 // engine registry (Reddit engine for reddit.com, Hacker News engine for
 // news.ycombinator.com, crawl4ai fallback for the rest).
-func FetchURL(reg *engine.Registry, defaults reddit.Options, metrics *observability.Metrics) mcp.Tool {
+// defaultMaxChars caps markdown content when the caller omits `max_chars`
+// (0 = unlimited); it comes from OMNIFEED_FETCH_MAX_CHARS.
+func FetchURL(reg *engine.Registry, defaults reddit.Options, metrics *observability.Metrics, defaultMaxChars int) mcp.Tool {
 	return mcp.Tool{
 		Name:        "fetch_url",
 		Description: "Fetch any URL and return LLM-friendly content. You MUST use it for Reddit and Hacker News URLs.",
@@ -36,6 +44,12 @@ func FetchURL(reg *engine.Registry, defaults reddit.Options, metrics *observabil
 		Annotations: map[string]any{
 			"readOnlyHint":  true,
 			"openWorldHint": true,
+		},
+		// Raise the client's per-tool text budget to this tool's own ceiling so a
+		// large page is truncated by max_chars (with a resumable marker) rather
+		// than silently spooled to a file by the client.
+		Meta: map[string]any{
+			"anthropic/maxResultSizeChars": MaxFetchChars,
 		},
 		InputSchema: map[string]any{
 			"type":     "object",
@@ -75,13 +89,26 @@ func FetchURL(reg *engine.Registry, defaults reddit.Options, metrics *observabil
 					"type":        "integer",
 					"description": "Reddit-only: hard cap on top-level comment threads (0 = unlimited).",
 				},
+				"max_chars": map[string]any{
+					"type": "integer",
+					"description": "Markdown content only (ignored for Reddit/Hacker News TOON or JSON): max characters to return, up to " +
+						strconv.Itoa(MaxFetchChars) + ". 0 or omitted uses the server default (" + strconv.Itoa(defaultMaxChars) +
+						", 0 = unlimited). When content is cut, the reply ends with a marker giving the offset to resume from.",
+					"minimum": 0,
+				},
+				"start_char": map[string]any{
+					"type": "integer",
+					"description": "Markdown content only: character offset to start from (default 0). Use the start_char value from a " +
+						"truncation marker to read the next chunk of the same page.",
+					"minimum": 0,
+				},
 			},
 		},
-		Handle: crawlHandler(reg, defaults, metrics),
+		Handle: crawlHandler(reg, defaults, metrics, defaultMaxChars),
 	}
 }
 
-func crawlHandler(reg *engine.Registry, defaults reddit.Options, metrics *observability.Metrics) func(context.Context, map[string]any) (mcp.ToolResult, error) {
+func crawlHandler(reg *engine.Registry, defaults reddit.Options, metrics *observability.Metrics, defaultMaxChars int) func(context.Context, map[string]any) (mcp.ToolResult, error) {
 	return func(ctx context.Context, args map[string]any) (mcp.ToolResult, error) {
 		rawURL, _ := args["url"].(string)
 		if rawURL == "" {
@@ -127,8 +154,48 @@ func crawlHandler(reg *engine.Registry, defaults reddit.Options, metrics *observ
 		if err != nil {
 			return mcp.ToolResult{}, err
 		}
-		return mcp.ToolResult{Text: doc.PageContent, Meta: doc.Metadata}, nil
+		return sized(doc, resolveMaxChars(args, defaultMaxChars), argInt(args, "start_char")), nil
 	}
+}
+
+// resolveMaxChars picks the character cap for this call: a positive caller
+// `max_chars` wins (clamped to MaxFetchChars), otherwise the server default.
+func resolveMaxChars(args map[string]any, defaultMaxChars int) int {
+	if n := argInt(args, "max_chars"); n > 0 {
+		return min(n, MaxFetchChars)
+	}
+	return defaultMaxChars
+}
+
+func argInt(args map[string]any, key string) int {
+	if n, isNumber := args[key].(float64); isNumber && n > 0 {
+		return int(n)
+	}
+	return 0
+}
+
+// sized applies character-window truncation to markdown documents and mirrors
+// the offsets into the result _meta so the caller can resume. Structured
+// content (TOON/JSON) is returned whole — see domain.TruncatableContentType.
+func sized(doc domain.Document, maxChars, startChar int) mcp.ToolResult {
+	if !domain.TruncatableContentType(doc.Metadata[domain.ContentTypeKey]) || (maxChars <= 0 && startChar == 0) {
+		return mcp.ToolResult{Text: doc.PageContent, Meta: doc.Metadata}
+	}
+
+	t := domain.TruncateContent(doc.PageContent, maxChars, startChar)
+	if !t.Truncated && t.ReturnedChars == t.TotalChars {
+		return mcp.ToolResult{Text: doc.PageContent, Meta: doc.Metadata}
+	}
+
+	meta := make(map[string]string, len(doc.Metadata)+4)
+	for k, v := range doc.Metadata {
+		meta[k] = v
+	}
+	meta["truncated"] = strconv.FormatBool(t.Truncated)
+	meta["total_chars"] = strconv.Itoa(t.TotalChars)
+	meta["returned_chars"] = strconv.Itoa(t.ReturnedChars)
+	meta["next_start_char"] = strconv.Itoa(t.NextStartChar)
+	return mcp.ToolResult{Text: t.Text, Meta: meta}
 }
 
 // WebSearch returns the `web_search` tool: query → result URLs via the configured

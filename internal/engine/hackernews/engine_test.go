@@ -76,6 +76,11 @@ func TestCrawlItem(t *testing.T) {
 	if doc.Metadata["comments"] != "3" {
 		t.Fatalf("comments = %q, want 3\n%s", doc.Metadata["comments"], doc.PageContent)
 	}
+	// TOON carries length markers, so transports must not char-truncate it —
+	// they decide from content_type.
+	if got := doc.Metadata[domain.ContentTypeKey]; got != domain.ContentTypeTOON {
+		t.Fatalf("content_type = %q, want %q", got, domain.ContentTypeTOON)
+	}
 	for _, want := range []string{"Hello", "alice", "first & best", "bob", "carol"} {
 		if !strings.Contains(doc.PageContent, want) {
 			t.Errorf("output missing %q:\n%s", want, doc.PageContent)

@@ -51,6 +51,10 @@ type Config struct {
 	// Search tool limits.
 	SearchMaxResults int
 
+	// FetchMaxChars is the default character cap on markdown content returned by
+	// the fetch_url MCP tool (0 = unlimited). A caller-supplied max_chars wins.
+	FetchMaxChars int
+
 	// Reddit engine defaults.
 	RedditTimeout     time.Duration
 	RedditMaxRounds   int
@@ -119,6 +123,9 @@ func Load() (Config, error) {
 	if c.SearchMaxResults, err = envInt("OMNIFEED_SEARCH_MAX_RESULTS", 25); err != nil {
 		return c, err
 	}
+	if c.FetchMaxChars, err = envInt("OMNIFEED_FETCH_MAX_CHARS", 120000); err != nil {
+		return c, err
+	}
 	if c.RedditTimeout, err = envDuration("OMNIFEED_REDDIT_TIMEOUT", 4*time.Minute); err != nil {
 		return c, err
 	}
@@ -181,6 +188,10 @@ func Load() (Config, error) {
 
 	if c.SearchMaxResults < 1 || c.SearchMaxResults > 100 {
 		return c, fmt.Errorf("OMNIFEED_SEARCH_MAX_RESULTS must be between 1 and 100, got %d", c.SearchMaxResults)
+	}
+
+	if c.FetchMaxChars < 0 {
+		return c, fmt.Errorf("OMNIFEED_FETCH_MAX_CHARS must be >= 0 (0 = unlimited), got %d", c.FetchMaxChars)
 	}
 
 	if c.Crawl4AIPruneThreshold < 0 || c.Crawl4AIPruneThreshold > 1 {

@@ -241,6 +241,7 @@ type toolSchema struct {
 	Description string         `json:"description"`
 	InputSchema map[string]any `json:"inputSchema"`
 	Annotations map[string]any `json:"annotations,omitempty"`
+	Meta        map[string]any `json:"_meta,omitempty"`
 }
 
 func (s *Server) handleToolsList(req rpcRequest) rpcResponse {
@@ -251,6 +252,7 @@ func (s *Server) handleToolsList(req rpcRequest) rpcResponse {
 			Description: t.Description,
 			InputSchema: t.InputSchema,
 			Annotations: t.Annotations,
+			Meta:        t.Meta,
 		})
 	}
 	return ok(req.ID, map[string]any{"tools": tools})

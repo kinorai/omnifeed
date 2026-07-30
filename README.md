@@ -169,6 +169,7 @@ Everything is configured with `OMNIFEED_`-prefixed environment variables. In pra
 | `OMNIFEED_SEARXNG_TIMEOUT` | `15s` | Per-query timeout to SearXNG |
 | `OMNIFEED_SEARXNG_DEGRADED_RETRY_DELAY` | `2s` | Wait before retrying a **degraded** search once (SearXNG returned 200 with zero results because its engines were suspended after a 429/CAPTCHA). The suspension is per-engine and time-boxed, so a delayed retry often recovers results. `0` disables the retry. |
 | `OMNIFEED_SEARCH_MAX_RESULTS` | `25` | Hard cap on the search `limit` argument (1–100) |
+| `OMNIFEED_FETCH_MAX_CHARS` | `120000` | Default character cap on **markdown** content returned by the `fetch_url` MCP tool (`0` = unlimited). Over the cap, the reply ends with a resumable truncation marker. TOON/JSON output (Reddit, Hacker News) is never cut — use the Reddit knobs below instead. Does not apply to `/crawl` (see [Controlling fetched content size](#controlling-fetched-content-size)). |
 | `OMNIFEED_REDDIT_TIMEOUT` | `4m` | Wall-clock cap for a Reddit thread expansion |
 | `OMNIFEED_REDDIT_MAX_ROUNDS` | `3` | Default `/api/morechildren` rounds (max 40 via `?expand=full`) |
 | `OMNIFEED_REDDIT_FORMAT` | `toon` | Default Reddit output: `toon` or `json` |
@@ -186,6 +187,27 @@ Everything is configured with `OMNIFEED_`-prefixed environment variables. In pra
 | `OMNIFEED_LOG_LEVEL` | `info` | `debug`/`info`/`warn`/`error` |
 | `OMNIFEED_LOG_FORMAT` | `json` | `json` or `text` |
 | `OMNIFEED_ENABLE_PPROF` | `false` | Expose `/debug/pprof/*` (opt-in) |
+
+### Controlling fetched content size
+
+A long article can overflow an MCP client's per-response budget, at which point the client spools the text to a file and the model never reads it. So `fetch_url` caps **markdown** content at `OMNIFEED_FETCH_MAX_CHARS` (120000 by default, `0` = unlimited) and, when it cuts, ends the reply with a resumable marker:
+
+```
+[omnifeed: content truncated at 120000 of 174233 characters. Call fetch_url again with start_char=120000 to continue.]
+```
+
+Both knobs are per-request on the tool, and both are **markdown-only**:
+
+| Param | Default | Purpose |
+|---|---|---|
+| `max_chars` | `OMNIFEED_FETCH_MAX_CHARS` | Max characters to return, up to `500000`. `0`/omitted uses the server default. |
+| `start_char` | `0` | Character offset to start from — pass the value from a truncation marker to read the next chunk. |
+
+Offsets and lengths count **characters, not bytes**, so a window never splits a multibyte character. The same numbers come back in the response `_meta` as `truncated`, `total_chars`, `returned_chars`, and `next_start_char`. `fetch_url` also declares `anthropic/maxResultSizeChars: 500000` in `tools/list`, which raises Claude Code's per-tool text budget to match the ceiling; other clients ignore it.
+
+**TOON and JSON output is never truncated.** Its length markers would describe rows that are no longer there, so structured engines are bounded by their own element caps instead — see the Reddit knobs below.
+
+`POST /crawl` accepts the same `?max_chars=` and `?start_char=` query params, but **defaults to unlimited**: RAG pipelines chunk and embed whatever they receive, so a cap there would silently drop retrievable text rather than protect a context window.
 
 ### Controlling Reddit response size
 
