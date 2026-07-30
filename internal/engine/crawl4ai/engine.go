@@ -10,12 +10,18 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"unicode/utf8"
 
 	"github.com/kinorai/omnifeed/internal/antibot"
 	"github.com/kinorai/omnifeed/internal/domain"
 	"github.com/kinorai/omnifeed/internal/httpx"
 )
+
+// maxPageTimeoutMS is the highest page_timeout crawl4ai honours from a REST
+// body: it clamps untrusted values to 60000 ms without saying so, so sending
+// more only misleads whoever reads the payload.
+const maxPageTimeoutMS = 60000
 
 // Engine sends URLs to crawl4ai's /crawl endpoint and extracts the best-fit
 // markdown body. It is registered as the Registry fallback.
@@ -133,7 +139,10 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, _ domain.EngineOption
 				"word_count_threshold":       10,
 				"wait_until":                 e.waitUntil,
 				"delay_before_return_html":   1.0,
-				"page_timeout":               90000,
+				// crawl4ai silently clamps page_timeout from an untrusted REST body to
+				// 60000 ms, so anything higher is a lie we'd tell ourselves in logs.
+				// (The client-side HTTP timeout is a separate knob and is unaffected.)
+				"page_timeout":               maxPageTimeoutMS,
 				"scan_full_page":             true,
 				"scroll_delay":               0.5,
 				"max_retries":                2,
@@ -150,6 +159,14 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, _ domain.EngineOption
 							"params": map[string]interface{}{
 								"threshold":      e.pruneThreshold,
 								"threshold_type": "fixed",
+								// Syntax highlighters wrap code tokens in <span>s that the
+								// pruning filter scores below the threshold and drops,
+								// corrupting the code it keeps. preserve_tags/_classes make
+								// the filter skip those subtrees whole (available since
+								// crawl4ai 0.9.1; upstream bug unclecode/crawl4ai#2110).
+								// "table" stays OUT: it would re-admit chrome tables.
+								"preserve_tags":    []string{"pre", "code"},
+								"preserve_classes": []string{"highlight", "chroma", "highlighter-rouge", "codehilite"},
 							},
 						},
 						"options": map[string]interface{}{
@@ -207,6 +224,13 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, _ domain.EngineOption
 
 	result := cr.Results[0]
 	content := result.Markdown.FitMarkdown
+	// The pruning filter that produces fit_markdown can still eat fenced code
+	// blocks whose highlighter classes aren't in preserve_classes above. When
+	// fit_markdown has lost every fence that raw_markdown has, the unfiltered
+	// text is the more faithful rendering — take it despite the extra chrome.
+	if content != "" && !strings.Contains(content, "```") && strings.Contains(result.Markdown.RawMarkdown, "```") {
+		content = result.Markdown.RawMarkdown
+	}
 	if content == "" {
 		content = result.Markdown.RawMarkdown
 	}
@@ -230,6 +254,21 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, _ domain.EngineOption
 			Kind:       domain.KindForStatus(result.StatusCode),
 			StatusCode: result.StatusCode,
 			Err:        fmt.Errorf("crawl4ai page returned %d (blocked)", result.StatusCode),
+		}
+	}
+
+	// crawl4ai has no "extracted nothing" flag: a page it failed to render comes
+	// back as success with every content field empty. Returning that as a
+	// successful empty Document hands the caller (the LLM) silence it can't tell
+	// from a genuinely blank page — classify it as thin_content instead. Checked
+	// after the block detection above so a whitespace challenge page still
+	// reports captcha.
+	if strings.TrimSpace(content) == "" {
+		return domain.Document{}, &domain.FetchError{
+			Kind:       domain.KindThinContent,
+			StatusCode: result.StatusCode,
+			Err: fmt.Errorf("crawl4ai extracted 0 chars (raw_md=%d fit_md=%d cleaned_html=%d)",
+				len(result.Markdown.RawMarkdown), len(result.Markdown.FitMarkdown), len(result.CleanedHTML)),
 		}
 	}
 
