@@ -23,6 +23,14 @@ import (
 // more only misleads whoever reads the payload.
 const maxPageTimeoutMS = 60000
 
+// DefaultExcludedSelector is the conservative chrome selector list sent as
+// crawl4ai's excluded_selector when the operator hasn't set one. It names only
+// chrome-shaped classes/ids (sidebars, tables of contents, related-post and
+// newsletter boxes, cookie banners) — nothing that could match article body
+// content. It is the single source of truth for the default: config carries the
+// operator override as a tri-state (unset / set / set-empty), not a copy.
+const DefaultExcludedSelector = ".sidebar,.toc,#toc,.related,.newsletter,.cookie-banner,[aria-label*='cookie']"
+
 // Engine sends URLs to crawl4ai's /crawl endpoint and extracts the best-fit
 // markdown body. It is registered as the Registry fallback.
 type Engine struct {
@@ -33,6 +41,9 @@ type Engine struct {
 	keepLinks      bool
 	pruneThreshold float64
 	waitUntil      string
+
+	excludedSelector string
+	targetElements   []string
 }
 
 // Config configures the crawl4ai Engine.
@@ -60,6 +71,16 @@ type Config struct {
 	// latency on every page. The default is owned by config
 	// (OMNIFEED_CRAWL4AI_WAIT_UNTIL); empty falls back to domcontentloaded.
 	WaitUntil string
+	// ExcludedSelector is the CSS selector list crawl4ai drops before extraction.
+	// Tri-state on purpose (OMNIFEED_CRAWL4AI_EXCLUDED_SELECTOR): nil = use
+	// DefaultExcludedSelector, a non-nil value is sent verbatim, and a non-nil
+	// empty string omits the field entirely (excludes nothing).
+	ExcludedSelector *string
+	// TargetElements is a comma-separated CSS selector list; when non-empty,
+	// crawl4ai extracts markdown ONLY from matching containers. Off by default
+	// (OMNIFEED_CRAWL4AI_TARGET_ELEMENTS): on pages without a match the crawl
+	// yields no content, which the thin-content guard turns into an error.
+	TargetElements string
 }
 
 // New returns a crawl4ai fallback Engine wired with the given config.
@@ -68,7 +89,33 @@ func New(cfg Config) *Engine {
 	if waitUntil == "" {
 		waitUntil = "domcontentloaded"
 	}
-	return &Engine{endpoint: cfg.Endpoint, token: cfg.Token, client: cfg.Client, limiter: cfg.Limiter, keepLinks: cfg.KeepLinks, pruneThreshold: cfg.PruneThreshold, waitUntil: waitUntil}
+	excludedSelector := DefaultExcludedSelector
+	if cfg.ExcludedSelector != nil {
+		excludedSelector = *cfg.ExcludedSelector
+	}
+	return &Engine{
+		endpoint:         cfg.Endpoint,
+		token:            cfg.Token,
+		client:           cfg.Client,
+		limiter:          cfg.Limiter,
+		keepLinks:        cfg.KeepLinks,
+		pruneThreshold:   cfg.PruneThreshold,
+		waitUntil:        waitUntil,
+		excludedSelector: excludedSelector,
+		targetElements:   splitSelectors(cfg.TargetElements),
+	}
+}
+
+// splitSelectors turns a comma-separated CSS selector list into a trimmed slice,
+// dropping empty entries. An empty or all-blank input returns nil.
+func splitSelectors(s string) []string {
+	var out []string
+	for _, part := range strings.Split(s, ",") {
+		if p := strings.TrimSpace(part); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // Name returns the engine identifier ("crawl4ai").
@@ -131,51 +178,63 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, _ domain.EngineOption
 	ignoreLinks := !e.keepLinks
 	excludeExternalLinks := !e.keepLinks
 
-	req := crawlRequest{
-		URLs: []string{rawURL},
-		CrawlerConfig: map[string]interface{}{
-			"type": "CrawlerRunConfig",
+	params := map[string]interface{}{
+		"word_count_threshold":     10,
+		"wait_until":               e.waitUntil,
+		"delay_before_return_html": 1.0,
+		// crawl4ai silently clamps page_timeout from an untrusted REST body to
+		// 60000 ms, so anything higher is a lie we'd tell ourselves in logs.
+		// (The client-side HTTP timeout is a separate knob and is unaffected.)
+		"page_timeout":   maxPageTimeoutMS,
+		"scan_full_page": true,
+		"scroll_delay":   0.5,
+		"max_retries":    2,
+		// script/style/noscript carry no prose but do reach the markdown on pages
+		// that inline them, so they go out with the structural chrome.
+		"excluded_tags":              []string{"nav", "footer", "header", "form", "aside", "script", "style", "noscript"},
+		"remove_overlay_elements":    true,
+		"remove_consent_popups":      true,
+		"exclude_external_links":     excludeExternalLinks,
+		"exclude_social_media_links": true,
+		"exclude_external_images":    true,
+		"markdown_generator": map[string]interface{}{
+			"type": "DefaultMarkdownGenerator",
 			"params": map[string]interface{}{
-				"word_count_threshold":       10,
-				"wait_until":                 e.waitUntil,
-				"delay_before_return_html":   1.0,
-				// crawl4ai silently clamps page_timeout from an untrusted REST body to
-				// 60000 ms, so anything higher is a lie we'd tell ourselves in logs.
-				// (The client-side HTTP timeout is a separate knob and is unaffected.)
-				"page_timeout":               maxPageTimeoutMS,
-				"scan_full_page":             true,
-				"scroll_delay":               0.5,
-				"max_retries":                2,
-				"excluded_tags":              []string{"nav", "footer", "header", "form", "aside"},
-				"remove_overlay_elements":    true,
-				"exclude_external_links":     excludeExternalLinks,
-				"exclude_social_media_links": true,
-				"exclude_external_images":    true,
-				"markdown_generator": map[string]interface{}{
-					"type": "DefaultMarkdownGenerator",
+				"content_filter": map[string]interface{}{
+					"type": "PruningContentFilter",
 					"params": map[string]interface{}{
-						"content_filter": map[string]interface{}{
-							"type": "PruningContentFilter",
-							"params": map[string]interface{}{
-								"threshold":      e.pruneThreshold,
-								"threshold_type": "fixed",
-								// Syntax highlighters wrap code tokens in <span>s that the
-								// pruning filter scores below the threshold and drops,
-								// corrupting the code it keeps. preserve_tags/_classes make
-								// the filter skip those subtrees whole (available since
-								// crawl4ai 0.9.1; upstream bug unclecode/crawl4ai#2110).
-								// "table" stays OUT: it would re-admit chrome tables.
-								"preserve_tags":    []string{"pre", "code"},
-								"preserve_classes": []string{"highlight", "chroma", "highlighter-rouge", "codehilite"},
-							},
-						},
-						"options": map[string]interface{}{
-							"ignore_links": ignoreLinks,
-						},
+						"threshold":      e.pruneThreshold,
+						"threshold_type": "fixed",
+						// Syntax highlighters wrap code tokens in <span>s that the
+						// pruning filter scores below the threshold and drops,
+						// corrupting the code it keeps. preserve_tags/_classes make
+						// the filter skip those subtrees whole (available since
+						// crawl4ai 0.9.1; upstream bug unclecode/crawl4ai#2110).
+						// "table" stays OUT: it would re-admit chrome tables.
+						"preserve_tags":    []string{"pre", "code"},
+						"preserve_classes": []string{"highlight", "chroma", "highlighter-rouge", "codehilite"},
 					},
+				},
+				"options": map[string]interface{}{
+					"ignore_links": ignoreLinks,
 				},
 			},
 		},
+	}
+	// Selector-level chrome removal. Omitted entirely when the operator blanks
+	// the knob, so "exclude nothing" stays expressible.
+	if e.excludedSelector != "" {
+		params["excluded_selector"] = e.excludedSelector
+	}
+	// Opt-in and off by default: target_elements narrows extraction to the
+	// matching containers, which returns nothing at all on pages that have none.
+	if len(e.targetElements) > 0 {
+		params["target_elements"] = e.targetElements
+	}
+
+	req := crawlRequest{
+		URLs:          []string{rawURL},
+		CrawlerConfig: map[string]interface{}{"type": "CrawlerRunConfig", "params": params},
 	}
 
 	body, err := json.Marshal(req)
