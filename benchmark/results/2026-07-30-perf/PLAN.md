@@ -23,17 +23,41 @@ failure is visible in the same JSON response: `unresponsive_engines` as
   upstream (distinct `observability.Reason`, e.g. `degraded`, + metric label +
   log), vs honest zero hits. Surface the degraded case to the MCP caller (error
   or explicit notice) so an agent retries instead of concluding "no results".
-- [ ] `searxng/settings.yml`: widen the engine pool beyond ddg/brave/google/
-  startpage (e.g. mojeek, qwant, bing) and pin
-  `search.suspended_times.SearxEngineTooManyRequests` low (e.g. 60 s) so one 429
-  doesn't blackhole an engine for 3 min–1 h. Engines merge by name under
+- [ ] **Keep the SearXNG image current and date-pin it** (community finding #1,
+  gh-CLI pass 2026-07-30): every 429/CAPTCHA wave in the upstream record was
+  fixed within hours-to-weeks, and the burst-blocking DDG failure specifically
+  was fixed by PR #5943 (`Sec-Fetch-*` headers, merged 2026-04-04 — "blocked on
+  the second consecutive search" → "4 concurrent tabs fine"). SearXNG publishes
+  no GitHub releases, only date-tagged images: verify the running image
+  postdates 2026-04-04 and pin a dated tag instead of `latest`.
+- [ ] `searxng/settings.yml`: widen the engine pool so one suspension can't
+  empty the result set — swap dead classic `google` (upstream `inactive: true`
+  since ~2026-06, issue #6453) for `google cse` (active by default, no API key),
+  and enable `mojeek`, `bing`, `duckduckgo web`, `startpage`. Caveat on `qwant`:
+  open 2026-07 issue reports it silently returns fabricated results when the
+  server IP is blocked — add it last, if at all. Engines merge by name under
   `use_default_settings: true`.
-- [ ] Optional (M): on the degraded signal, one delayed retry via the existing
-  `httpx` retry/limiter machinery — suspension is per-engine and time-boxed, so a
-  retry genuinely recovers.
+- [ ] `suspended_times`: do NOT shorten `SearxEngineTooManyRequests` (180 s) —
+  community evidence says chasing results with shorter cooldowns just re-triggers
+  the upstream block (rejected PR #5839 discussion). Only ensure CAPTCHA
+  cooldowns are nonzero. (Reverses this plan's earlier draft.)
+- [ ] Caller-side pacing in omnifeed (upgraded from optional): upstream has
+  rejected outbound per-engine rate limiting twice (PRs #998, #1273) and the
+  DDG throttle PR #5839 — pacing can only live in the caller. Extend the
+  existing `httpx` per-domain limiter to the SearXNG search path, plus one
+  delayed retry on the degraded signal (suspension is per-engine and
+  time-boxed, so a retry genuinely recovers).
+- Explicitly rejected (community-validated): touching SearXNG's `limiter`
+  (inbound-only, irrelevant to upstream 429s), hardcoded token workarounds
+  (#4437 pattern), evasion forks / proxy rotation (unmerged POCs, "an arms race
+  SearXNG will likely lose", and loses `docker pull` upgrades), paid SERP APIs
+  (third-party data flow, out of scope).
 - Validate: table test with a fixture `{"results":[],"unresponsive_engines":
-  [["brave","Suspended: too many requests"]]}`; replay the 7 benchmark queries
-  when healthy; 50-search soak run watching the new metric.
+  [["brave","Suspended: too many requests"]]}`; check running image date vs
+  2026-04-04; replay the 7 benchmark queries when healthy; 50-search soak run
+  watching the new metric. (Live confirmation of the failure mode: during the
+  2026-07-30 research pass itself, `web_search` returned `[]` for 4 consecutive
+  queries mid-task.)
 
 ## 2. `fetch_url` size control — lossless (opt-out cap + markers) · effort M
 
