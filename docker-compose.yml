@@ -9,7 +9,9 @@ name: omnifeed
 
 services:
   searxng:
-    image: searxng/searxng:latest
+    # Pinned after the 2026-07-30 perf benchmark. SearXNG publishes no semver
+    # releases — dated tags are the only release scheme.
+    image: searxng/searxng:2026.7.22-ef8f6470e
     container_name: searxng
     volumes:
       - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
@@ -24,7 +26,9 @@ services:
     restart: unless-stopped
 
   crawl4ai:
-    image: unclecode/crawl4ai:latest
+    # Pinned after the 2026-07-30 perf benchmark: 0.9.2 is the first release with
+    # usable preserve_tags (needed to keep code blocks intact).
+    image: unclecode/crawl4ai:0.9.2
     container_name: crawl4ai
     ports:
       - "11235:11235"
