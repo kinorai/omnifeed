@@ -208,7 +208,11 @@ func (e *Engine) document(v any, source string, extra map[string]string) (domain
 	if err != nil {
 		return domain.Document{}, fmt.Errorf("encode: %w", err)
 	}
-	meta := map[string]string{"source": source, "status_code": "200"}
+	meta := map[string]string{
+		"source":              source,
+		"status_code":         "200",
+		domain.ContentTypeKey: domain.ContentTypeTOON,
+	}
 	for k, val := range extra {
 		meta[k] = val
 	}

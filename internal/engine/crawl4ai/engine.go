@@ -275,8 +275,9 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, _ domain.EngineOption
 	return domain.Document{
 		PageContent: content,
 		Metadata: map[string]string{
-			"source":      rawURL,
-			"status_code": fmt.Sprintf("%d", result.StatusCode),
+			"source":              rawURL,
+			"status_code":         fmt.Sprintf("%d", result.StatusCode),
+			domain.ContentTypeKey: domain.ContentTypeMarkdown,
 		},
 	}, nil
 }
