@@ -63,6 +63,10 @@ type Config struct {
 	// the fetch_url MCP tool (0 = unlimited). A caller-supplied max_chars wins.
 	FetchMaxChars int
 
+	// GitHubToken authenticates the GitHub engine's REST calls. Empty = anonymous
+	// (60 requests/hour/IP); a token raises it to 5000/hour.
+	GitHubToken string
+
 	// Reddit engine defaults.
 	RedditTimeout     time.Duration
 	RedditMaxRounds   int
@@ -100,6 +104,7 @@ func Load() (Config, error) {
 		Crawl4AITargetElements:   env("OMNIFEED_CRAWL4AI_TARGET_ELEMENTS", ""),
 
 		SearXNGURL:   env("OMNIFEED_SEARXNG_URL", ""),
+		GitHubToken:  env("OMNIFEED_GITHUB_TOKEN", ""),
 		RedditFormat: env("OMNIFEED_REDDIT_FORMAT", "toon"),
 		RedditSort:   env("OMNIFEED_REDDIT_SORT", domain.DefaultRedditSort),
 	}
