@@ -74,7 +74,7 @@ cmd/omnifeed/    entry point + wiring
 
 ## Gotchas
 
-- **crawl4ai is mandatory.** `OMNIFEED_CRAWL4AI_URL` must be set or the binary exits at startup — the Reddit engine and the generic fallback both fetch through it. **Exceptions:** the Hacker News engine reads the public Algolia HN API (`hn.algolia.com`) and the GitHub engine reads the public GitHub REST API (`api.github.com`) directly — neither is bot-walled, so a headless browser would only add latency (and lose comments) — and they therefore need outbound access to those two hosts.
+- **crawl4ai is mandatory.** `OMNIFEED_CRAWL4AI_URL` must be set or the binary exits at startup — the Reddit engine and the generic fallback both fetch through it. **Exceptions:** the Hacker News engine reads the public Algolia HN API (`hn.algolia.com`) and the GitHub engine reads the public GitHub REST API (`api.github.com`) directly — neither is bot-walled, so a headless browser would only add latency (and lose comments) — and they therefore need outbound access to those two hosts. The Discourse engine does the same against each host listed in `OMNIFEED_DISCOURSE_HOSTS` (public topic JSON), so those hosts need outbound access too.
 - **Never call Reddit directly.** Reddit 403-blocks non-browser clients; the Reddit engine fetches through crawl4ai's headless browser. See `internal/engine/reddit`.
 - **HTTP transports fail closed.** No `OMNIFEED_API_KEY` → the binary refuses to start, unless `OMNIFEED_DEV_NO_AUTH=true` (local only). Stdio MCP is unauthenticated by design.
 - **SSRF:** validate caller-supplied URLs with `httpx.ValidateURL`; `OMNIFEED_BLOCK_PRIVATE_IPS` defaults to on.
