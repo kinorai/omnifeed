@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"slices"
+	"testing"
+)
 
 // Load requires crawl4ai, so every case sets it.
 func loadWith(t *testing.T, key, value string) (Config, error) {
@@ -43,6 +46,39 @@ func TestLoad_FetchMaxChars(t *testing.T) {
 			}
 			if cfg.FetchMaxChars != tc.want {
 				t.Errorf("FetchMaxChars: got %d, want %d", cfg.FetchMaxChars, tc.want)
+			}
+		})
+	}
+}
+
+// OMNIFEED_DISCOURSE_HOSTS is tri-state: unset keeps the shipped list, a value
+// replaces it, and an explicitly empty value disables the engine.
+func TestLoad_DiscourseHosts(t *testing.T) {
+	cases := []struct {
+		name  string
+		set   bool
+		value string
+		want  []string
+	}{
+		{name: "default when unset", want: splitHosts(defaultDiscourseHosts)},
+		{name: "explicit list replaces the default", set: true,
+			value: "forum.example.com,Forum.Two.Org", want: []string{"forum.example.com", "forum.two.org"}},
+		{name: "whitespace and empty entries are dropped", set: true,
+			value: " a.example.com , , b.example.com ", want: []string{"a.example.com", "b.example.com"}},
+		{name: "explicitly empty disables the engine", set: true, value: "", want: nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("OMNIFEED_CRAWL4AI_URL", "http://crawl4ai:11235/crawl")
+			if tc.set {
+				t.Setenv("OMNIFEED_DISCOURSE_HOSTS", tc.value)
+			}
+			cfg, err := Load()
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if !slices.Equal(cfg.DiscourseHosts, tc.want) {
+				t.Errorf("DiscourseHosts = %q, want %q", cfg.DiscourseHosts, tc.want)
 			}
 		})
 	}

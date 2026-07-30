@@ -67,6 +67,13 @@ type Config struct {
 	// (60 requests/hour/IP); a token raises it to 5000/hour.
 	GitHubToken string
 
+	// DiscourseHosts is the exact-hostname allowlist the Discourse engine claims
+	// topic URLs on. Discourse is self-hosted on arbitrary domains and Matches is
+	// a pure predicate (it can't probe), so the list has to be explicit. Empty
+	// (the variable set to "") means the engine claims nothing and every forum
+	// goes to the generic browser fallback.
+	DiscourseHosts []string
+
 	// Reddit engine defaults.
 	RedditTimeout     time.Duration
 	RedditMaxRounds   int
@@ -85,6 +92,11 @@ type Config struct {
 	PerDomainDelay       time.Duration
 	BlockPrivateIPs      bool
 }
+
+// defaultDiscourseHosts is the shipped Discourse allowlist: the large public
+// forums an agent is most likely to be pointed at. Operators replace it with
+// their own list via OMNIFEED_DISCOURSE_HOSTS.
+const defaultDiscourseHosts = "meta.discourse.org,discuss.python.org,users.rust-lang.org,internals.rust-lang.org,discuss.pytorch.org"
 
 // Load reads OMNIFEED_* env vars and returns a populated Config, or an error if a
 // required variable is malformed. Defaults are documented inline.
@@ -108,6 +120,14 @@ func Load() (Config, error) {
 		RedditFormat: env("OMNIFEED_REDDIT_FORMAT", "toon"),
 		RedditSort:   env("OMNIFEED_REDDIT_SORT", domain.DefaultRedditSort),
 	}
+
+	// Tri-state: unset = the shipped default list, set = that list verbatim,
+	// set-but-empty = the engine claims nothing.
+	hosts := defaultDiscourseHosts
+	if v := envPtr("OMNIFEED_DISCOURSE_HOSTS"); v != nil {
+		hosts = *v
+	}
+	c.DiscourseHosts = splitHosts(hosts)
 
 	var err error
 	if c.MCPStdio, err = envBool("OMNIFEED_MCP_STDIO", false); err != nil {
@@ -230,6 +250,18 @@ func Load() (Config, error) {
 	}
 
 	return c, nil
+}
+
+// splitHosts parses a comma-separated hostname list, trimming whitespace,
+// lowercasing, and dropping empty entries. Returns nil for an empty list.
+func splitHosts(s string) []string {
+	var out []string
+	for _, h := range strings.Split(s, ",") {
+		if h = strings.ToLower(strings.TrimSpace(h)); h != "" {
+			out = append(out, h)
+		}
+	}
+	return out
 }
 
 func env(key, fallback string) string {

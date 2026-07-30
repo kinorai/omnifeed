@@ -21,7 +21,7 @@ with a dedicated Reddit engine that returns <b>full comment trees as <a href="ht
 </p>
 
 - **`web_search`** queries a SearXNG instance (Google/Bing/DDG, Reddit included) and returns ranked URLs with titles and snippets.
-- **`fetch_url`** renders any URL through crawl4ai as clean markdown — and Reddit URLs (threads *and* `/r/{sub}` listings) come back as TOON, as do Hacker News threads and front-page / Ask / Show feeds (read directly from the Algolia HN API) and GitHub issue / pull-request pages (read directly from the GitHub REST API).
+- **`fetch_url`** renders any URL through crawl4ai as clean markdown — and Reddit URLs (threads *and* `/r/{sub}` listings) come back as TOON, as do Hacker News threads and front-page / Ask / Show feeds (read directly from the Algolia HN API) and GitHub issue / pull-request pages (read directly from the GitHub REST API) and Discourse forum topics on the hosts you list (read directly from the public topic JSON API).
 
 <img src="https://user-images.githubusercontent.com/74038190/212284100-561aa473-3905-4a80-b561-0d28506553ee.gif" width="100%">
 
@@ -173,6 +173,7 @@ Everything is configured with `OMNIFEED_`-prefixed environment variables. In pra
 | `OMNIFEED_SEARCH_MAX_RESULTS` | `25` | Hard cap on the search `limit` argument (1–100) |
 | `OMNIFEED_FETCH_MAX_CHARS` | `120000` | Default character cap on **markdown** content returned by the `fetch_url` MCP tool (`0` = unlimited). Over the cap, the reply ends with a resumable truncation marker. TOON/JSON output (Reddit, Hacker News) is never cut — use the Reddit knobs below instead. Does not apply to `/crawl` (see [Controlling fetched content size](#controlling-fetched-content-size)). |
 | `OMNIFEED_GITHUB_TOKEN` | _(unset)_ | Personal access token for the GitHub engine (issue / pull-request pages read from `api.github.com`). Unset means anonymous, which works but is limited to 60 requests/hour/IP; a token raises it to 5000/hour. |
+| `OMNIFEED_DISCOURSE_HOSTS` | `meta.discourse.org,discuss.python.org,users.rust-lang.org,internals.rust-lang.org,discuss.pytorch.org` | Comma-separated hostnames the Discourse engine claims topic (`/t/…`) URLs on. Discourse is self-hosted software living on **arbitrary** domains and an engine cannot probe a host to find out, so the allowlist is explicit: **list the forums you actually use**. Matching is exact and case-insensitive (no subdomain wildcards); unlisted forums still work — they just go through the generic browser fallback, which returns less of the thread. Set to the **empty string** to disable the engine entirely. |
 | `OMNIFEED_REDDIT_TIMEOUT` | `4m` | Wall-clock cap for a Reddit thread expansion |
 | `OMNIFEED_REDDIT_MAX_ROUNDS` | `3` | Default `/api/morechildren` rounds (max 40 via `?expand=full`) |
 | `OMNIFEED_REDDIT_FORMAT` | `toon` | Default Reddit output: `toon` or `json` |
@@ -243,19 +244,21 @@ flowchart TB
   reg e7@--> reddit["Reddit engine<br/>(TOON)"]
   reg e12@--> hn["Hacker News engine<br/>(TOON)"]
   reg e14@--> gh["GitHub engine<br/>(TOON)"]
+  reg e16@--> disc["Discourse engine<br/>(TOON)"]
   reg e8@--> generic["Generic fallback<br/>(markdown)"]
   reddit e9@--> c4["crawl4ai upstream<br/>(headless browser)"]
   generic e10@--> c4
   hn e13@--> algolia["Algolia HN API<br/>(hn.algolia.com)"]
   gh e15@--> ghapi["GitHub REST API<br/>(api.github.com)"]
+  disc e17@--> discapi["Discourse topic JSON<br/>(allowlisted forums)"]
   searcher e11@--> sx["SearXNG upstream<br/>(Google / Bing / DDG)"]
 
   classDef box fill:#161b22,stroke:#30363d,stroke-width:1px,color:#e6edf3;
   classDef accent fill:#0d1117,stroke:#FF4500,stroke-width:2px,color:#ffd9b3;
   classDef animate stroke:#FF4500,stroke-width:2px,stroke-dasharray:10 6,stroke-dashoffset:900,animation:dash 14s linear infinite;
   class crawl,search,mcpStdio,mcpHTTP,owt,sat box;
-  class mcp,reg,searcher,reddit,hn,gh,generic,c4,sx,algolia,ghapi accent;
-  class e1,e2,e3,e4,e5,e6,e7,e8,e9,e10,e11,e12,e13,e14,e15 animate;
+  class mcp,reg,searcher,reddit,hn,gh,disc,generic,c4,sx,algolia,ghapi,discapi accent;
+  class e1,e2,e3,e4,e5,e6,e7,e8,e9,e10,e11,e12,e13,e14,e15,e16,e17 animate;
 ```
 
 ### <img src="https://raw.githubusercontent.com/Tarikul-Islam-Anik/Animated-Fluent-Emojis/master/Emojis/Objects/Shield.png" width="22" height="22" /> Reddit anti-bot handling
