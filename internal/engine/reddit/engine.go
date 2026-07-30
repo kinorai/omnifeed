@@ -192,9 +192,9 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, eo domain.EngineOptio
 			"status_code":         "200",
 			"format":              opts.Format,
 			domain.ContentTypeKey: opts.Format,
-			"comments":       strconv.Itoa(len(thread.Comments)),
-			"gaps":           strconv.Itoa(len(thread.Gaps)),
-			"total_comments": strconv.Itoa(thread.Post.NumComments),
+			"comments":            strconv.Itoa(len(thread.Comments)),
+			"gaps":                strconv.Itoa(len(thread.Gaps)),
+			"total_comments":      strconv.Itoa(thread.Post.NumComments),
 		},
 	}, nil
 }
