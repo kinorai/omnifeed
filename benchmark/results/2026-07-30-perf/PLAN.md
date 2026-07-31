@@ -30,6 +30,37 @@ Second batch (same day):
 - `2fd43a2` feat(discourse): topic engine (OMNIFEED_DISCOURSE_HOSTS allowlist,
   print-view + batched fallback, 500-post cap) — §4 second half complete
 
+## Live validation (2026-07-31, rebuilt stack, keyed braveapi)
+
+SEARCH 9/9 PASS: all 7 benchmark-empty queries return 10 results (server-side
+mean 1.13 s, all in the 0.8–1.6 s bucket); `site:reddit.com kubernetes ingress`
+→ 10/10 canonical thread URLs; `site:x.com claude code` → 9 x.com hits. Zero
+bare-[] responses. Engines observed: startpage, duckduckgo, duckduckgo web,
+bing, mojeek, google cse.
+
+FETCH 9/11 PASS: k8s YAML multi-line ✓ · dev.to `FROM golang:1.21 AS builder`
++ `&&` ✓ · crates.io struct fields ✓ · bytebytego returns paywall teaser (no
+silent empty) ✓ · pkg.go.dev capped at 120,131 chars with resume marker ✓ ·
+GH issue 43916: 144/144 comments, engine=github, ~1.4 s (was 12/144 @ 10.3 s) ✓
+· GH PR 140882: 21 comments + 9 reviews + 8 inline + 2 files w/ diff hunks ✓ ·
+discuss.python.org: 6/6 posts, 0.65 s (was 2/6) ✓ · HN TOON exempt from
+truncation ✓. Server schema serves max_chars/start_char + the
+anthropic/maxResultSizeChars=500000 _meta (verified via curl tools/list; the
+validation session saw stale cached schemas — client restart needed).
+
+Follow-ups from validation:
+- [ ] MDN still loses ALL code examples (fit and raw both fence-free) —
+  hypothesis: examples live in shadow-DOM/custom elements; try
+  `flatten_shadow_dom: true` in the crawler params (upstream-allowlisted).
+- [ ] redswitches canary still 0% article (pure pricing chrome, "502"/"nginx"
+  absent even from raw) — article may never render for the headless browser;
+  candidates: enable OMNIFEED_CRAWL4AI_TARGET_ELEMENTS, or accept as
+  pathological and keep as regression canary.
+- [ ] braveapi (AND the brave scraper) contributed 0 of 90 search results —
+  results were non-empty so no degraded error fired; check `container logs
+  omnifeed` for the new "searxng returned partial results" warning naming the
+  engine + message, and searxng logs; verify the key's plan is Data for Search.
+
 Remaining — validation, not code (needs the rebuilt binary + restarted stack):
 1. Rebuild omnifeed + `compose up` with the new pins/settings.
 2. Owner: put the Brave key into searxng/settings.yml locally (braveapi block,
