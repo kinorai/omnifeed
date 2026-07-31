@@ -82,6 +82,14 @@ Same result as `docker compose up` — SearXNG + crawl4ai + omnifeed, **tokenles
 
 All three images track `latest`; crawl4ai `0.9.x` needs a token and routes Reddit through `POST /execute_js`, so `up` generates a shared token, wires it to crawl4ai (`CRAWL4AI_API_TOKEN`) and omnifeed (`OMNIFEED_CRAWL4AI_TOKEN`), and enables `execute_js` automatically.
 
+**Brave API key (optional).** SearXNG can't read engine keys from the environment, so the key has to be inside its `settings.yml` — the committed one stays empty and `braveapi` inactive. Store the key once in the Keychain:
+
+```bash
+security add-generic-password -s omnifeed-braveapi -a omnifeed -w '<key>'
+```
+
+`./scripts/container up` then renders `searxng/settings.runtime.yml` (gitignored, mode `600`) with the key filled in and mounts that instead. Prefer another secret manager? Export the key instead — `BRAVEAPI_KEY=$(… ) ./scripts/container up` — it takes precedence. Either way the key never enters git and is never printed.
+
 ### <img src="https://raw.githubusercontent.com/Tarikul-Islam-Anik/Animated-Fluent-Emojis/master/Emojis/Objects/Electric%20Plug.png" width="22" height="22" /> As an MCP server
 
 Works with any MCP client — **Claude Code, Cursor, Codex, Gemini CLI, OpenCode, Windsurf, Pi**, and more.
