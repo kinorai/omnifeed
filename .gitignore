@@ -40,6 +40,9 @@ go.work.sum
 .env
 .env.local
 
+# Rendered by scripts/container: settings.yml with the Brave Search API key in it
+searxng/settings.runtime.yml
+
 # ========================
 # IDE and Editor settings
 # ========================
