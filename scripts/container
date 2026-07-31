@@ -116,23 +116,26 @@ run_or_start() {
 # SearXNG has no env interpolation for engine fields, so the Brave Search API key
 # has to sit inside the mounted settings.yml — and the committed file must stay
 # keyless. render_searxng_settings resolves the key at start time (first non-empty
-# wins: $BRAVEAPI_KEY, then the macOS Keychain item `omnifeed-braveapi`) and, if it
+# wins: $BRAVEAPI_KEY, else the output of $BRAVEAPI_KEY_COMMAND) and, if it
 # finds one, renders searxng/settings.runtime.yml (gitignored, mode 600) with the
 # key filled in and `inactive: true` dropped — inside the `- name: braveapi` block
-# only. No key: SEARXNG_SETTINGS keeps pointing at the committed file and braveapi
-# stays inactive, exactly as before. The key is never printed and never reaches the
-# argv of any command (awk reads it from the environment).
+# only. No key from either: SEARXNG_SETTINGS keeps pointing at the committed file
+# and braveapi stays inactive, exactly as before. The key is never printed and never
+# reaches the argv of any command (awk reads it from the environment).
 #
-# Store it once:  security add-generic-password -s omnifeed-braveapi -a omnifeed -w '<key>'
+# Store it once in whatever secret manager you already use, and point
+# BRAVEAPI_KEY_COMMAND at the command that prints it. For example:
+#   macOS Keychain: export BRAVEAPI_KEY_COMMAND="security find-generic-password -s omnifeed-braveapi -w"
+#   Bitwarden:      export BRAVEAPI_KEY_COMMAND="bw get password omnifeed-braveapi"
 render_searxng_settings() {
   local key source runtime
   if [ -n "${BRAVEAPI_KEY:-}" ]; then
     key="$BRAVEAPI_KEY"; source=env
-  else
-    key="$(security find-generic-password -s omnifeed-braveapi -w 2>/dev/null || true)"
-    source=keychain
+  elif [ -n "${BRAVEAPI_KEY_COMMAND:-}" ]; then
+    key="$(eval "$BRAVEAPI_KEY_COMMAND" 2>/dev/null || true)"
+    source=command
   fi
-  [ -n "$key" ] || return 0
+  [ -n "${key:-}" ] || return 0
 
   runtime="$REPO/searxng/settings.runtime.yml"
   rm -f "$runtime"
