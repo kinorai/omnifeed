@@ -18,7 +18,7 @@ Package httpx provides HTTP utilities shared across engines: a retrying HTTP cli
   - [func \(c \*Client\) DoRetry\(ctx context.Context, method, url string, body \[\]byte, headers map\[string\]string, cfg RetryConfig\) \(\*http.Response, error\)](<#Client.DoRetry>)
 - [type DomainLimiter](<#DomainLimiter>)
   - [func NewDomainLimiter\(maxConcurrent int, minDelay time.Duration\) \*DomainLimiter](<#NewDomainLimiter>)
-  - [func \(d \*DomainLimiter\) Acquire\(rawURL string\) func\(\)](<#DomainLimiter.Acquire>)
+  - [func \(d \*DomainLimiter\) Acquire\(ctx context.Context, rawURL string\) \(func\(\), error\)](<#DomainLimiter.Acquire>)
 - [type RetryConfig](<#RetryConfig>)
 - [type StatusError](<#StatusError>)
   - [func \(e \*StatusError\) Error\(\) string](<#StatusError.Error>)
@@ -121,10 +121,10 @@ NewDomainLimiter returns a limiter with the given concurrency cap and per\-domai
 ### func \(\*DomainLimiter\) Acquire
 
 ```go
-func (d *DomainLimiter) Acquire(rawURL string) func()
+func (d *DomainLimiter) Acquire(ctx context.Context, rawURL string) (func(), error)
 ```
 
-Acquire blocks until a slot is available and the minimum delay since the last request to the same domain has elapsed. Caller must Release when done.
+Acquire blocks until a slot is available and the minimum delay since the last request to the same domain has elapsed, or until ctx is done — a canceled caller must not keep queuing behind a slow domain. Caller must Release \(call the returned func\) when done; on error there is nothing to release.
 
 <a name="RetryConfig"></a>
 ## type RetryConfig

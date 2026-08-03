@@ -26,6 +26,7 @@ Config configures the Searcher.
 type Config struct {
     Endpoint string // base URL of the SearXNG instance, e.g. http://searxng:8080
     Client   *httpx.Client
+    Logger   *slog.Logger
 }
 ```
 

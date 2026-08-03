@@ -10,6 +10,7 @@ Package crawl4ai implements the fallback engine: dispatches generic URLs to an u
 
 ## Index
 
+- [Constants](<#constants>)
 - [type Config](<#Config>)
 - [type Engine](<#Engine>)
   - [func New\(cfg Config\) \*Engine](<#New>)
@@ -17,6 +18,14 @@ Package crawl4ai implements the fallback engine: dispatches generic URLs to an u
   - [func \(\*Engine\) Matches\(string\) bool](<#Engine.Matches>)
   - [func \(\*Engine\) Name\(\) string](<#Engine.Name>)
 
+
+## Constants
+
+<a name="DefaultExcludedSelector"></a>DefaultExcludedSelector is the conservative chrome selector list sent as crawl4ai's excluded\_selector when the operator hasn't set one. It names only chrome\-shaped classes/ids \(sidebars, tables of contents, related\-post and newsletter boxes, cookie banners\). On the rare page whose main content IS one of these \(a docs index living in \`\#toc\`, say\), the crawl comes back empty — Crawl retries once without the selector rather than erroring, so the default can stay aggressive.
+
+```go
+const DefaultExcludedSelector = ".sidebar,.toc,#toc,.related,.newsletter,.cookie-banner,[aria-label*='cookie']"
+```
 
 <a name="Config"></a>
 ## type Config
@@ -48,6 +57,15 @@ type Config struct {
     // latency on every page. The default is owned by config
     // (OMNIFEED_CRAWL4AI_WAIT_UNTIL); empty falls back to domcontentloaded.
     WaitUntil string
+    // ExcludedSelector is the CSS selector list crawl4ai drops before extraction
+    // (OMNIFEED_CRAWL4AI_EXCLUDED_SELECTOR). Empty = DefaultExcludedSelector; to
+    // effectively exclude nothing, set a selector that matches nothing.
+    ExcludedSelector string
+    // TargetElements is a comma-separated CSS selector list; when non-empty,
+    // crawl4ai extracts markdown ONLY from matching containers. Off by default
+    // (OMNIFEED_CRAWL4AI_TARGET_ELEMENTS): on pages without a match the crawl
+    // yields no content, which the thin-content guard turns into an error.
+    TargetElements string
 }
 ```
 
@@ -79,6 +97,8 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, _ domain.EngineOption
 ```
 
 Crawl proxies rawURL to crawl4ai. The configured per\-domain limiter applies to avoid hammering sites that crawl4ai itself doesn't pace.
+
+A thin\-content result with the excluded selector active is retried once without it: the selector list names chrome shapes \(.sidebar, \#toc, …\), and on the rare page whose main content matches one, the exclusion is what emptied the page — not the page itself.
 
 <a name="Engine.Matches"></a>
 ### func \(\*Engine\) Matches
