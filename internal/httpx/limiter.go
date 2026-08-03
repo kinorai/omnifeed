@@ -1,6 +1,7 @@
 package httpx
 
 import (
+	"context"
 	"math/rand"
 	"net/url"
 	"sync"
@@ -38,19 +39,31 @@ func (d *DomainLimiter) slotFor(rawURL string) *domainSlot {
 }
 
 // Acquire blocks until a slot is available and the minimum delay since the
-// last request to the same domain has elapsed. Caller must Release when done.
-func (d *DomainLimiter) Acquire(rawURL string) func() {
+// last request to the same domain has elapsed, or until ctx is done — a
+// canceled caller must not keep queuing behind a slow domain. Caller must
+// Release (call the returned func) when done; on error there is nothing to
+// release.
+func (d *DomainLimiter) Acquire(ctx context.Context, rawURL string) (func(), error) {
 	s := d.slotFor(rawURL)
-	s.sem <- struct{}{}
+	select {
+	case s.sem <- struct{}{}:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 
 	s.mu.Lock()
 	since := time.Since(s.lastSend)
+	s.mu.Unlock()
 	if since < d.minDelay {
 		wait := d.minDelay - since + time.Duration(rand.Intn(500))*time.Millisecond
-		s.mu.Unlock()
-		time.Sleep(wait)
-	} else {
-		s.mu.Unlock()
+		t := time.NewTimer(wait)
+		select {
+		case <-t.C:
+		case <-ctx.Done():
+			t.Stop()
+			<-s.sem
+			return nil, ctx.Err()
+		}
 	}
 
 	return func() {
@@ -58,5 +71,5 @@ func (d *DomainLimiter) Acquire(rawURL string) func() {
 		s.lastSend = time.Now()
 		s.mu.Unlock()
 		<-s.sem
-	}
+	}, nil
 }
