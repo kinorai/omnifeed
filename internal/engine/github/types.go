@@ -29,9 +29,12 @@ type Comment struct {
 	Body    string `json:"body" toon:"body"`
 }
 
-// IssueThread groups an issue with its comments.
+// IssueThread groups an issue with its comments. Note, when set, tells the
+// reader (the LLM) that a list was truncated — metadata keys land in MCP _meta,
+// which models never see, so the signal has to live in the content itself.
 type IssueThread struct {
 	Issue    Issue     `json:"issue" toon:"issue"`
+	Note     string    `json:"note,omitempty" toon:"note,omitempty"`
 	Comments []Comment `json:"comments" toon:"comments"`
 }
 
@@ -83,8 +86,10 @@ type File struct {
 }
 
 // PullThread is everything the four PR endpoints contribute, in one document.
+// Note carries truncation warnings, as on IssueThread.
 type PullThread struct {
 	PR             PullRequest     `json:"pr" toon:"pr"`
+	Note           string          `json:"note,omitempty" toon:"note,omitempty"`
 	Comments       []Comment       `json:"comments" toon:"comments"`
 	Reviews        []Review        `json:"reviews" toon:"reviews"`
 	InlineComments []InlineComment `json:"inline_comments" toon:"inline_comments"`

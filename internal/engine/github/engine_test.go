@@ -247,12 +247,11 @@ func TestCrawlPullRequestDiffBudget(t *testing.T) {
 	}
 }
 
-// A quota refusal must surface as a typed FetchError naming the reset and the
-// token knob — never a silent fall-through to the browser.
+// A quota 403 is an honest typed error (the registry then falls back to the
+// generic browser render — the token hint lives in the README).
 func TestCrawlRateLimited(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("x-ratelimit-remaining", "0")
-		w.Header().Set("x-ratelimit-reset", "1800000000")
 		http.Error(w, "API rate limit exceeded", http.StatusForbidden)
 	}))
 	defer srv.Close()
@@ -260,13 +259,37 @@ func TestCrawlRateLimited(t *testing.T) {
 	e := New(Config{Client: httpx.New(nil), APIBase: srv.URL})
 	_, err := e.Crawl(context.Background(), "https://github.com/o/r/issues/7", domain.EngineOptions{})
 	var fe *domain.FetchError
-	if !errors.As(err, &fe) || fe.StatusCode != http.StatusForbidden {
-		t.Fatalf("want *FetchError with 403, got %v", err)
+	if !errors.As(err, &fe) || fe.StatusCode != http.StatusForbidden || fe.Kind != domain.KindHTTP403 {
+		t.Fatalf("want http_403 *FetchError, got %v", err)
 	}
-	for _, want := range []string{"rate limited until 1800000000", "OMNIFEED_GITHUB_TOKEN"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("error %q missing %q", err.Error(), want)
+}
+
+// The comment paginator follows Link rel="next" — upstream-controlled input —
+// and get() attaches the bearer token to every request. A next URL outside our
+// own API base must stop pagination, never be fetched.
+func TestCommentsNeverFollowForeignLinkHeaders(t *testing.T) {
+	evil := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("token-bearing request escaped to a foreign host: %s", r.URL)
+	}))
+	defer evil.Close()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/comments") {
+			w.Header().Set("Link", "<"+evil.URL+`/steal>; rel="next"`)
+			_, _ = io.WriteString(w, `[{"user":{"login":"bob"},"created_at":"2026-01-03T00:00:00Z","body":"only comment"}]`)
+			return
 		}
+		_, _ = io.WriteString(w, issueJSON)
+	}))
+	defer srv.Close()
+
+	e := New(Config{Client: httpx.New(nil), APIBase: srv.URL, Token: "sekret"})
+	doc, err := e.Crawl(context.Background(), "https://github.com/o/r/issues/7", domain.EngineOptions{})
+	if err != nil {
+		t.Fatalf("Crawl: %v", err)
+	}
+	if doc.Metadata["comments"] != "1" {
+		t.Fatalf("comments = %q, want 1 (page one kept, foreign next dropped)", doc.Metadata["comments"])
 	}
 }
 

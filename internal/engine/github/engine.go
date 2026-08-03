@@ -130,7 +130,10 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, _ domain.EngineOption
 	defer cancel()
 
 	if e.limiter != nil {
-		release := e.limiter.Acquire(e.apiBase)
+		release, lerr := e.limiter.Acquire(ctx, e.apiBase)
+		if lerr != nil {
+			return domain.Document{}, lerr
+		}
 		defer release()
 	}
 
@@ -157,10 +160,7 @@ func (e *Engine) crawlIssue(ctx context.Context, rawURL string, t target) (domai
 	}
 
 	meta := map[string]string{"comments": strconv.Itoa(len(comments))}
-	if from := truncatedFrom(len(comments), collected, ai.Comments, more); from > 0 {
-		meta["truncated_from"] = strconv.Itoa(from)
-	}
-	return e.document(IssueThread{
+	th := IssueThread{
 		Issue: Issue{
 			Title:    ai.Title,
 			Author:   ai.User.Login,
@@ -171,7 +171,12 @@ func (e *Engine) crawlIssue(ctx context.Context, rawURL string, t target) (domai
 			Body:     ai.Body,
 		},
 		Comments: comments,
-	}, rawURL, meta)
+	}
+	if from := truncatedFrom(len(comments), collected, ai.Comments, more); from > 0 {
+		meta["truncated_from"] = strconv.Itoa(from)
+		th.Note = fmt.Sprintf("comment list truncated: showing %d of %d comments", len(comments), from)
+	}
+	return e.document(th, rawURL, meta)
 }
 
 // crawlPull fetches the PR plus its conversation comments, reviews, inline review
@@ -193,7 +198,7 @@ func (e *Engine) crawlPull(ctx context.Context, rawURL string, t target) (domain
 		return domain.Document{}, err
 	}
 
-	inlineRaw, _, err := e.get(ctx, e.repoURL(t, "pulls/"+t.number+"/comments")+"?per_page="+strconv.Itoa(perPage))
+	inlineRaw, inlineHdr, err := e.get(ctx, e.repoURL(t, "pulls/"+t.number+"/comments")+"?per_page="+strconv.Itoa(perPage))
 	if err != nil {
 		return domain.Document{}, fmt.Errorf("fetch review comments: %w", err)
 	}
@@ -209,7 +214,7 @@ func (e *Engine) crawlPull(ctx context.Context, rawURL string, t target) (domain
 		})
 	}
 
-	reviewsRaw, _, err := e.get(ctx, e.repoURL(t, "pulls/"+t.number+"/reviews")+"?per_page="+strconv.Itoa(perPage))
+	reviewsRaw, reviewsHdr, err := e.get(ctx, e.repoURL(t, "pulls/"+t.number+"/reviews")+"?per_page="+strconv.Itoa(perPage))
 	if err != nil {
 		return domain.Document{}, fmt.Errorf("fetch reviews: %w", err)
 	}
@@ -222,7 +227,7 @@ func (e *Engine) crawlPull(ctx context.Context, rawURL string, t target) (domain
 		reviews = append(reviews, Review{Login: r.User.Login, State: r.State, Submitted: r.SubmittedAt, Body: r.Body})
 	}
 
-	filesRaw, _, err := e.get(ctx, e.repoURL(t, "pulls/"+t.number+"/files")+"?per_page="+strconv.Itoa(perPage))
+	filesRaw, filesHdr, err := e.get(ctx, e.repoURL(t, "pulls/"+t.number+"/files")+"?per_page="+strconv.Itoa(perPage))
 	if err != nil {
 		return domain.Document{}, fmt.Errorf("fetch files: %w", err)
 	}
@@ -233,13 +238,31 @@ func (e *Engine) crawlPull(ctx context.Context, rawURL string, t target) (domain
 	files, diffTruncated := budgetFiles(af)
 
 	meta := map[string]string{"comments": strconv.Itoa(len(comments))}
+	var notes []string
 	if from := truncatedFrom(len(comments), collected, ap.Comments, more); from > 0 {
 		meta["truncated_from"] = strconv.Itoa(from)
+		notes = append(notes, fmt.Sprintf("comment list truncated: showing %d of %d comments", len(comments), from))
+	}
+	// The inline-comment, review, and file lists are deliberately first-page-only
+	// (a second page means a 100+-entry list — pathological for LLM consumption),
+	// but the reader must be able to tell "complete" from "cut at 100": a further
+	// page is flagged in metadata AND in the document itself (metadata lands in
+	// MCP _meta, which models never see).
+	for _, l := range []struct {
+		name string
+		hdr  http.Header
+	}{{"inline_comments", inlineHdr}, {"reviews", reviewsHdr}, {"files", filesHdr}} {
+		if nextLink(l.hdr) != "" {
+			meta[l.name+"_truncated"] = "true"
+			notes = append(notes, l.name+" list truncated at "+strconv.Itoa(perPage))
+		}
 	}
 	if diffTruncated {
 		meta["diff_truncated"] = "true"
+		notes = append(notes, "some file patches omitted (diff budget spent); names and stats are complete")
 	}
 	return e.document(PullThread{
+		Note: strings.Join(notes, "; "),
 		PR: PullRequest{
 			Title:        ap.Title,
 			Author:       ap.User.Login,
@@ -268,7 +291,9 @@ func (e *Engine) crawlPull(ctx context.Context, rawURL string, t target) (domain
 // whether (and from what total) the list was truncated.
 func (e *Engine) comments(ctx context.Context, t target) (out []Comment, collected int, more bool, err error) {
 	next := e.repoURL(t, "issues/"+t.number+"/comments") + "?per_page=" + strconv.Itoa(perPage)
-	for next != "" {
+	// maxComments/perPage well-formed pages reach the cap; the margin tolerates
+	// short pages while still bounding a misbehaving upstream.
+	for pages := 0; next != "" && pages < 2*(maxComments/perPage); pages++ {
 		raw, hdr, gerr := e.get(ctx, next)
 		if gerr != nil {
 			return nil, 0, false, fmt.Errorf("fetch comments: %w", gerr)
@@ -281,6 +306,12 @@ func (e *Engine) comments(ctx context.Context, t target) (out []Comment, collect
 			out = append(out, Comment{Login: c.User.Login, Created: c.CreatedAt, Body: c.Body})
 		}
 		next = nextLink(hdr)
+		// Follow only URLs under our own API base: get() attaches the bearer
+		// token to every request, and the Link header is upstream-controlled
+		// input — never send the token wherever a response points.
+		if next != "" && !strings.HasPrefix(next, e.apiBase+"/") {
+			next = ""
+		}
 		if len(out) >= maxComments {
 			// Stop paginating: anything past the cap is dropped anyway.
 			return out[:maxComments], len(out), next != "", nil
@@ -291,7 +322,9 @@ func (e *Engine) comments(ctx context.Context, t target) (out []Comment, collect
 
 // truncatedFrom returns the total to report in the truncated_from metadata key,
 // or 0 when nothing was dropped. apiTotal is the comment count GitHub reports on
-// the issue/PR itself — authoritative when pagination stopped early.
+// the issue/PR itself — authoritative when pagination stopped early. (apiTotal
+// alone can't be the signal: GitHub's count and the paginated list disagree on
+// e.g. deleted comments, and that mismatch is not a truncation.)
 func truncatedFrom(kept, collected, apiTotal int, more bool) int {
 	if !more && collected <= kept {
 		return 0
@@ -299,17 +332,18 @@ func truncatedFrom(kept, collected, apiTotal int, more bool) int {
 	return max(apiTotal, collected)
 }
 
-// budgetFiles converts the changed-file list, dropping patch text once the
-// cumulative patch budget is spent. Filenames and stats are always kept.
+// budgetFiles converts the changed-file list, dropping the patch text of any
+// file that no longer fits the cumulative patch budget. Later smaller patches
+// still use whatever budget remains — one oversized file must not strip every
+// file after it. Filenames and stats are always kept.
 func budgetFiles(af []apiFile) ([]File, bool) {
 	files := make([]File, 0, len(af))
 	used, truncated := 0, false
 	for _, f := range af {
 		out := File{Name: f.Filename, Status: f.Status, Additions: f.Additions, Deletions: f.Deletions}
-		switch {
-		case truncated || used+len(f.Patch) > maxDiffBytes:
+		if used+len(f.Patch) > maxDiffBytes {
 			truncated = true
-		default:
+		} else {
 			out.Patch = f.Patch
 			used += len(f.Patch)
 		}
@@ -347,25 +381,10 @@ func (e *Engine) get(ctx context.Context, apiURL string) ([]byte, http.Header, e
 		return nil, nil, &domain.FetchError{
 			Kind:       domain.KindForStatus(resp.StatusCode),
 			StatusCode: resp.StatusCode,
-			Err:        fmt.Errorf("github api returned %d%s", resp.StatusCode, rateLimitNote(resp.StatusCode, resp.Header)),
+			Err:        fmt.Errorf("github api returned %d", resp.StatusCode),
 		}
 	}
 	return body, resp.Header, nil
-}
-
-// rateLimitNote returns a suffix naming the rate-limit reset and the token knob
-// when GitHub refused the request because the quota is spent. Empty otherwise.
-// (A 429 normally arrives here too — GitHub answers most quota refusals with 403,
-// and DoRetry only retries 429/5xx.)
-func rateLimitNote(status int, h http.Header) string {
-	if status != http.StatusForbidden && status != http.StatusTooManyRequests {
-		return ""
-	}
-	if h.Get("x-ratelimit-remaining") != "0" {
-		return ""
-	}
-	return fmt.Sprintf(": rate limited until %s (unix); set OMNIFEED_GITHUB_TOKEN "+
-		"to raise the limit from 60 to 5000 requests/hour", h.Get("x-ratelimit-reset"))
 }
 
 // nextLink returns the rel="next" URL of a Link response header, or "".
