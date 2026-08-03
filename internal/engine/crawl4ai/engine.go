@@ -26,9 +26,10 @@ const maxPageTimeoutMS = 60000
 // DefaultExcludedSelector is the conservative chrome selector list sent as
 // crawl4ai's excluded_selector when the operator hasn't set one. It names only
 // chrome-shaped classes/ids (sidebars, tables of contents, related-post and
-// newsletter boxes, cookie banners) — nothing that could match article body
-// content. It is the single source of truth for the default: config carries the
-// operator override as a tri-state (unset / set / set-empty), not a copy.
+// newsletter boxes, cookie banners). On the rare page whose main content IS one
+// of these (a docs index living in `#toc`, say), the crawl comes back empty —
+// Crawl retries once without the selector rather than erroring, so the default
+// can stay aggressive.
 const DefaultExcludedSelector = ".sidebar,.toc,#toc,.related,.newsletter,.cookie-banner,[aria-label*='cookie']"
 
 // Engine sends URLs to crawl4ai's /crawl endpoint and extracts the best-fit
@@ -71,11 +72,10 @@ type Config struct {
 	// latency on every page. The default is owned by config
 	// (OMNIFEED_CRAWL4AI_WAIT_UNTIL); empty falls back to domcontentloaded.
 	WaitUntil string
-	// ExcludedSelector is the CSS selector list crawl4ai drops before extraction.
-	// Tri-state on purpose (OMNIFEED_CRAWL4AI_EXCLUDED_SELECTOR): nil = use
-	// DefaultExcludedSelector, a non-nil value is sent verbatim, and a non-nil
-	// empty string omits the field entirely (excludes nothing).
-	ExcludedSelector *string
+	// ExcludedSelector is the CSS selector list crawl4ai drops before extraction
+	// (OMNIFEED_CRAWL4AI_EXCLUDED_SELECTOR). Empty = DefaultExcludedSelector; to
+	// effectively exclude nothing, set a selector that matches nothing.
+	ExcludedSelector string
 	// TargetElements is a comma-separated CSS selector list; when non-empty,
 	// crawl4ai extracts markdown ONLY from matching containers. Off by default
 	// (OMNIFEED_CRAWL4AI_TARGET_ELEMENTS): on pages without a match the crawl
@@ -89,9 +89,9 @@ func New(cfg Config) *Engine {
 	if waitUntil == "" {
 		waitUntil = "domcontentloaded"
 	}
-	excludedSelector := DefaultExcludedSelector
-	if cfg.ExcludedSelector != nil {
-		excludedSelector = *cfg.ExcludedSelector
+	excludedSelector := cfg.ExcludedSelector
+	if excludedSelector == "" {
+		excludedSelector = DefaultExcludedSelector
 	}
 	return &Engine{
 		endpoint:         cfg.Endpoint,
@@ -107,14 +107,33 @@ func New(cfg Config) *Engine {
 }
 
 // splitSelectors turns a comma-separated CSS selector list into a trimmed slice,
-// dropping empty entries. An empty or all-blank input returns nil.
+// dropping empty entries. Commas inside parentheses don't split — functional
+// pseudo-classes like :is(h1, h2) or :not(.a, .b) are one selector, not two.
+// An empty or all-blank input returns nil.
 func splitSelectors(s string) []string {
 	var out []string
-	for _, part := range strings.Split(s, ",") {
-		if p := strings.TrimSpace(part); p != "" {
+	depth, start := 0, 0
+	emit := func(end int) {
+		if p := strings.TrimSpace(s[start:end]); p != "" {
 			out = append(out, p)
 		}
 	}
+	for i, r := range s {
+		switch r {
+		case '(':
+			depth++
+		case ')':
+			if depth > 0 {
+				depth--
+			}
+		case ',':
+			if depth == 0 {
+				emit(i)
+				start = i + 1
+			}
+		}
+	}
+	emit(len(s))
 	return out
 }
 
@@ -163,14 +182,38 @@ type crawlMarkdown struct {
 
 // Crawl proxies rawURL to crawl4ai. The configured per-domain limiter applies
 // to avoid hammering sites that crawl4ai itself doesn't pace.
+//
+// A thin-content result with the excluded selector active is retried once
+// without it: the selector list names chrome shapes (.sidebar, #toc, …), and on
+// the rare page whose main content matches one, the exclusion is what emptied
+// the page — not the page itself.
 func (e *Engine) Crawl(ctx context.Context, rawURL string, _ domain.EngineOptions) (domain.Document, error) {
 	if e.endpoint == "" {
 		return domain.Document{}, fmt.Errorf("crawl4ai endpoint not configured (set OMNIFEED_CRAWL4AI_URL)")
 	}
 
-	release := e.limiter.Acquire(rawURL)
+	release, err := e.limiter.Acquire(ctx, rawURL)
+	if err != nil {
+		return domain.Document{}, err
+	}
 	defer release()
 
+	doc, err := e.crawlOnce(ctx, rawURL, e.excludedSelector)
+	if err != nil && e.excludedSelector != "" && isThinContent(err) && ctx.Err() == nil {
+		return e.crawlOnce(ctx, rawURL, "")
+	}
+	return doc, err
+}
+
+// isThinContent reports whether err is the thin-content classification.
+func isThinContent(err error) bool {
+	var fe *domain.FetchError
+	return errors.As(err, &fe) && fe.Kind == domain.KindThinContent
+}
+
+// crawlOnce performs one crawl4ai request with the given excluded selector
+// ("" omits the field — exclude nothing).
+func (e *Engine) crawlOnce(ctx context.Context, rawURL, excludedSelector string) (domain.Document, error) {
 	// Dropping links silently loses the primary content on link-dense pages —
 	// e.g. every story title on a Hacker News front page is an external link.
 	// keepLinks renders anchor text (ignore_links=false) and retains external
@@ -221,10 +264,9 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, _ domain.EngineOption
 			},
 		},
 	}
-	// Selector-level chrome removal. Omitted entirely when the operator blanks
-	// the knob, so "exclude nothing" stays expressible.
-	if e.excludedSelector != "" {
-		params["excluded_selector"] = e.excludedSelector
+	// Selector-level chrome removal; omitted on the thin-content retry.
+	if excludedSelector != "" {
+		params["excluded_selector"] = excludedSelector
 	}
 	// Opt-in and off by default: target_elements narrows extraction to the
 	// matching containers, which returns nothing at all on pages that have none.
@@ -283,13 +325,6 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, _ domain.EngineOption
 
 	result := cr.Results[0]
 	content := result.Markdown.FitMarkdown
-	// The pruning filter that produces fit_markdown can still eat fenced code
-	// blocks whose highlighter classes aren't in preserve_classes above. When
-	// fit_markdown has lost every fence that raw_markdown has, the unfiltered
-	// text is the more faithful rendering — take it despite the extra chrome.
-	if content != "" && !strings.Contains(content, "```") && strings.Contains(result.Markdown.RawMarkdown, "```") {
-		content = result.Markdown.RawMarkdown
-	}
 	if content == "" {
 		content = result.Markdown.RawMarkdown
 	}

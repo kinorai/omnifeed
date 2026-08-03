@@ -431,19 +431,26 @@ func TestCrawlRequestChromeDefaults(t *testing.T) {
 	}
 }
 
-// The excluded_selector override is a tri-state: an explicit empty value means
-// "exclude nothing", which must omit the field rather than send "".
+// A configured excluded_selector replaces the default; empty falls back to it.
 func TestCrawlRequestExcludedSelectorOverride(t *testing.T) {
 	custom := ".ad,.promo"
-	params := crawlParams(t, Config{ExcludedSelector: &custom})
+	params := crawlParams(t, Config{ExcludedSelector: custom})
 	if got := params["excluded_selector"]; got != custom {
 		t.Errorf("excluded_selector = %#v, want %q", got, custom)
 	}
 
-	empty := ""
-	params = crawlParams(t, Config{ExcludedSelector: &empty})
-	if _, ok := params["excluded_selector"]; ok {
-		t.Errorf("excluded_selector = %#v, want the key absent when explicitly emptied", params["excluded_selector"])
+	params = crawlParams(t, Config{})
+	if got := params["excluded_selector"]; got != DefaultExcludedSelector {
+		t.Errorf("excluded_selector = %#v, want the default when unset", got)
+	}
+}
+
+// Commas inside functional pseudo-classes must not split a selector in two.
+func TestSplitSelectorsFunctionalPseudoClasses(t *testing.T) {
+	got := splitSelectors("main :is(h1, h2), article:not(.a, .b) , aside")
+	want := []string{"main :is(h1, h2)", "article:not(.a, .b)", "aside"}
+	if !slices.Equal(got, want) {
+		t.Errorf("splitSelectors = %v, want %v", got, want)
 	}
 }
 
@@ -458,19 +465,16 @@ func TestCrawlRequestTargetElements(t *testing.T) {
 	}
 }
 
-// fit_markdown normally wins, but the pruning filter that produces it can still
-// eat fenced code blocks whose highlighter classes aren't in preserve_classes.
-// When fit_markdown has lost every fence raw_markdown has, raw_markdown is the
-// more faithful rendering and must be used instead.
-func TestCrawlPrefersRawMarkdownWhenFitLosesFences(t *testing.T) {
-	const fenced = "Intro\n\n```go\nfunc main() {}\n```\n"
+// fit_markdown wins when present; raw_markdown is the fallback only when fit
+// is empty. (The old lost-fences heuristic is gone: it could not detect partial
+// fence loss and mis-fired when only page chrome held a fence — preserve_tags/
+// preserve_classes in the crawl request are the real fix, crawl4ai >= 0.9.1.)
+func TestCrawlContentSelection(t *testing.T) {
 	cases := []struct {
 		name, fit, raw, want string
 	}{
-		{"fit without fences falls back to raw", "Intro\n\nfunc main() {}\n", fenced, fenced},
-		{"both fenced keeps fit", "Fit\n\n```go\nfit()\n```\n", fenced, "fit()"},
-		{"neither fenced keeps fit", "just prose", "raw prose", "just prose"},
-		{"empty fit still falls back to raw", "", fenced, fenced},
+		{"fit wins when present", "Fit\n\n```go\nfit()\n```\n", "raw text", "fit()"},
+		{"empty fit falls back to raw", "", "Intro\n\n```go\nfunc main() {}\n```\n", "func main() {}"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -497,6 +501,48 @@ func TestCrawlPrefersRawMarkdownWhenFitLosesFences(t *testing.T) {
 				t.Fatalf("PageContent = %q, want it to contain %q", doc.PageContent, tc.want)
 			}
 		})
+	}
+}
+
+// A thin-content result with the default excluded selector active must be
+// retried once without the selector: on a page whose main content matches a
+// chrome shape (e.g. a docs index living in #toc), the exclusion is what
+// emptied the page.
+func TestCrawlRetriesWithoutExcludedSelectorOnThinContent(t *testing.T) {
+	var selectors []any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		params := req["crawler_config"].(map[string]any)["params"].(map[string]any)
+		sel, hasSel := params["excluded_selector"]
+		selectors = append(selectors, sel)
+		content := ""
+		if !hasSel {
+			content = "the toc page content"
+		}
+		resp := map[string]any{"success": true, "results": []any{map[string]any{
+			"success": true, "status_code": 200,
+			"markdown": map[string]any{"raw_markdown": content, "fit_markdown": content},
+		}}}
+		b, _ := json.Marshal(resp)
+		_, _ = w.Write(b)
+	}))
+	defer srv.Close()
+
+	e := New(Config{
+		Endpoint: srv.URL,
+		Client:   httpx.New(nil),
+		Limiter:  httpx.NewDomainLimiter(2, 0),
+	})
+	doc, err := e.Crawl(context.Background(), "https://example.com/toc-page", domain.EngineOptions{})
+	if err != nil {
+		t.Fatalf("Crawl() error = %v", err)
+	}
+	if !strings.Contains(doc.PageContent, "the toc page content") {
+		t.Fatalf("PageContent = %q, want the retry's content", doc.PageContent)
+	}
+	if len(selectors) != 2 || selectors[0] != DefaultExcludedSelector || selectors[1] != nil {
+		t.Fatalf("selectors per attempt = %#v, want [default, absent]", selectors)
 	}
 }
 
