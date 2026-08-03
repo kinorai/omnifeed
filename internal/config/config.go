@@ -40,9 +40,9 @@ type Config struct {
 	Crawl4AIWaitUntil      string  // page-ready signal for the generic engine: domcontentloaded (default) | load | networkidle | commit
 	Crawl4AIToken          string  // bearer token sent to crawl4ai (its CRAWL4AI_API_TOKEN); empty = no Authorization header
 	// Crawl4AIExcludedSelector overrides the generic engine's chrome selector
-	// list. Tri-state, hence the pointer: nil = the engine's conservative default,
-	// a set value replaces it, and a set-but-empty value excludes nothing.
-	Crawl4AIExcludedSelector *string
+	// list. Empty = the engine's conservative default; to effectively exclude
+	// nothing, set a selector that matches nothing.
+	Crawl4AIExcludedSelector string
 	// Crawl4AITargetElements is a comma-separated CSS selector list. Empty (the
 	// default) keeps the feature off; non-empty restricts extraction to matching
 	// containers, which can yield no content at all on pages without them.
@@ -51,10 +51,6 @@ type Config struct {
 	// Upstream SearXNG (optional). Empty disables the `search` MCP tool.
 	SearXNGURL     string
 	SearXNGTimeout time.Duration
-	// SearXNGDegradedRetryDelay is the wait before the single retry of a
-	// degraded search (200 + zero results + unresponsive engines). 0 disables
-	// the retry.
-	SearXNGDegradedRetryDelay time.Duration
 
 	// Search tool limits.
 	SearchMaxResults int
@@ -112,7 +108,7 @@ func Load() (Config, error) {
 		Crawl4AIWaitUntil: env("OMNIFEED_CRAWL4AI_WAIT_UNTIL", "domcontentloaded"),
 		Crawl4AIToken:     env("OMNIFEED_CRAWL4AI_TOKEN", ""),
 
-		Crawl4AIExcludedSelector: envPtr("OMNIFEED_CRAWL4AI_EXCLUDED_SELECTOR"),
+		Crawl4AIExcludedSelector: env("OMNIFEED_CRAWL4AI_EXCLUDED_SELECTOR", ""),
 		Crawl4AITargetElements:   env("OMNIFEED_CRAWL4AI_TARGET_ELEMENTS", ""),
 
 		SearXNGURL:   env("OMNIFEED_SEARXNG_URL", ""),
@@ -152,9 +148,6 @@ func Load() (Config, error) {
 		return c, err
 	}
 	if c.SearXNGTimeout, err = envDuration("OMNIFEED_SEARXNG_TIMEOUT", 15*time.Second); err != nil {
-		return c, err
-	}
-	if c.SearXNGDegradedRetryDelay, err = envDuration("OMNIFEED_SEARXNG_DEGRADED_RETRY_DELAY", 2*time.Second); err != nil {
 		return c, err
 	}
 	if c.SearchMaxResults, err = envInt("OMNIFEED_SEARCH_MAX_RESULTS", 25); err != nil {
@@ -217,10 +210,6 @@ func Load() (Config, error) {
 	}
 	if c.RedditMaxTopLevel < 0 {
 		return c, fmt.Errorf("OMNIFEED_REDDIT_MAX_TOP_LEVEL must be >= 0 (0 = unlimited), got %d", c.RedditMaxTopLevel)
-	}
-
-	if c.SearXNGDegradedRetryDelay < 0 {
-		return c, fmt.Errorf("OMNIFEED_SEARXNG_DEGRADED_RETRY_DELAY must be >= 0 (0 disables the retry), got %v", c.SearXNGDegradedRetryDelay)
 	}
 
 	if c.SearchMaxResults < 1 || c.SearchMaxResults > 100 {

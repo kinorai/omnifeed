@@ -206,95 +206,31 @@ func TestCrawl_ErrorDocCarriesReasonAndStatus(t *testing.T) {
 	}
 }
 
-// /crawl deliberately diverges from the fetch_url MCP tool: no cap unless the
-// caller asks for one. RAG pipelines chunk and embed whatever they receive, so a
-// default cap here would silently drop retrievable text.
-func TestCrawl_SizeControl(t *testing.T) {
+// The /crawl loader has no size-control params: RAG pipelines chunk and embed
+// whatever they receive, and one shared offset would corrupt every other URL in
+// a batch. Stray params are simply ignored.
+func TestCrawl_IgnoresSizeParams(t *testing.T) {
 	const markdown = "0123456789abcdefghij" // 20 chars
+	eng := fakeEngine{doc: domain.Document{
+		PageContent: markdown,
+		Metadata: map[string]string{
+			"source":              "https://example.com",
+			domain.ContentTypeKey: domain.ContentTypeMarkdown,
+		},
+	}}
+	req := httptest.NewRequest(http.MethodPost, "/crawl?max_chars=6&start_char=8",
+		strings.NewReader(`{"urls":["https://example.com"]}`))
+	rec := httptest.NewRecorder()
+	newTestServer(eng, auth.AlwaysAllow{}, 30).crawl(rec, req)
 
-	cases := []struct {
-		name        string
-		query       string
-		contentType string
-		wantContent string
-		wantMeta    map[string]string
-	}{
-		{
-			name: "default is unlimited", query: "",
-			contentType: domain.ContentTypeMarkdown, wantContent: markdown,
-		},
-		{
-			name: "explicit max_chars truncates with a marker", query: "?max_chars=6",
-			contentType: domain.ContentTypeMarkdown,
-			wantContent: "012345\n\n[omnifeed: content truncated at 6 of 20 characters. " +
-				"Call fetch_url again with start_char=6 to continue.]",
-			wantMeta: map[string]string{
-				"truncated": "true", "total_chars": "20", "returned_chars": "6", "next_start_char": "6",
-			},
-		},
-		{
-			name: "max_chars with start_char returns the middle window", query: "?max_chars=4&start_char=8",
-			contentType: domain.ContentTypeMarkdown,
-			wantContent: "89ab\n\n[omnifeed: content truncated at 12 of 20 characters. " +
-				"Call fetch_url again with start_char=12 to continue.]",
-			wantMeta: map[string]string{
-				"truncated": "true", "total_chars": "20", "returned_chars": "4", "next_start_char": "12",
-			},
-		},
-		{
-			name: "start_char alone is honored under the unlimited default", query: "?start_char=16",
-			contentType: domain.ContentTypeMarkdown, wantContent: "ghij",
-			wantMeta: map[string]string{
-				"truncated": "false", "total_chars": "20", "returned_chars": "4", "next_start_char": "20",
-			},
-		},
-		{
-			name: "max_chars=0 means unlimited", query: "?max_chars=0",
-			contentType: domain.ContentTypeMarkdown, wantContent: markdown,
-		},
-		{
-			name: "TOON content ignores max_chars", query: "?max_chars=6",
-			contentType: domain.ContentTypeTOON, wantContent: markdown,
-		},
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200 (%s)", rec.Code, rec.Body.String())
 	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			eng := fakeEngine{doc: domain.Document{
-				PageContent: markdown,
-				Metadata: map[string]string{
-					"source":              "https://example.com",
-					domain.ContentTypeKey: tc.contentType,
-				},
-			}}
-			req := httptest.NewRequest(http.MethodPost, "/crawl"+tc.query,
-				strings.NewReader(`{"urls":["https://example.com"]}`))
-			rec := httptest.NewRecorder()
-			newTestServer(eng, auth.AlwaysAllow{}, 30).crawl(rec, req)
-
-			if rec.Code != http.StatusOK {
-				t.Fatalf("status: got %d, want 200 (%s)", rec.Code, rec.Body.String())
-			}
-			var docs []loaderDocument
-			if err := json.Unmarshal(rec.Body.Bytes(), &docs); err != nil {
-				t.Fatalf("decode: %v", err)
-			}
-			if len(docs) != 1 {
-				t.Fatalf("docs: got %d, want 1", len(docs))
-			}
-			if docs[0].PageContent != tc.wantContent {
-				t.Errorf("page_content:\n got %q\nwant %q", docs[0].PageContent, tc.wantContent)
-			}
-			for _, k := range []string{"truncated", "total_chars", "returned_chars", "next_start_char"} {
-				want, wanted := tc.wantMeta[k]
-				got, exists := docs[0].Metadata[k]
-				switch {
-				case wanted && got != want:
-					t.Errorf("metadata[%s]: got %q, want %q", k, got, want)
-				case !wanted && exists:
-					t.Errorf("metadata[%s] must be absent, got %q", k, got)
-				}
-			}
-		})
+	var docs []loaderDocument
+	if err := json.Unmarshal(rec.Body.Bytes(), &docs); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(docs) != 1 || docs[0].PageContent != markdown {
+		t.Fatalf("PageContent = %q, want the full document", docs[0].PageContent)
 	}
 }

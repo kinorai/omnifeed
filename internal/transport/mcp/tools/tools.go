@@ -183,17 +183,16 @@ func sized(doc domain.Document, maxChars, startChar int) mcp.ToolResult {
 	}
 
 	t := domain.TruncateContent(doc.PageContent, maxChars, startChar)
-	if !t.Truncated && t.ReturnedChars == t.TotalChars {
+	if startChar == 0 && !t.Truncated() {
 		return mcp.ToolResult{Text: doc.PageContent, Meta: doc.Metadata}
 	}
 
-	meta := make(map[string]string, len(doc.Metadata)+4)
+	meta := make(map[string]string, len(doc.Metadata)+3)
 	for k, v := range doc.Metadata {
 		meta[k] = v
 	}
-	meta["truncated"] = strconv.FormatBool(t.Truncated)
+	meta["truncated"] = strconv.FormatBool(t.Truncated())
 	meta["total_chars"] = strconv.Itoa(t.TotalChars)
-	meta["returned_chars"] = strconv.Itoa(t.ReturnedChars)
 	meta["next_start_char"] = strconv.Itoa(t.NextStartChar)
 	return mcp.ToolResult{Text: t.Text, Meta: meta}
 }
