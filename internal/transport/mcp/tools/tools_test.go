@@ -97,7 +97,6 @@ func TestFetchURL_SizeControl(t *testing.T) {
 		wantMetaAbsent bool
 		wantTruncated  string
 		wantTotal      string
-		wantReturned   string
 		wantNextStart  string
 	}{
 		{
@@ -106,7 +105,7 @@ func TestFetchURL_SizeControl(t *testing.T) {
 			serverDefault: 15,
 			args:          map[string]any{"url": "https://example.com/page", "max_chars": float64(5)},
 			wantText:      "01234",
-			wantTruncated: "true", wantTotal: "20", wantReturned: "5", wantNextStart: "5",
+			wantTruncated: "true", wantTotal: "20", wantNextStart: "5",
 		},
 		{
 			name:    "server default applies when max_chars is omitted",
@@ -114,7 +113,7 @@ func TestFetchURL_SizeControl(t *testing.T) {
 			serverDefault: 8,
 			args:          map[string]any{"url": "https://example.com/page"},
 			wantText:      "01234567",
-			wantTruncated: "true", wantTotal: "20", wantReturned: "8", wantNextStart: "8",
+			wantTruncated: "true", wantTotal: "20", wantNextStart: "8",
 		},
 		{
 			name:    "max_chars 0 falls back to the server default",
@@ -122,7 +121,7 @@ func TestFetchURL_SizeControl(t *testing.T) {
 			serverDefault: 8,
 			args:          map[string]any{"url": "https://example.com/page", "max_chars": float64(0)},
 			wantText:      "01234567",
-			wantTruncated: "true", wantTotal: "20", wantReturned: "8", wantNextStart: "8",
+			wantTruncated: "true", wantTotal: "20", wantNextStart: "8",
 		},
 		{
 			name:    "start_char continues from an offset",
@@ -130,7 +129,7 @@ func TestFetchURL_SizeControl(t *testing.T) {
 			serverDefault: 8,
 			args:          map[string]any{"url": "https://example.com/page", "start_char": float64(8)},
 			wantText:      "89abcdef",
-			wantTruncated: "true", wantTotal: "20", wantReturned: "8", wantNextStart: "16",
+			wantTruncated: "true", wantTotal: "20", wantNextStart: "16",
 		},
 		{
 			name:    "server default 0 means unlimited",
@@ -160,7 +159,7 @@ func TestFetchURL_SizeControl(t *testing.T) {
 		},
 		{
 			name:    "JSON content is never truncated",
-			content: markdown, contentType: domain.ContentTypeJSON,
+			content: markdown, contentType: "json",
 			serverDefault:  5,
 			args:           map[string]any{"url": "https://example.com/page", "max_chars": float64(5)},
 			wantText:       markdown,
@@ -172,7 +171,7 @@ func TestFetchURL_SizeControl(t *testing.T) {
 			serverDefault: 8,
 			args:          map[string]any{"url": "https://example.com/page", "start_char": float64(20)},
 			wantText:      "[omnifeed: no content at offset 20 — total 20 characters]",
-			wantTruncated: "false", wantTotal: "20", wantReturned: "0", wantNextStart: "20",
+			wantTruncated: "false", wantTotal: "20", wantNextStart: "20",
 		},
 	}
 
@@ -199,7 +198,7 @@ func TestFetchURL_SizeControl(t *testing.T) {
 				if marker != "" {
 					t.Errorf("unexpected truncation marker: %q", marker)
 				}
-				for _, k := range []string{"truncated", "total_chars", "returned_chars", "next_start_char"} {
+				for _, k := range []string{"truncated", "total_chars", "next_start_char"} {
 					if v, exists := res.Meta[k]; exists {
 						t.Errorf("meta[%s] must be absent, got %q", k, v)
 					}
@@ -210,7 +209,6 @@ func TestFetchURL_SizeControl(t *testing.T) {
 			want := map[string]string{
 				"truncated":       tc.wantTruncated,
 				"total_chars":     tc.wantTotal,
-				"returned_chars":  tc.wantReturned,
 				"next_start_char": tc.wantNextStart,
 			}
 			for k, v := range want {
