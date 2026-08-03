@@ -29,9 +29,12 @@ const (
 )
 
 // targetRE claims exactly the topic path shapes: /t/{slug}/{id},
-// /t/{slug}/{id}/{post_number}, and the slugless /t/{id}. Everything else on a
-// listed host (front page, /c/ categories, /u/ users, /search, …) falls through.
-var targetRE = regexp.MustCompile(`^/t/(?:([^/]+)/([0-9]+)(?:/[0-9]+)?|([0-9]+))$`)
+// /t/{slug}/{id}/{post_number}, the slugless /t/{id}, and /t/{id}/{post_number}.
+// Discourse distinguishes the slugless forms by numericness — a slug is never
+// all digits (unsluggable titles fall back to "topic") — so a purely numeric
+// first segment IS the topic id, not a slug. Everything else on a listed host
+// (front page, /c/ categories, /u/ users, /search, …) falls through.
+var targetRE = regexp.MustCompile(`^/t/(?:([^/]*[^0-9/][^/]*)/([0-9]+)(?:/[0-9]+)?|([0-9]+)(?:/[0-9]+)?)$`)
 
 // Engine implements domain.Engine for Discourse topic URLs via the public topic
 // JSON API.
@@ -142,7 +145,10 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, _ domain.EngineOption
 
 	base := e.scheme + "://" + t.authority
 	if e.limiter != nil {
-		release := e.limiter.Acquire(base)
+		release, lerr := e.limiter.Acquire(ctx, base)
+		if lerr != nil {
+			return domain.Document{}, lerr
+		}
 		defer release()
 	}
 
@@ -152,10 +158,7 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, _ domain.EngineOption
 	}
 
 	meta := map[string]string{"posts": strconv.Itoa(len(posts))}
-	if total > len(posts) {
-		meta["truncated_from"] = strconv.Itoa(total)
-	}
-	return e.document(Thread{
+	th := Thread{
 		Topic: Topic{
 			Title:      topic.Title,
 			PostsCount: topic.PostsCount,
@@ -163,7 +166,12 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, _ domain.EngineOption
 			Host:       t.host,
 		},
 		Posts: posts,
-	}, rawURL, meta)
+	}
+	if total > len(posts) {
+		meta["truncated_from"] = strconv.Itoa(total)
+		th.Note = fmt.Sprintf("post list truncated: showing %d of %d posts", len(posts), total)
+	}
+	return e.document(th, rawURL, meta)
 }
 
 // fetchTopic resolves a topic to its header and posts. total is how many posts

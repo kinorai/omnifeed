@@ -45,6 +45,7 @@ func TestMatches(t *testing.T) {
 		"https://discuss.python.org/t/pep-777/55763?u=someone",                    // query
 		"https://discuss.python.org/t/pep-777/55763#post_6",                       // fragment
 		"https://discuss.python.org/t/55763",                                      // slugless
+		"https://discuss.python.org/t/55763/6",                                    // slugless + post number
 		"https://discuss.python.org/t/-/55763",                                    // placeholder slug
 		"https://meta.discourse.org/t/topic-json-api/1234",
 		"https://DISCUSS.python.ORG/t/pep-777/55763",     // host case-insensitive
@@ -174,11 +175,15 @@ func TestCrawlPrintView(t *testing.T) {
 // A 429 on the print view must fall back to the plain topic JSON plus batched
 // posts.json requests for the ids the first chunk didn't include, merged back in
 // post_stream.stream order.
-func TestCrawlFallsBackToBatchesOn429(t *testing.T) { testCrawlFallsBackToBatches(t, http.StatusTooManyRequests) }
+func TestCrawlFallsBackToBatchesOn429(t *testing.T) {
+	testCrawlFallsBackToBatches(t, http.StatusTooManyRequests)
+}
 
 // discuss.python.org rate-limits the print view with 422, not 429 (observed live
 // 2026-08-03: {"errors":["You’ve performed this action too many times…"]}).
-func TestCrawlFallsBackToBatchesOn422(t *testing.T) { testCrawlFallsBackToBatches(t, http.StatusUnprocessableEntity) }
+func TestCrawlFallsBackToBatchesOn422(t *testing.T) {
+	testCrawlFallsBackToBatches(t, http.StatusUnprocessableEntity)
+}
 
 func testCrawlFallsBackToBatches(t *testing.T, printStatus int) {
 	var paths []string
@@ -357,5 +362,28 @@ func TestStripHTML(t *testing.T) {
 				t.Errorf("stripHTML(%q) = %q, want %q", tc.in, got, tc.want)
 			}
 		})
+	}
+}
+
+// Discourse's slugless share-link form /t/{topic_id}/{post_number} (both numeric)
+// must resolve to topic_id — parsing it as slug={topic_id}, id={post_number}
+// silently fetches a completely different topic.
+func TestCrawlSluglessPostNumberFetchesRightTopic(t *testing.T) {
+	var paths []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		if r.URL.Path != "/t/55763.json" {
+			t.Errorf("fetched %q, want /t/55763.json", r.URL.Path)
+		}
+		_, _ = io.WriteString(w, printJSON)
+	}))
+	defer srv.Close()
+
+	e := newTestEngine(t, srv.URL)
+	if _, err := e.Crawl(context.Background(), srv.URL+"/t/55763/6", domain.EngineOptions{}); err != nil {
+		t.Fatalf("Crawl: %v", err)
+	}
+	if len(paths) != 1 {
+		t.Fatalf("fetched %d urls (%v), want 1", len(paths), paths)
 	}
 }
