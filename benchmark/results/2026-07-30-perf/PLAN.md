@@ -56,10 +56,23 @@ Follow-ups from validation:
   absent even from raw) — article may never render for the headless browser;
   candidates: enable OMNIFEED_CRAWL4AI_TARGET_ELEMENTS, or accept as
   pathological and keep as regression canary.
-- [ ] braveapi (AND the brave scraper) contributed 0 of 90 search results —
-  results were non-empty so no degraded error fired; check `container logs
-  omnifeed` for the new "searxng returned partial results" warning naming the
-  engine + message, and searxng logs; verify the key's plan is Data for Search.
+- [x] braveapi contributed 0 results — RESOLVED 2026-08-03: root cause was
+  SearXNG's key-wise engine-block merge under `use_default_settings` — deleting
+  `inactive: true` from our block let the upstream default (`true`) win, so the
+  engine was silently never loaded (absent from /config, no logs). Fix
+  `f65a5fa`: render writes `inactive: false` explicitly; launcher image
+  defaults pinned to match compose. Verified: /config lists braveapi enabled;
+  braveapi-only query → 20 results, 0 errors (Data for Search key accepted);
+  end-to-end omnifeed search mixes braveapi results (3/10) with improved
+  relevance. Same-day incident notes: searxng container failed to restart
+  because a test harness had deleted the live-mounted settings.runtime.yml
+  (re-rendered; render is per-up so self-healing), and the launcher bakes
+  upstream IPs at creation — restarting searxng orphans omnifeed until it is
+  recreated (pre-existing design; candidate follow-up: re-resolve IPs on start).
+- [ ] Still open: `duckduckgo web` shows recurring "parsing error" in logs —
+  drop it from the pool if it persists. Proposed, not yet decided: have the
+  render also disable the `brave` scraper when a braveapi key is injected
+  (perma-suspended + redundant with the API).
 
 Remaining — validation, not code (needs the rebuilt binary + restarted stack):
 1. Rebuild omnifeed + `compose up` with the new pins/settings.
