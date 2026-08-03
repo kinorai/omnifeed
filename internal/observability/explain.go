@@ -4,33 +4,43 @@ import (
 	"errors"
 	"regexp"
 	"strconv"
-	"strings"
 
 	"github.com/kinorai/omnifeed/internal/domain"
 )
 
-// urlPattern matches any absolute http(s) URL embedded in an error string.
-// Upstream client errors quote the endpoint they failed to reach (e.g. `Post
-// "http://crawl4ai:11235/crawl": dial tcp …`), which is a configured internal
-// address — Explain redacts it rather than handing it to a caller.
-var urlPattern = regexp.MustCompile(`https?://[^\s"'` + "`" + `]+`)
+// Redaction patterns for upstream endpoints embedded in error strings. Client
+// errors quote the address they failed to reach — a configured internal
+// endpoint — in three shapes: an absolute URL (`Post "http://crawl4ai:11235/…"`),
+// a dial address (`dial tcp 10.43.12.7:11235`), and a DNS lookup
+// (`lookup crawl4ai on 10.43.0.10:53`). The loader/MCP surfaces are publicly
+// reachable through the tunnel, so all three must be scrubbed, not just URLs.
+var (
+	urlPattern    = regexp.MustCompile(`https?://[^\s"'` + "`" + `]+`)
+	addrPattern   = regexp.MustCompile(`(\d{1,3}(?:\.\d{1,3}){3}|\[[0-9a-fA-F:.]+\])(:\d+)?`)
+	lookupPattern = regexp.MustCompile(`\blookup [^\s:]+`)
+)
+
+// redact scrubs upstream endpoints (URLs, IP:port addresses, DNS lookup
+// targets) out of an error detail before it is handed to a caller.
+func redact(s string) string {
+	s = urlPattern.ReplaceAllString(s, "[upstream]")
+	s = lookupPattern.ReplaceAllString(s, "lookup [upstream]")
+	s = addrPattern.ReplaceAllString(s, "[upstream]")
+	return s
+}
 
 // Explain renders a failed crawl/search error as a short, caller-safe
 // explanation: the classified reason, the upstream HTTP status when the error
-// carries one, and the root cause. Transports prefix their own context
-// ("fetch_url failed: " + Explain(err)) so an MCP or HTTP client sees what
-// metrics already know instead of an opaque failure.
-//
-// The reason prefix is dropped when it would only stutter — when the root cause
-// text already names it (`search degraded: …`) or when it is the catch-all
-// "error". Absolute URLs are redacted so internal endpoints don't leak. Returns
-// "" only when err is nil.
+// carries one, and the root cause with internal endpoints redacted. Transports
+// prefix their own context ("fetch_url failed: " + Explain(err)) so an MCP or
+// HTTP client sees what metrics already know instead of an opaque failure.
+// Returns "" only when err is nil.
 func Explain(err error) string {
 	if err == nil {
 		return ""
 	}
 
-	reason := Reason(err)
+	label := Reason(err)
 	var fe *domain.FetchError
 	typed := errors.As(err, &fe)
 
@@ -45,29 +55,17 @@ func Explain(err error) string {
 	case typed:
 		detail = ""
 	}
-	detail = urlPattern.ReplaceAllString(detail, "[upstream]")
 
-	label := reason
-	if reason == string(domain.KindError) || (detail != "" && strings.Contains(strings.ToLower(detail), reason)) {
-		label = ""
-	}
 	if typed && fe.StatusCode != 0 {
-		status := "HTTP " + strconv.Itoa(fe.StatusCode)
-		if label == "" {
-			label = status
-		} else {
-			label += " (" + status + ")"
-		}
+		label += " (HTTP " + strconv.Itoa(fe.StatusCode) + ")"
 	}
-
 	switch {
-	case label != "" && detail != "":
-		return label + ": " + detail
-	case label != "":
+	case detail == "":
 		return label
-	case detail != "":
-		return detail
+	case label == string(domain.KindError):
+		// The catch-all reason adds nothing over the cause itself.
+		return redact(detail)
 	default:
-		return reason // nothing else to say; never return an empty explanation
+		return label + ": " + redact(detail)
 	}
 }
