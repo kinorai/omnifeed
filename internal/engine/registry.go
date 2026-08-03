@@ -6,6 +6,7 @@ package engine
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	"github.com/kinorai/omnifeed/internal/domain"
 	"github.com/kinorai/omnifeed/internal/httpx"
@@ -17,10 +18,19 @@ type Registry struct {
 	engines      []domain.Engine
 	fallback     domain.Engine
 	blockPrivate bool
+	logger       *slog.Logger
 }
 
 // New returns an empty Registry. Use Register and Fallback to populate it.
-func New() *Registry { return &Registry{} }
+func New() *Registry { return &Registry{logger: slog.Default()} }
+
+// Logger sets the logger used to report engine→fallback handoffs.
+func (r *Registry) Logger(l *slog.Logger) *Registry {
+	if l != nil {
+		r.logger = l
+	}
+	return r
+}
 
 // Register appends an engine to the dispatch chain. Order matters — earlier
 // engines get first crack at each URL.
@@ -61,9 +71,25 @@ func (r *Registry) Crawl(ctx context.Context, rawURL string, opts domain.EngineO
 	if err := httpx.ValidateURL(rawURL, r.blockPrivate); err != nil {
 		return domain.Document{}, fmt.Errorf("url rejected: %w", err)
 	}
-	e := r.Resolve(rawURL)
-	if e == nil {
+	for _, e := range r.engines {
+		if !e.Matches(rawURL) {
+			continue
+		}
+		doc, err := e.Crawl(ctx, rawURL, opts)
+		// A dedicated engine failing (rate limit, API change, upstream hiccup)
+		// must not hard-fail a URL the generic browser fallback can still
+		// render — before dedicated engines existed, these URLs worked. Skipped
+		// when the caller is already gone: the fallback would only burn a
+		// browser render on a dead request.
+		if err != nil && r.fallback != nil && ctx.Err() == nil {
+			r.logger.Warn("engine failed, falling back to generic crawl",
+				"engine", e.Name(), "url", rawURL, "err", err)
+			return r.fallback.Crawl(ctx, rawURL, opts)
+		}
+		return doc, err
+	}
+	if r.fallback == nil {
 		return domain.Document{}, fmt.Errorf("no engine available for %s and no fallback configured", rawURL)
 	}
-	return e.Crawl(ctx, rawURL, opts)
+	return r.fallback.Crawl(ctx, rawURL, opts)
 }
