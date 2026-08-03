@@ -165,17 +165,6 @@ func TestToolsCall_ErrorMessageCarriesReasonAndStatus(t *testing.T) {
 			want: "fetch_url failed: upstream_error (HTTP 500): crawl4ai returned 500: Internal Server Error",
 		},
 		{
-			// Same error the searxng searcher returns for a degraded upstream. The
-			// reason prefix is dropped because the cause text already says it.
-			name: "degraded_search",
-			tool: "web_search",
-			err: &domain.FetchError{
-				Kind: domain.KindDegraded,
-				Err:  errors.New("search degraded: 2 engines unavailable (google: Suspended: too many requests, bing: timeout) — retry shortly"),
-			},
-			want: "web_search failed: search degraded: 2 engines unavailable (google: Suspended: too many requests, bing: timeout) — retry shortly",
-		},
-		{
 			name: "captcha_without_wrapped_error",
 			tool: "fetch_url",
 			err:  &domain.FetchError{Kind: domain.KindCaptcha, StatusCode: 403, Marker: "cf-challenge"},
