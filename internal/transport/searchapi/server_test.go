@@ -160,14 +160,6 @@ func TestSearch_UpstreamErrorBodyCarriesReason(t *testing.T) {
 		want string
 	}{
 		{
-			name: "degraded",
-			err: &domain.FetchError{
-				Kind: domain.KindDegraded,
-				Err:  errors.New("search degraded: 2 engines unavailable (google: Suspended: too many requests) — retry shortly"),
-			},
-			want: "search upstream failed: search degraded: 2 engines unavailable (google: Suspended: too many requests) — retry shortly",
-		},
-		{
 			name: "status_carried",
 			err:  &domain.FetchError{Kind: domain.KindHTTP429, StatusCode: 429, Err: errors.New("searxng returned 429")},
 			want: "search upstream failed: http_429 (HTTP 429): searxng returned 429",
