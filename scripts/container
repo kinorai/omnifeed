@@ -28,8 +28,8 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # its API on it, and the Reddit engine needs POST /execute_js enabled — so up()
 # generates a shared token, hands it to both sides, and turns on execute_js. Every
 # image is overridable; `--platform` below fails fast if a tag lacks arm64.
-SEARXNG_IMAGE="${SEARXNG_IMAGE:-searxng/searxng:latest}"
-CRAWL4AI_IMAGE="${CRAWL4AI_IMAGE:-unclecode/crawl4ai:latest}"
+SEARXNG_IMAGE="${SEARXNG_IMAGE:-searxng/searxng:2026.7.22-ef8f6470e}"
+CRAWL4AI_IMAGE="${CRAWL4AI_IMAGE:-unclecode/crawl4ai:0.9.2}"
 OMNIFEED_IMAGE="${OMNIFEED_IMAGE:-kinorai/omnifeed:latest}"
 PLATFORM="${OMNIFEED_PLATFORM:-linux/arm64}"
 
@@ -118,7 +118,7 @@ run_or_start() {
 # keyless. render_searxng_settings resolves the key at start time (first non-empty
 # wins: $BRAVEAPI_KEY, else the output of $BRAVEAPI_KEY_COMMAND) and, if it
 # finds one, renders searxng/settings.runtime.yml (gitignored, mode 600) with the
-# key filled in and `inactive: true` dropped — inside the `- name: braveapi` block
+# key filled in and `inactive: true` flipped to false — inside the `- name: braveapi` block
 # only. No key from either: SEARXNG_SETTINGS keeps pointing at the committed file
 # and braveapi stays inactive, exactly as before. The key is never printed and never
 # reaches the argv of any command (awk reads it from the environment).
@@ -148,7 +148,14 @@ render_searxng_settings() {
         printf "%sapi_key: \"%s\"\n", substr($0, 1, RLENGTH), ENVIRON["BRAVEAPI_KEY_RENDER"]
         next
       }
-      inblock && /^[[:space:]]*inactive:[[:space:]]*true[[:space:]]*$/ { next }
+      inblock && /^[[:space:]]*inactive:[[:space:]]*true[[:space:]]*$/ {
+        # Must OVERRIDE, not drop: with use_default_settings, engine blocks merge
+        # key-wise, so a missing `inactive` inherits the upstream default (true)
+        # and the engine is silently never loaded.
+        match($0, /^[[:space:]]*/)
+        printf "%sinactive: false\n", substr($0, 1, RLENGTH)
+        next
+      }
                                         { print }
     ' "$SEARXNG_SETTINGS" > "$runtime" )
   chmod 600 "$runtime"

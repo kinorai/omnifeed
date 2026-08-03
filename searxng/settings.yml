@@ -57,7 +57,9 @@ engines:
 
   # Authenticated Brave Search API — a contractual quota (~1,000 req/month free
   # at 50 qps) instead of bot-detection, so it cannot be suspended by 429s.
-  # To activate: set your key and remove `inactive: true`. NEVER commit a real
+  # To activate: set your key and change to `inactive: false` (removing the line
+  # is NOT enough — engine blocks merge key-wise with the upstream defaults, and
+  # the upstream block says inactive: true). NEVER commit a real
   # key. Note SearXNG fires ALL enabled engines on every query, so an active
   # braveapi burns quota on every single search (~33/day on the free tier).
   - name: braveapi
