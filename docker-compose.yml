@@ -11,7 +11,7 @@ services:
   searxng:
     # Pinned after the 2026-07-30 perf benchmark. SearXNG publishes no semver
     # releases — dated tags are the only release scheme.
-    image: searxng/searxng:2026.7.22-ef8f6470e
+    image: searxng/searxng:2026.8.3-0734ee6c7
     container_name: searxng
     volumes:
       - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
