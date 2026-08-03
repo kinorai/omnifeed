@@ -10,6 +10,7 @@ Package observability wires structured logging, Prometheus metrics, and Kubernet
 
 ## Index
 
+- [func Explain\(err error\) string](<#Explain>)
 - [func NewLogger\(level, format string\) \*slog.Logger](<#NewLogger>)
 - [func Reason\(err error\) string](<#Reason>)
 - [func RegisterPprof\(mux \*http.ServeMux\)](<#RegisterPprof>)
@@ -26,6 +27,15 @@ Package observability wires structured logging, Prometheus metrics, and Kubernet
   - [func \(m \*Metrics\) RegisterMetrics\(mux \*http.ServeMux\)](<#Metrics.RegisterMetrics>)
 - [type ReadyCheck](<#ReadyCheck>)
 
+
+<a name="Explain"></a>
+## func Explain
+
+```go
+func Explain(err error) string
+```
+
+Explain renders a failed crawl/search error as a short, caller\-safe explanation: the classified reason, the upstream HTTP status when the error carries one, and the root cause with internal endpoints redacted. Transports prefix their own context \("fetch\_url failed: " \+ Explain\(err\)\) so an MCP or HTTP client sees what metrics already know instead of an opaque failure. Returns "" only when err is nil.
 
 <a name="NewLogger"></a>
 ## func NewLogger

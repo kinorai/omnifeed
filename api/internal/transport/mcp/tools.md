@@ -10,18 +10,27 @@ Package tools defines the MCP tools this proxy exposes — fetch\_url and web\_s
 
 ## Index
 
-- [func FetchURL\(reg \*engine.Registry, defaults reddit.Options, metrics \*observability.Metrics\) mcp.Tool](<#FetchURL>)
+- [Constants](<#constants>)
+- [func FetchURL\(reg \*engine.Registry, defaults reddit.Options, metrics \*observability.Metrics, defaultMaxChars int\) mcp.Tool](<#FetchURL>)
 - [func WebSearch\(searcher domain.Searcher, maxResults int, metrics \*observability.Metrics\) mcp.Tool](<#WebSearch>)
 
+
+## Constants
+
+<a name="MaxFetchChars"></a>MaxFetchChars is the ceiling on fetch\_url's \`max\_chars\`, and the value declared to clients as \`anthropic/maxResultSizeChars\`. 500000 is the maximum that annotation accepts, so a caller can never ask for more text than the client is willing to render.
+
+```go
+const MaxFetchChars = 500000
+```
 
 <a name="FetchURL"></a>
 ## func FetchURL
 
 ```go
-func FetchURL(reg *engine.Registry, defaults reddit.Options, metrics *observability.Metrics) mcp.Tool
+func FetchURL(reg *engine.Registry, defaults reddit.Options, metrics *observability.Metrics, defaultMaxChars int) mcp.Tool
 ```
 
-FetchURL returns the \`fetch\_url\` tool: URL → LLM\-friendly content via the engine registry \(Reddit engine for reddit.com, Hacker News engine for news.ycombinator.com, crawl4ai fallback for the rest\).
+FetchURL returns the \`fetch\_url\` tool: URL → LLM\-friendly content via the engine registry \(Reddit engine for reddit.com, Hacker News engine for news.ycombinator.com, crawl4ai fallback for the rest\). defaultMaxChars caps markdown content when the caller omits \`max\_chars\` \(0 = unlimited\); it comes from OMNIFEED\_FETCH\_MAX\_CHARS.
 
 <a name="WebSearch"></a>
 ## func WebSearch

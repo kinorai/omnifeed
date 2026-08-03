@@ -15,6 +15,7 @@ Package engine defines the dispatch mechanism that picks the right per\-URL hand
   - [func \(r \*Registry\) BlockPrivateIPs\(block bool\) \*Registry](<#Registry.BlockPrivateIPs>)
   - [func \(r \*Registry\) Crawl\(ctx context.Context, rawURL string, opts domain.EngineOptions\) \(domain.Document, error\)](<#Registry.Crawl>)
   - [func \(r \*Registry\) Fallback\(e domain.Engine\) \*Registry](<#Registry.Fallback>)
+  - [func \(r \*Registry\) Logger\(l \*slog.Logger\) \*Registry](<#Registry.Logger>)
   - [func \(r \*Registry\) Register\(e domain.Engine\) \*Registry](<#Registry.Register>)
   - [func \(r \*Registry\) Resolve\(rawURL string\) domain.Engine](<#Registry.Resolve>)
 
@@ -65,6 +66,15 @@ func (r *Registry) Fallback(e domain.Engine) *Registry
 ```
 
 Fallback sets the engine used when no Registered engine claims a URL.
+
+<a name="Registry.Logger"></a>
+### func \(\*Registry\) Logger
+
+```go
+func (r *Registry) Logger(l *slog.Logger) *Registry
+```
+
+Logger sets the logger used to report engine→fallback handoffs.
 
 <a name="Registry.Register"></a>
 ### func \(\*Registry\) Register

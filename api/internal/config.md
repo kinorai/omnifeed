@@ -45,6 +45,14 @@ type Config struct {
     Crawl4AIPruneThreshold float64 // PruningContentFilter cutoff for the generic engine (0–1; higher strips more boilerplate)
     Crawl4AIWaitUntil      string  // page-ready signal for the generic engine: domcontentloaded (default) | load | networkidle | commit
     Crawl4AIToken          string  // bearer token sent to crawl4ai (its CRAWL4AI_API_TOKEN); empty = no Authorization header
+    // Crawl4AIExcludedSelector overrides the generic engine's chrome selector
+    // list. Empty = the engine's conservative default; to effectively exclude
+    // nothing, set a selector that matches nothing.
+    Crawl4AIExcludedSelector string
+    // Crawl4AITargetElements is a comma-separated CSS selector list. Empty (the
+    // default) keeps the feature off; non-empty restricts extraction to matching
+    // containers, which can yield no content at all on pages without them.
+    Crawl4AITargetElements string
 
     // Upstream SearXNG (optional). Empty disables the `search` MCP tool.
     SearXNGURL     string
@@ -52,6 +60,21 @@ type Config struct {
 
     // Search tool limits.
     SearchMaxResults int
+
+    // FetchMaxChars is the default character cap on markdown content returned by
+    // the fetch_url MCP tool (0 = unlimited). A caller-supplied max_chars wins.
+    FetchMaxChars int
+
+    // GitHubToken authenticates the GitHub engine's REST calls. Empty = anonymous
+    // (60 requests/hour/IP); a token raises it to 5000/hour.
+    GitHubToken string
+
+    // DiscourseHosts is the exact-hostname allowlist the Discourse engine claims
+    // topic URLs on. Discourse is self-hosted on arbitrary domains and Matches is
+    // a pure predicate (it can't probe), so the list has to be explicit. Empty
+    // (the variable set to "") means the engine claims nothing and every forum
+    // goes to the generic browser fallback.
+    DiscourseHosts []string
 
     // Reddit engine defaults.
     RedditTimeout     time.Duration
