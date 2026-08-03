@@ -28,7 +28,7 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # its API on it, and the Reddit engine needs POST /execute_js enabled — so up()
 # generates a shared token, hands it to both sides, and turns on execute_js. Every
 # image is overridable; `--platform` below fails fast if a tag lacks arm64.
-SEARXNG_IMAGE="${SEARXNG_IMAGE:-searxng/searxng:2026.7.22-ef8f6470e}"
+SEARXNG_IMAGE="${SEARXNG_IMAGE:-searxng/searxng:2026.8.3-0734ee6c7}"
 CRAWL4AI_IMAGE="${CRAWL4AI_IMAGE:-unclecode/crawl4ai:0.9.2}"
 OMNIFEED_IMAGE="${OMNIFEED_IMAGE:-kinorai/omnifeed:latest}"
 PLATFORM="${OMNIFEED_PLATFORM:-linux/arm64}"
@@ -158,6 +158,9 @@ render_searxng_settings() {
       }
                                         { print }
     ' "$SEARXNG_SETTINGS" > "$runtime" )
+  # With the API engine keyed, the brave HTML scraper is redundant and routinely
+  # 429-suspended — disable it in the rendered copy (merge-by-name override).
+  printf '\n  # Rendered override: brave HTML scraper off while braveapi is keyed.\n  - name: brave\n    disabled: true\n' >> "$runtime"
   chmod 600 "$runtime"
   SEARXNG_SETTINGS="$runtime"
   log "braveapi: key injected from ${source}"
