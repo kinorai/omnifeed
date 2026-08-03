@@ -53,3 +53,41 @@ func TestRegistryCrawl_AllowsPublic(t *testing.T) {
 		t.Error("Crawl(public) did not reach the engine")
 	}
 }
+
+// failingEngine claims every URL and always errors.
+type failingEngine struct{ calls int }
+
+func (*failingEngine) Name() string        { return "failing" }
+func (*failingEngine) Matches(string) bool { return true }
+func (f *failingEngine) Crawl(context.Context, string, domain.EngineOptions) (domain.Document, error) {
+	f.calls++
+	return domain.Document{}, &domain.FetchError{Kind: domain.KindHTTP403}
+}
+
+// A dedicated engine failing must fall back to the generic engine instead of
+// hard-failing a URL the fallback can still render (e.g. anonymous GitHub
+// quota exhaustion) — unless the caller's context is already dead.
+func TestRegistryCrawl_FallsBackOnEngineError(t *testing.T) {
+	failing, fallback := &failingEngine{}, &stubEngine{}
+	r := New().Register(failing).Fallback(fallback)
+
+	doc, err := r.Crawl(context.Background(), "http://8.8.8.8/", domain.EngineOptions{})
+	if err != nil {
+		t.Fatalf("Crawl = %v, want the fallback's success", err)
+	}
+	if doc.PageContent != "ok" || failing.calls != 1 || !fallback.called {
+		t.Fatalf("want engine tried once then fallback used; got calls=%d fallback=%v", failing.calls, fallback.called)
+	}
+
+	// Dead context: the error comes back as-is, the fallback is not burned.
+	failing2, fallback2 := &failingEngine{}, &stubEngine{}
+	r2 := New().Register(failing2).Fallback(fallback2)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := r2.Crawl(ctx, "http://8.8.8.8/", domain.EngineOptions{}); err == nil {
+		t.Fatal("Crawl with dead ctx = nil error, want the engine error")
+	}
+	if fallback2.called {
+		t.Fatal("fallback ran despite a dead context")
+	}
+}
