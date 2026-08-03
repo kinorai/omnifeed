@@ -35,9 +35,13 @@ type Post struct {
 	Body    string `json:"body" toon:"body"`
 }
 
-// Thread groups a topic with its posts, in post-stream order.
+// Thread groups a topic with its posts, in post-stream order. Note, when set,
+// tells the reader (the LLM) that the post list was truncated — metadata keys
+// land in MCP _meta, which models never see, so the signal has to live in the
+// content itself.
 type Thread struct {
 	Topic Topic  `json:"topic" toon:"topic"`
+	Note  string `json:"note,omitempty" toon:"note,omitempty"`
 	Posts []Post `json:"posts" toon:"posts"`
 }
 
