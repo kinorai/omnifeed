@@ -174,13 +174,19 @@ func TestCrawlPrintView(t *testing.T) {
 // A 429 on the print view must fall back to the plain topic JSON plus batched
 // posts.json requests for the ids the first chunk didn't include, merged back in
 // post_stream.stream order.
-func TestCrawlFallsBackToBatchesOn429(t *testing.T) {
+func TestCrawlFallsBackToBatchesOn429(t *testing.T) { testCrawlFallsBackToBatches(t, http.StatusTooManyRequests) }
+
+// discuss.python.org rate-limits the print view with 422, not 429 (observed live
+// 2026-08-03: {"errors":["You’ve performed this action too many times…"]}).
+func TestCrawlFallsBackToBatchesOn422(t *testing.T) { testCrawlFallsBackToBatches(t, http.StatusUnprocessableEntity) }
+
+func testCrawlFallsBackToBatches(t *testing.T, printStatus int) {
 	var paths []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		paths = append(paths, r.URL.RequestURI())
 		switch {
 		case r.URL.Query().Get("print") == "true":
-			http.Error(w, "rate limited", http.StatusTooManyRequests)
+			http.Error(w, "rate limited", printStatus)
 		case r.URL.Path == "/t/55763.json":
 			// First chunk: the LAST two posts of the stream, so a merge that just
 			// appends batches would produce the wrong order.
