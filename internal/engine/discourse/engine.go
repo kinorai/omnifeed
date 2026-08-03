@@ -185,7 +185,9 @@ func (e *Engine) fetchTopic(ctx context.Context, base, id string) (apiTopic, []P
 		total := max(at.PostsCount, len(at.PostStream.Posts))
 		return at, convert(capPosts(at.PostStream.Posts)), total, nil
 	}
-	if !isStatus(err, http.StatusTooManyRequests) {
+	// Discourse rate-limits the print view with either 429 or — observed live on
+	// discuss.python.org — 422 ("You've performed this action too many times").
+	if !isStatus(err, http.StatusTooManyRequests) && !isStatus(err, http.StatusUnprocessableEntity) {
 		return apiTopic{}, nil, 0, fmt.Errorf("fetch topic: %w", err)
 	}
 	e.logger.Info("discourse print view rate limited, falling back to batched posts", "topic", id, "host", base)
