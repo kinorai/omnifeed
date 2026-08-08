@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/kinorai/omnifeed/internal/auth"
 	"github.com/kinorai/omnifeed/internal/domain"
@@ -160,6 +161,11 @@ func (s *Server) crawlOne(ctx context.Context, rawURL string, opts domain.Engine
 	}
 	if s.metrics != nil {
 		s.metrics.Observe(engName, string(tenant), status, reason, time.Since(start))
+		if err == nil {
+			// The loader returns the document as-is (no truncation), so the crawl
+			// output IS what the caller receives.
+			s.metrics.ObserveResponseChars(engName, utf8.RuneCountInString(doc.PageContent))
+		}
 	}
 	if err != nil {
 		return loaderDocument{

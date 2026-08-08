@@ -42,7 +42,11 @@ type Browser struct {
 // URL); the sibling /execute_js URL is derived from it. token, when set, is sent
 // as `Authorization: Bearer <token>` (crawl4ai's CRAWL4AI_API_TOKEN).
 func New(client *httpx.Client, crawl4aiURL, token string) *Browser {
-	return &Browser{client: client, execJSURL: execJSEndpoint(crawl4aiURL), token: token}
+	return &Browser{
+		client:    client.WithUpstream("crawl4ai", "execute_js"),
+		execJSURL: execJSEndpoint(crawl4aiURL),
+		token:     token,
+	}
 }
 
 // Name identifies the backend.

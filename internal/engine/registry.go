@@ -10,6 +10,7 @@ import (
 
 	"github.com/kinorai/omnifeed/internal/domain"
 	"github.com/kinorai/omnifeed/internal/httpx"
+	"github.com/kinorai/omnifeed/internal/observability"
 )
 
 // Registry holds an ordered list of engines and a fallback. Lookup is
@@ -19,6 +20,7 @@ type Registry struct {
 	fallback     domain.Engine
 	blockPrivate bool
 	logger       *slog.Logger
+	metrics      *observability.Metrics
 }
 
 // New returns an empty Registry. Use Register and Fallback to populate it.
@@ -29,6 +31,13 @@ func (r *Registry) Logger(l *slog.Logger) *Registry {
 	if l != nil {
 		r.logger = l
 	}
+	return r
+}
+
+// Metrics sets the collectors used to count engine→fallback handoffs
+// (omnifeed_engine_fallbacks_total). Nil disables the counter.
+func (r *Registry) Metrics(m *observability.Metrics) *Registry {
+	r.metrics = m
 	return r
 }
 
@@ -84,6 +93,9 @@ func (r *Registry) Crawl(ctx context.Context, rawURL string, opts domain.EngineO
 		if err != nil && r.fallback != nil && ctx.Err() == nil {
 			r.logger.Warn("engine failed, falling back to generic crawl",
 				"engine", e.Name(), "url", rawURL, "err", err)
+			if r.metrics != nil {
+				r.metrics.ObserveFallback(e.Name(), observability.Reason(err))
+			}
 			return r.fallback.Crawl(ctx, rawURL, opts)
 		}
 		return doc, err

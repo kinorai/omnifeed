@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"strconv"
 	"time"
+	"unicode/utf8"
 
 	"github.com/kinorai/omnifeed/internal/domain"
 	"github.com/kinorai/omnifeed/internal/engine"
@@ -154,7 +155,13 @@ func crawlHandler(reg *engine.Registry, defaults reddit.Options, metrics *observ
 		if err != nil {
 			return mcp.ToolResult{}, err
 		}
-		return sized(doc, resolveMaxChars(args, defaultMaxChars), argInt(args, "start_char")), nil
+		res := sized(doc, resolveMaxChars(args, defaultMaxChars), argInt(args, "start_char"))
+		if metrics != nil {
+			// Recorded AFTER sized() so the observation is the post-truncation text
+			// the caller actually receives — the quality guard for scrape changes.
+			metrics.ObserveResponseChars(engineName(reg, rawURL), utf8.RuneCountInString(res.Text))
+		}
+		return res, nil
 	}
 }
 

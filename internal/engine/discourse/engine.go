@@ -76,7 +76,7 @@ func New(cfg Config) *Engine {
 		}
 	}
 	return &Engine{
-		client:  cfg.Client,
+		client:  cfg.Client.WithUpstream("discourse", "api"),
 		limiter: cfg.Limiter,
 		hosts:   hosts,
 		timeout: cfg.Timeout,
@@ -145,7 +145,7 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, _ domain.EngineOption
 
 	base := e.scheme + "://" + t.authority
 	if e.limiter != nil {
-		release, lerr := e.limiter.Acquire(ctx, base)
+		release, lerr := e.limiter.Acquire(ctx, e.Name(), base)
 		if lerr != nil {
 			return domain.Document{}, lerr
 		}

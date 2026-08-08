@@ -14,12 +14,17 @@ import (
 type Metrics struct {
 	registry *prometheus.Registry
 
-	RequestsTotal   *prometheus.CounterVec   // engine, tenant, status, reason
-	RequestAttempts *prometheus.CounterVec   // attempt (first|retry)
-	RequestSecs     *prometheus.HistogramVec // engine, status
-	RedditRounds    prometheus.Histogram
-	SearchesTotal   *prometheus.CounterVec   // searcher, status, reason
-	SearchSecs      *prometheus.HistogramVec // searcher, status
+	RequestsTotal       *prometheus.CounterVec   // engine, tenant, status, reason
+	RequestAttempts     *prometheus.CounterVec   // upstream, attempt (first|retry)
+	RequestSecs         *prometheus.HistogramVec // engine, status, reason
+	UpstreamSecs        *prometheus.HistogramVec // upstream, op, status
+	LimiterWaitSecs     *prometheus.HistogramVec // engine
+	ResponseChars       *prometheus.HistogramVec // engine
+	EngineFallbacks     *prometheus.CounterVec   // from_engine, reason
+	SearxngUnresponsive *prometheus.CounterVec   // engine, error
+	RedditRounds        prometheus.Histogram
+	SearchesTotal       *prometheus.CounterVec   // searcher, status, reason
+	SearchSecs          *prometheus.HistogramVec // searcher, status
 }
 
 // NewMetrics builds and registers all collectors.
@@ -33,13 +38,36 @@ func NewMetrics() *Metrics {
 		}, []string{"engine", "tenant", "status", "reason"}),
 		RequestAttempts: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "omnifeed_request_attempts_total",
-			Help: `HTTP attempts by the retrying crawl client, split into the first try and retries. attempt="retry" is retry volume; it drops when a non-transient block stops being re-driven.`,
-		}, []string{"attempt"}),
+			Help: `HTTP attempts by the retrying client, by upstream, split into the first try and retries. attempt="retry" is retry volume; it drops when a non-transient block stops being re-driven.`,
+		}, []string{"upstream", "attempt"}),
 		RequestSecs: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name:    "omnifeed_request_seconds",
-			Help:    "Crawl latency by engine and status.",
+			Help:    "Crawl latency by engine, status, and failure reason (reason=\"ok\" on success).",
 			Buckets: prometheus.ExponentialBuckets(0.05, 2, 12),
-		}, []string{"engine", "status"}),
+		}, []string{"engine", "status", "reason"}),
+		UpstreamSecs: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name:    "omnifeed_upstream_seconds",
+			Help:    "Upstream HTTP round-trip latency per attempt (request start until the response body is fully read, or transport error). One observation per attempt, so a 3-try DoRetry records 3.",
+			Buckets: prometheus.ExponentialBuckets(0.05, 2, 12),
+		}, []string{"upstream", "op", "status"}),
+		LimiterWaitSecs: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name:    "omnifeed_domain_limiter_wait_seconds",
+			Help:    "Time spent blocked in per-domain limiter acquisition (semaphore wait + politeness delay); ~0 when uncontended.",
+			Buckets: prometheus.ExponentialBuckets(0.01, 2, 12),
+		}, []string{"engine"}),
+		ResponseChars: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name:    "omnifeed_response_chars",
+			Help:    "Final returned content length in characters (post-truncation — what the caller receives) on successful crawls.",
+			Buckets: prometheus.ExponentialBuckets(100, 4, 10),
+		}, []string{"engine"}),
+		EngineFallbacks: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "omnifeed_engine_fallbacks_total",
+			Help: "Re-crawls via the generic fallback engine after a dedicated engine failed, by failing engine and classified failure reason.",
+		}, []string{"from_engine", "reason"}),
+		SearxngUnresponsive: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "omnifeed_searxng_unresponsive_engines_total",
+			Help: "SearXNG engines reported unresponsive per search (the unresponsive_engines field), by engine and error type.",
+		}, []string{"engine", "error"}),
 		RedditRounds: prometheus.NewHistogram(prometheus.HistogramOpts{
 			Name:    "omnifeed_reddit_expansion_rounds",
 			Help:    "Number of /api/morechildren rounds per Reddit crawl.",
@@ -55,7 +83,9 @@ func NewMetrics() *Metrics {
 			Buckets: prometheus.ExponentialBuckets(0.05, 2, 10),
 		}, []string{"searcher", "status"}),
 	}
-	reg.MustRegister(m.RequestsTotal, m.RequestAttempts, m.RequestSecs, m.RedditRounds, m.SearchesTotal, m.SearchSecs)
+	reg.MustRegister(m.RequestsTotal, m.RequestAttempts, m.RequestSecs, m.UpstreamSecs,
+		m.LimiterWaitSecs, m.ResponseChars, m.EngineFallbacks, m.SearxngUnresponsive,
+		m.RedditRounds, m.SearchesTotal, m.SearchSecs)
 	reg.MustRegister(
 		collectors.NewGoCollector(),
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
@@ -67,18 +97,51 @@ func NewMetrics() *Metrics {
 // WHY a request failed (see Reason); it is "ok" on success.
 func (m *Metrics) Observe(engine, tenant, status, reason string, duration time.Duration) {
 	m.RequestsTotal.WithLabelValues(engine, tenant, status, reason).Inc()
-	m.RequestSecs.WithLabelValues(engine, status).Observe(duration.Seconds())
+	m.RequestSecs.WithLabelValues(engine, status, reason).Observe(duration.Seconds())
 }
 
-// ObserveAttempt records one HTTP attempt from the retrying crawl client. retry
-// is false for the first try and true for each retry, so attempt="retry" counts
-// the re-drives that #2's RetryableStatus veto removes for non-transient blocks.
-func (m *Metrics) ObserveAttempt(retry bool) {
+// ObserveAttempt records one HTTP attempt from the retrying client against the
+// named upstream. retry is false for the first try and true for each retry, so
+// attempt="retry" counts the re-drives that #2's RetryableStatus veto removes
+// for non-transient blocks.
+func (m *Metrics) ObserveAttempt(upstream string, retry bool) {
 	attempt := "first"
 	if retry {
 		attempt = "retry"
 	}
-	m.RequestAttempts.WithLabelValues(attempt).Inc()
+	m.RequestAttempts.WithLabelValues(upstream, attempt).Inc()
+}
+
+// ObserveUpstream records one upstream HTTP round-trip attempt (request start
+// until the response body is fully read, or transport error). status is "ok"
+// for 2xx and "error" otherwise. Wired as the httpx client's OnUpstream hook.
+func (m *Metrics) ObserveUpstream(upstream, op, status string, duration time.Duration) {
+	m.UpstreamSecs.WithLabelValues(upstream, op, status).Observe(duration.Seconds())
+}
+
+// ObserveLimiterWait records the time an engine spent blocked acquiring the
+// per-domain limiter. Wired as the DomainLimiter's OnWait hook.
+func (m *Metrics) ObserveLimiterWait(engine string, duration time.Duration) {
+	m.LimiterWaitSecs.WithLabelValues(engine).Observe(duration.Seconds())
+}
+
+// ObserveResponseChars records the character count of the content actually
+// returned to the caller (post-truncation) on a successful crawl — the quality
+// guard for scrape-option changes.
+func (m *Metrics) ObserveResponseChars(engine string, chars int) {
+	m.ResponseChars.WithLabelValues(engine).Observe(float64(chars))
+}
+
+// ObserveFallback counts one engine→generic-fallback handoff: fromEngine is the
+// dedicated engine that failed, reason its classified failure (see Reason).
+func (m *Metrics) ObserveFallback(fromEngine, reason string) {
+	m.EngineFallbacks.WithLabelValues(fromEngine, reason).Inc()
+}
+
+// ObserveUnresponsiveEngine counts one engine SearXNG reported unresponsive on
+// a search response, by engine name and error type.
+func (m *Metrics) ObserveUnresponsiveEngine(engine, errType string) {
+	m.SearxngUnresponsive.WithLabelValues(engine, errType).Inc()
 }
 
 // ObserveSearch records a single search query result. reason classifies WHY a

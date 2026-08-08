@@ -96,7 +96,7 @@ func New(cfg Config) *Engine {
 	return &Engine{
 		endpoint:         cfg.Endpoint,
 		token:            cfg.Token,
-		client:           cfg.Client,
+		client:           cfg.Client.WithUpstream("crawl4ai", "crawl"),
 		limiter:          cfg.Limiter,
 		keepLinks:        cfg.KeepLinks,
 		pruneThreshold:   cfg.PruneThreshold,
@@ -192,7 +192,7 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, _ domain.EngineOption
 		return domain.Document{}, fmt.Errorf("crawl4ai endpoint not configured (set OMNIFEED_CRAWL4AI_URL)")
 	}
 
-	release, err := e.limiter.Acquire(ctx, rawURL)
+	release, err := e.limiter.Acquire(ctx, e.Name(), rawURL)
 	if err != nil {
 		return domain.Document{}, err
 	}
