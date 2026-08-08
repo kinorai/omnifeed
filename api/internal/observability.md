@@ -23,6 +23,7 @@ Package observability wires structured logging, Prometheus metrics, and Kubernet
   - [func NewMetrics\(\) \*Metrics](<#NewMetrics>)
   - [func \(m \*Metrics\) Observe\(engine, tenant, status, reason string, duration time.Duration\)](<#Metrics.Observe>)
   - [func \(m \*Metrics\) ObserveAttempt\(retry bool\)](<#Metrics.ObserveAttempt>)
+  - [func \(m \*Metrics\) ObserveBrowserFallback\(from, to, reason string\)](<#Metrics.ObserveBrowserFallback>)
   - [func \(m \*Metrics\) ObserveSearch\(searcher, status, reason string, duration time.Duration\)](<#Metrics.ObserveSearch>)
   - [func \(m \*Metrics\) RegisterMetrics\(mux \*http.ServeMux\)](<#Metrics.RegisterMetrics>)
 - [type ReadyCheck](<#ReadyCheck>)
@@ -124,12 +125,13 @@ Metrics holds Prometheus collectors emitted by the proxy.
 
 ```go
 type Metrics struct {
-    RequestsTotal   *prometheus.CounterVec   // engine, tenant, status, reason
-    RequestAttempts *prometheus.CounterVec   // attempt (first|retry)
-    RequestSecs     *prometheus.HistogramVec // engine, status
-    RedditRounds    prometheus.Histogram
-    SearchesTotal   *prometheus.CounterVec   // searcher, status, reason
-    SearchSecs      *prometheus.HistogramVec // searcher, status
+    RequestsTotal    *prometheus.CounterVec   // engine, tenant, status, reason
+    RequestAttempts  *prometheus.CounterVec   // attempt (first|retry)
+    RequestSecs      *prometheus.HistogramVec // engine, status
+    RedditRounds     prometheus.Histogram
+    BrowserFallbacks *prometheus.CounterVec   // from, to
+    SearchesTotal    *prometheus.CounterVec   // searcher, status, reason
+    SearchSecs       *prometheus.HistogramVec // searcher, status
     // contains filtered or unexported fields
 }
 ```
@@ -160,6 +162,15 @@ func (m *Metrics) ObserveAttempt(retry bool)
 ```
 
 ObserveAttempt records one HTTP attempt from the retrying crawl client. retry is false for the first try and true for each retry, so attempt="retry" counts the re\-drives that \#2's RetryableStatus veto removes for non\-transient blocks.
+
+<a name="Metrics.ObserveBrowserFallback"></a>
+### func \(\*Metrics\) ObserveBrowserFallback
+
+```go
+func (m *Metrics) ObserveBrowserFallback(from, to, reason string)
+```
+
+ObserveBrowserFallback records that a browser fetch failed on the \`from\` backend and was retried on \`to\` \(e.g. lightpanda → crawl4ai\). reason is the bounded classification \(see Reason\) of the primary's failure — it is what keeps a blocked\-but\-recovering primary visible when the request\-level reason ends up "ok".
 
 <a name="Metrics.ObserveSearch"></a>
 ### func \(\*Metrics\) ObserveSearch
