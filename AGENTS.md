@@ -40,8 +40,7 @@ internal/
   domain/        Ports + core types (Engine, Searcher, Document, SearchResult,
                  EngineOptions, errors). Depends on nothing.
   browser/       Browser port: navigate a page + run same-origin JS on it.
-    crawl4ai/    Backend: crawl4ai /execute_js (default; re-navigates per Eval)
-    lightpanda/  Backend: Lightpanda CDP via chromedp (opt-in; live-page reuse)
+    crawl4ai/    Backend: crawl4ai /execute_js (re-navigates per Eval)
   engine/        Registry + fallback ordering
     reddit/      Engine: drives a browser.Browser, TOON comment trees
     crawl4ai/    Engine: generic markdown fallback (crawl4ai /crawl — not the browser port)
@@ -63,7 +62,7 @@ cmd/omnifeed/    entry point + wiring
 ## Adding things
 
 - **New engine**: create `internal/engine/<name>/engine.go` implementing `domain.Engine`; register it in `main.go` **before** the fallback; add a `*_test.go` with a fixture covering URL matching. `internal/engine/hackernews` is a worked example (it and `internal/engine/github` are the engines that fetch their upstream directly rather than through crawl4ai).
-- **New browser backend** (an engine that needs to clear a browser-only bot wall): implement `browser.Browser`/`browser.Session` under `internal/browser/<name>/`, keep the CDP/transport glue thin and testable behind a small interface (see `lightpanda`'s `pageDriver`), and wire it in `main.go`. Engines drive the port, never a specific backend.
+- **New browser backend** (an engine that needs to clear a browser-only bot wall): implement `browser.Browser`/`browser.Session` under `internal/browser/<name>/`, keep the transport glue thin and testable, and wire it in `main.go`. Engines drive the port, never a specific backend.
 - **New searcher** (e.g. Brave): implement `domain.Searcher`; wire in `main.go`.
 - **New MCP tool**: add a constructor in `internal/transport/mcp/tools`; append it to `mcpTools` in `main.go`. The MCP server itself never changes.
 - **New transport**: create `internal/transport/<name>/server.go` taking the port(s) it needs; mount it from `main.go`. (`searchapi` is the smallest example to copy.)
@@ -78,9 +77,8 @@ cmd/omnifeed/    entry point + wiring
 
 ## Gotchas
 
-- **crawl4ai is mandatory.** `OMNIFEED_CRAWL4AI_URL` must be set or the binary exits at startup — the generic fallback fetches through `/crawl`, and crawl4ai is also the default (and always the fallback) browser backend for Reddit. **Exceptions:** the Hacker News engine reads the public Algolia HN API (`hn.algolia.com`) and the GitHub engine reads the public GitHub REST API (`api.github.com`) directly — neither is bot-walled, so a headless browser would only add latency (and lose comments) — and they therefore need outbound access to those two hosts. The Discourse engine does the same against each host listed in `OMNIFEED_DISCOURSE_HOSTS` (public topic JSON), so those hosts need outbound access too.
+- **crawl4ai is mandatory.** `OMNIFEED_CRAWL4AI_URL` must be set or the binary exits at startup — the generic fallback fetches through `/crawl`, and crawl4ai is also the browser backend for Reddit. **Exceptions:** the Hacker News engine reads the public Algolia HN API (`hn.algolia.com`) and the GitHub engine reads the public GitHub REST API (`api.github.com`) directly — neither is bot-walled, so a headless browser would only add latency (and lose comments) — and they therefore need outbound access to those two hosts. The Discourse engine does the same against each host listed in `OMNIFEED_DISCOURSE_HOSTS` (public topic JSON), so those hosts need outbound access too.
 - **Never call Reddit directly.** Reddit 403-blocks non-browser clients; the Reddit engine fetches through a real browser via the `browser.Browser` port. See `internal/engine/reddit` and `internal/browser`.
-- **Reddit browser backend is pluggable.** Default is crawl4ai's `/execute_js`. Set `OMNIFEED_LIGHTPANDA_CDP_URL` to use Lightpanda (lighter/faster, holds a live page across a crawl) with crawl4ai as the automatic sticky fallback; fallbacks are counted in `omnifeed_browser_fallback_total`. The two backends differ only in Navigate semantics — crawl4ai re-navigates per Eval, Lightpanda reuses the live page — so `reddit.Fetcher` calls Navigate before every fetch and it's a no-op on the live backend.
 - **HTTP transports fail closed.** No `OMNIFEED_API_KEY` → the binary refuses to start, unless `OMNIFEED_DEV_NO_AUTH=true` (local only). Stdio MCP is unauthenticated by design.
 - **SSRF:** validate caller-supplied URLs with `httpx.ValidateURL`; `OMNIFEED_BLOCK_PRIVATE_IPS` defaults to on.
 - **Search is optional.** `web_search` and `POST /search` are exposed only when `OMNIFEED_SEARXNG_URL` is set.

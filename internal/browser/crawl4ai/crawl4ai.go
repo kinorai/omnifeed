@@ -1,7 +1,7 @@
 // Package crawl4ai implements the browser.Browser port over crawl4ai's
 // /execute_js endpoint: it drives a real headless Chromium to a page and runs
-// caller-supplied JavaScript from inside it. This is the default Reddit backend
-// and the fallback for the Lightpanda backend.
+// caller-supplied JavaScript from inside it. This is the Reddit engine's
+// browser backend.
 //
 // crawl4ai has no session reuse on /execute_js, so a Session here does not hold a
 // live page: Navigate records the target URL and every Eval re-navigates to it

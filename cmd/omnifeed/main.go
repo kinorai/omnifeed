@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"os"
 	"os/signal"
 	"sync"
@@ -18,9 +17,7 @@ import (
 	"time"
 
 	"github.com/kinorai/omnifeed/internal/auth"
-	"github.com/kinorai/omnifeed/internal/browser"
 	browsercrawl4ai "github.com/kinorai/omnifeed/internal/browser/crawl4ai"
-	"github.com/kinorai/omnifeed/internal/browser/lightpanda"
 	"github.com/kinorai/omnifeed/internal/config"
 	"github.com/kinorai/omnifeed/internal/domain"
 	"github.com/kinorai/omnifeed/internal/engine"
@@ -87,28 +84,11 @@ func run(cfg config.Config, logger *slog.Logger) error {
 	}
 
 	// The Reddit engine fetches through a real browser because Reddit's edge
-	// blocks non-browser HTTP clients — see reddit.Fetcher. crawl4ai is the
-	// default backend; when OMNIFEED_LIGHTPANDA_CDP_URL is set, Lightpanda becomes
-	// the (lighter, faster) primary with crawl4ai kept as the automatic fallback.
+	// blocks non-browser HTTP clients — see reddit.Fetcher.
 	crawl4aiBrowser := browsercrawl4ai.New(httpClient, cfg.Crawl4AIURL, cfg.Crawl4AIToken)
-	var redditPrimary browser.Browser = crawl4aiBrowser
-	var redditFallback browser.Browser // nil unless Lightpanda is enabled
-	if cfg.LightpandaCDPURL != "" {
-		lpBrowser := lightpanda.New(cfg.LightpandaCDPURL)
-		defer lpBrowser.Close()
-		redditPrimary = lpBrowser
-		redditFallback = crawl4aiBrowser
-		// Redacted: a Lightpanda-cloud CDP URL carries its auth token in the query.
-		logger.Info("reddit browser backend: lightpanda (fallback: crawl4ai)", "cdp_url", redactURL(cfg.LightpandaCDPURL))
-	} else {
-		logger.Info("reddit browser backend: crawl4ai")
-	}
 	redditEngine := reddit.New(reddit.Config{
 		Fetcher: reddit.NewFetcher(reddit.FetcherConfig{
-			Primary:  redditPrimary,
-			Fallback: redditFallback,
-			Logger:   logger,
-			Metrics:  metrics,
+			Browser: crawl4aiBrowser,
 		}),
 		Limiter:     limiter,
 		Timeout:     cfg.RedditTimeout,
@@ -360,20 +340,6 @@ func runServers(ctx context.Context, logger *slog.Logger, health *observability.
 
 // upstreamReady is a readiness check: GET the endpoint and report failure if
 // it isn't reachable. Any reachable status counts as up — even 405 means the
-// redactURL strips credentials from a URL before logging it: userinfo and the
-// query string, which carries the auth token in Lightpanda-cloud wss URLs.
-func redactURL(raw string) string {
-	u, err := url.Parse(raw)
-	if err != nil {
-		return "<unparseable url>"
-	}
-	u.User = nil
-	if u.RawQuery != "" {
-		u.RawQuery = "redacted"
-	}
-	return u.String()
-}
-
 // server is listening.
 func upstreamReady(name string, client *httpx.Client, endpoint string) observability.ReadyCheck {
 	return func(ctx context.Context) error {
