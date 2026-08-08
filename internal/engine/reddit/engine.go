@@ -114,10 +114,34 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, eo domain.EngineOptio
 		return e.crawlListing(ctx, rawURL, sub, sort, opts)
 	}
 
+	// The per-domain limiter spans the whole crawl including the share-link
+	// resolve and all expansion rounds — concurrent crawls of different reddit
+	// URLs serialize here. Fine for single-tenant deployments. Acquired BEFORE
+	// the browser session opens (matching crawlListing): with Lightpanda each
+	// Open dials its own CDP connection and the share resolve is a full browser
+	// navigation, so acquiring later would let concurrent crawls stampede Reddit
+	// un-throttled. Key the limiter on the same host the fetch actually hits
+	// (redditOrigin = www.reddit.com) so thread and listing crawls share one
+	// per-domain slot — DomainLimiter buckets by Hostname(), and "reddit.com"
+	// != "www.reddit.com".
+	release, lerr := e.limiter.Acquire(ctx, redditOrigin+"/")
+	if lerr != nil {
+		return domain.Document{}, lerr
+	}
+	defer release()
+
+	// One browser session for the whole crawl (share resolve + thread fetch + all
+	// expansion rounds), so the live-page backend reuses its page across them.
+	sess, err := e.fetcher.Open(ctx)
+	if err != nil {
+		return domain.Document{}, fmt.Errorf("open browser session: %w", err)
+	}
+	defer func() { _ = sess.Close(ctx) }()
+
 	// Reddit share links (/r/{sub}/s/{code}) 301-redirect to the canonical
 	// /comments/ permalink; resolve them in the browser before normalizing.
 	if IsShareURL(rawURL) {
-		resolved, rerr := e.fetcher.ResolveShareURL(ctx, rawURL)
+		resolved, rerr := sess.ResolveShareURL(ctx, rawURL)
 		if rerr != nil {
 			return domain.Document{}, fmt.Errorf("resolve share url: %w", rerr)
 		}
@@ -129,19 +153,7 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, eo domain.EngineOptio
 		return domain.Document{}, fmt.Errorf("normalize url: %w", err)
 	}
 
-	// The per-domain limiter spans the whole crawl including all expansion
-	// rounds — concurrent crawls of different reddit URLs serialize here.
-	// Fine for single-tenant deployments.
-	// Key the limiter on the same host the fetch actually hits (redditOrigin =
-	// www.reddit.com) so thread and listing crawls share one per-domain slot —
-	// DomainLimiter buckets by Hostname(), and "reddit.com" != "www.reddit.com".
-	release, lerr := e.limiter.Acquire(ctx, redditOrigin+permalink)
-	if lerr != nil {
-		return domain.Document{}, lerr
-	}
-	defer release()
-
-	threadJSON, err := e.fetcher.FetchThread(ctx, permalink, opts.FetchLimit, opts.Depth, opts.Sort)
+	threadJSON, err := sess.FetchThread(ctx, permalink, opts.FetchLimit, opts.Depth, opts.Sort)
 	if err != nil {
 		return domain.Document{}, fmt.Errorf("fetch thread: %w", err)
 	}
@@ -151,7 +163,7 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, eo domain.EngineOptio
 		return domain.Document{}, fmt.Errorf("parse thread: %w", err)
 	}
 
-	rounds := e.expandGaps(ctx, &thread, opts)
+	rounds := e.expandGaps(ctx, sess, &thread, opts)
 	if e.metrics != nil {
 		e.metrics.RedditRounds.Observe(float64(rounds))
 	}
@@ -255,7 +267,7 @@ func (e *Engine) resolveOptions(eo domain.EngineOptions) Options {
 
 // expandGaps walks the gap list and calls /api/morechildren up to
 // opts.MaxRounds times. Returns the number of rounds actually performed.
-func (e *Engine) expandGaps(ctx context.Context, thread *Thread, opts Options) int {
+func (e *Engine) expandGaps(ctx context.Context, sess *Session, thread *Thread, opts Options) int {
 	linkFullID := kindPostPrefix + thread.Post.ID
 	rounds := 0
 	for round := 0; round < opts.MaxRounds; round++ {
@@ -280,7 +292,7 @@ func (e *Engine) expandGaps(ctx context.Context, thread *Thread, opts Options) i
 		if len(batchIDs) == 0 {
 			break
 		}
-		moreJSON, err := e.fetcher.FetchMoreChildren(ctx, linkFullID, batchIDs, opts.Sort)
+		moreJSON, err := sess.FetchMoreChildren(ctx, linkFullID, batchIDs, opts.Sort)
 		if err != nil {
 			e.logger.Warn("morechildren round failed", "round", round, "err", err)
 			break
@@ -318,7 +330,13 @@ func (e *Engine) crawlListing(ctx context.Context, rawURL, sub, sort string, opt
 	}
 	defer release()
 
-	raw, err := e.fetcher.FetchListing(ctx, sub, sort, listingLimit)
+	sess, err := e.fetcher.Open(ctx)
+	if err != nil {
+		return domain.Document{}, fmt.Errorf("open browser session: %w", err)
+	}
+	defer func() { _ = sess.Close(ctx) }()
+
+	raw, err := sess.FetchListing(ctx, sub, sort, listingLimit)
 	if err != nil {
 		return domain.Document{}, fmt.Errorf("fetch listing: %w", err)
 	}

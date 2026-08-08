@@ -51,6 +51,43 @@ func TestLoad_FetchMaxChars(t *testing.T) {
 	}
 }
 
+// OMNIFEED_LIGHTPANDA_CDP_URL is optional; when set it must be a ws://|wss:// URL.
+func TestLoad_LightpandaCDPURL(t *testing.T) {
+	cases := []struct {
+		name    string
+		value   string
+		want    string
+		wantErr bool
+	}{
+		{name: "unset means disabled", value: "", want: ""},
+		{name: "ws url ok", value: "ws://lightpanda:9222", want: "ws://lightpanda:9222"},
+		{name: "wss url ok", value: "wss://lightpanda:9222", want: "wss://lightpanda:9222"},
+		{name: "http scheme is a config error", value: "http://lightpanda:9222", wantErr: true},
+		{name: "bare host is a config error", value: "lightpanda:9222", wantErr: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			key := ""
+			if tc.value != "" {
+				key = "OMNIFEED_LIGHTPANDA_CDP_URL"
+			}
+			cfg, err := loadWith(t, key, tc.value)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("want error, got LightpandaCDPURL=%q", cfg.LightpandaCDPURL)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if cfg.LightpandaCDPURL != tc.want {
+				t.Errorf("LightpandaCDPURL: got %q, want %q", cfg.LightpandaCDPURL, tc.want)
+			}
+		})
+	}
+}
+
 // OMNIFEED_DISCOURSE_HOSTS is tri-state: unset keeps the shipped list, a value
 // replaces it, and an explicitly empty value disables the engine.
 func TestLoad_DiscourseHosts(t *testing.T) {

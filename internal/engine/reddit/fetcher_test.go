@@ -4,191 +4,397 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
+	"github.com/kinorai/omnifeed/internal/browser"
 	"github.com/kinorai/omnifeed/internal/domain"
-	"github.com/kinorai/omnifeed/internal/httpx"
+	"github.com/kinorai/omnifeed/internal/observability"
 )
 
-func mustJSON(v interface{}) []byte { b, _ := json.Marshal(v); return b }
+// --- fake browser backend ---
 
-// crawl4aiOK builds a successful /execute_js response whose js_execution_result
-// wraps a {s,b} fetch envelope — the exact shape browserFetch must unwrap
-// (crawl4ai resp → js_execution_result.results[0] → JSON-encoded string → {s,b}
-// → reddit body).
-func crawl4aiOK(fetchStatus int, fetchBody string) []byte {
-	env := mustJSON(fetchEnvelope{S: fetchStatus, B: fetchBody})
-	return mustJSON(map[string]interface{}{
-		"success":             true,
-		"status_code":         200,
-		"js_execution_result": map[string]interface{}{"results": []interface{}{string(env)}},
-	})
+// fakeSession records Navigate/Eval calls and replies via evalFn, so the Reddit
+// Fetcher's own logic (URL/JS shaping, envelope handling, fallback, session
+// reuse) is tested without a real browser.
+type fakeSession struct {
+	navs   []string
+	evals  []string
+	navErr error
+	evalFn func(js string) (string, error)
+	closed bool
 }
 
-func TestFetchThread(t *testing.T) {
-	const permalink = "/r/news/comments/abc123/some_title/"
-	validReddit := `[{"kind":"Listing","data":{"children":[]}},{"kind":"Listing","data":{"children":[]}}]`
+func (s *fakeSession) Navigate(_ context.Context, url string) error {
+	s.navs = append(s.navs, url)
+	return s.navErr
+}
 
-	cases := []struct {
-		name       string
-		httpStatus int
-		body       []byte
-		wantBody   string
-		wantErr    string             // substring; "" = expect success
-		wantKind   domain.FailureKind // asserted when wantErr != ""
-	}{
-		{"success returns reddit body", 200, crawl4aiOK(200, validReddit), validReddit, "", ""},
-		{"reddit 403 block", 200, crawl4aiOK(403, "<html>You've been blocked</html>"), "", "reddit returned 403", domain.KindHTTP403},
-		{"reddit network-security wall", 200, crawl4aiOK(200, "<html>You've been blocked by network security. Please prove you're a human.</html>"), "", "captcha", domain.KindCaptcha},
-		{"non-JSON reddit body", 200, crawl4aiOK(200, "<html>not json</html>"), "", "not JSON", domain.KindBotBlock},
-		// crawl4ai's anti-bot detector hard-errors a blocked Reddit nav as a 500;
-		// it must classify as bot_block (the OmnifeedRedditBlocked alert keys on it),
-		// not upstream_error.
-		{"crawl4ai 5xx (anti-bot)", 500, []byte(`{"error":"Blocked by anti-bot protection"}`), "", "500", domain.KindBotBlock},
-		{"crawl4ai 4xx", 400, []byte(`{"error":"bad request"}`), "", "crawl4ai returned 400", domain.KindError},
-		{"crawl4ai result failed", 200, mustJSON(map[string]interface{}{
-			"success": false, "error_message": "nav timeout",
-		}), "", "nav timeout", domain.KindBotBlock},
-		{"empty js result", 200, mustJSON(map[string]interface{}{
-			"success":             true,
-			"js_execution_result": map[string]interface{}{"results": []interface{}{}},
-		}), "", "no js result", domain.KindBotBlock},
+func (s *fakeSession) Eval(_ context.Context, js string) (string, error) {
+	s.evals = append(s.evals, js)
+	if s.evalFn != nil {
+		return s.evalFn(js)
 	}
+	return "", nil
+}
 
+func (s *fakeSession) Close(context.Context) error { s.closed = true; return nil }
+
+type fakeBrowser struct {
+	name    string
+	session *fakeSession
+	openErr error
+	opened  int
+}
+
+func (b *fakeBrowser) Name() string { return b.name }
+
+func (b *fakeBrowser) Open(context.Context) (browser.Session, error) {
+	b.opened++
+	if b.openErr != nil {
+		return nil, b.openErr
+	}
+	return b.session, nil
+}
+
+// envStr builds the {s,b} envelope string an in-page snippet returns.
+func envStr(status int, body string) string {
+	b, _ := json.Marshal(fetchEnvelope{S: status, B: body})
+	return string(b)
+}
+
+// alwaysBody makes a session whose Eval always returns a 200 envelope wrapping
+// the given Reddit body.
+func alwaysBody(body string) *fakeSession {
+	return &fakeSession{evalFn: func(string) (string, error) { return envStr(200, body), nil }}
+}
+
+const validListing = `[{"kind":"Listing","data":{"children":[]}},{"kind":"Listing","data":{"children":[]}}]`
+
+func openSession(t *testing.T, primary, fallback browser.Browser) *Session {
+	t.Helper()
+	f := NewFetcher(FetcherConfig{Primary: primary, Fallback: fallback, Metrics: observability.NewMetrics()})
+	s, err := f.Open(context.Background())
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	return s
+}
+
+// --- envelope classification ---
+
+func TestUnwrapEnvelope(t *testing.T) {
+	cases := []struct {
+		name     string
+		env      string
+		wantBody string
+		wantErr  string
+		wantKind domain.FailureKind
+	}{
+		{"200 valid json", envStr(200, validListing), validListing, "", ""},
+		{"reddit 403", envStr(403, "<html>You've been blocked</html>"), "", "reddit returned 403", domain.KindHTTP403},
+		{"network-security wall", envStr(200, "<html>You've been blocked by network security. Please prove you're a human.</html>"), "", "", domain.KindCaptcha},
+		{"non-json body", envStr(200, "<html>not json</html>"), "", "not JSON", domain.KindBotBlock},
+		{"garbage envelope", "not-an-envelope", "", "decode fetch envelope", domain.KindBadResponse},
+	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				w.WriteHeader(tc.httpStatus)
-				_, _ = w.Write(tc.body)
-			}))
-			defer srv.Close()
-
-			f := NewFetcher(httpx.New(nil), srv.URL, "")
-			got, err := f.FetchThread(context.Background(), permalink, 500, 20, "top")
-
-			if tc.wantErr != "" {
-				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
-					t.Fatalf("want error containing %q, got %v", tc.wantErr, err)
-				}
-				if tc.wantKind != "" {
-					var fe *domain.FetchError
-					if !errors.As(err, &fe) {
-						t.Fatalf("want *domain.FetchError, got %T: %v", err, err)
-					}
-					if fe.Kind != tc.wantKind {
-						t.Fatalf("reason mismatch: Kind = %q, want %q", fe.Kind, tc.wantKind)
-					}
+			got, err := unwrapEnvelope(tc.env)
+			if tc.wantErr == "" && tc.wantKind == "" {
+				if err != nil || got != tc.wantBody {
+					t.Fatalf("got (%q, %v), want (%q, nil)", got, err, tc.wantBody)
 				}
 				return
 			}
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
+			if err == nil {
+				t.Fatalf("want error, got body %q", got)
 			}
-			if string(got) != tc.wantBody {
-				t.Fatalf("body mismatch:\n got: %s\nwant: %s", got, tc.wantBody)
+			if tc.wantErr != "" && !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("error %q missing %q", err, tc.wantErr)
 			}
-		})
-	}
-}
-
-// TestFetcherMissingEndpoint: with no crawl4ai URL, fetches fail fast (mirrors
-// the config-level guard for the same reason).
-func TestFetcherMissingEndpoint(t *testing.T) {
-	f := NewFetcher(httpx.New(nil), "", "")
-	if _, err := f.FetchThread(context.Background(), "/r/news/comments/abc/t/", 500, 20, "top"); err == nil {
-		t.Fatal("expected error when crawl4ai URL is empty")
-	}
-}
-
-// TestFetcherSendsBearerToken: when a token is configured, every crawl4ai call
-// carries `Authorization: Bearer <token>` — required for crawl4ai 0.9.x, which
-// binds non-loopback only when CRAWL4AI_API_TOKEN is set. Empty token → no header.
-func TestFetcherSendsBearerToken(t *testing.T) {
-	for _, tc := range []struct {
-		name, token, want string
-	}{
-		{"token sends bearer header", "sekret", "Bearer sekret"},
-		{"empty token sends no header", "", ""},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			var gotAuth string
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				gotAuth = r.Header.Get("Authorization")
-				_, _ = w.Write(crawl4aiOK(200, `[{"kind":"Listing","data":{"children":[]}}]`))
-			}))
-			defer srv.Close()
-
-			f := NewFetcher(httpx.New(nil), srv.URL, tc.token)
-			if _, err := f.FetchThread(context.Background(), "/r/news/comments/abc/t/", 500, 20, "top"); err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if gotAuth != tc.want {
-				t.Fatalf("Authorization = %q, want %q", gotAuth, tc.want)
+			var fe *domain.FetchError
+			if !errors.As(err, &fe) || fe.Kind != tc.wantKind {
+				t.Fatalf("want Kind %q, got %v", tc.wantKind, err)
 			}
 		})
 	}
 }
 
-// TestRequestShape locks the /execute_js request the binary sends: {url, scripts}
-// with the Reddit fetch params carried in the script, and morechildren
-// re-navigating the thread page (crawl4ai's /execute_js has no session reuse).
-func TestRequestShape(t *testing.T) {
-	var captured []byte
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		captured, _ = io.ReadAll(r.Body)
-		_, _ = w.Write(crawl4aiOK(200, `[{"kind":"Listing","data":{"children":[]}}]`))
-	}))
-	defer srv.Close()
-	f := NewFetcher(httpx.New(nil), srv.URL, "")
+// --- request shaping ---
 
-	decode := func() execJSRequest {
-		t.Helper()
-		var req execJSRequest
-		if err := json.Unmarshal(captured, &req); err != nil {
-			t.Fatalf("decode captured request: %v", err)
-		}
-		return req
-	}
+func TestFetchThreadShape(t *testing.T) {
+	sess := alwaysBody(validListing)
+	s := openSession(t, &fakeBrowser{name: "primary", session: sess}, nil)
 
-	// FetchThread navigates the thread page and fetches the .json.
-	if _, err := f.FetchThread(context.Background(), "/r/news/comments/abc123/some_title/", 123, 4, "new"); err != nil {
+	got, err := s.FetchThread(context.Background(), "/r/news/comments/abc123/some_title/", 123, 4, "new")
+	if err != nil {
 		t.Fatal(err)
 	}
-	req := decode()
-	if len(req.Scripts) != 1 {
-		t.Fatalf("want exactly one script, got %d", len(req.Scripts))
+	if string(got) != validListing {
+		t.Fatalf("body = %q", got)
 	}
-	// The Reddit fetch params must pass through into the in-page fetch() URL.
-	// jsLit JSON-escapes the URL, so assert each key=value separately, not joined.
+	if len(sess.navs) != 1 || !strings.Contains(sess.navs[0], "/r/news/comments/abc123/") {
+		t.Errorf("FetchThread must navigate the thread page; navs = %v", sess.navs)
+	}
 	for _, want := range []string{"limit=123", "depth=4", "sort=new"} {
-		if !strings.Contains(req.Scripts[0], want) {
-			t.Errorf("thread fetch URL missing %q; script = %s", want, req.Scripts[0])
+		if !strings.Contains(sess.evals[0], want) {
+			t.Errorf("thread fetch JS missing %q; js = %s", want, sess.evals[0])
 		}
-	}
-	if !strings.Contains(req.URL, "/r/news/comments/abc123/") {
-		t.Errorf("FetchThread must navigate the thread page; url = %s", req.URL)
-	}
-
-	// FetchMoreChildren re-navigates the thread page and POSTs morechildren.
-	if _, err := f.FetchMoreChildren(context.Background(), "t3_abc123", []string{"x1", "x2"}, "top"); err != nil {
-		t.Fatal(err)
-	}
-	req = decode()
-	if !strings.Contains(req.URL, "/comments/abc123/") {
-		t.Errorf("morechildren must navigate the thread page; url = %s", req.URL)
-	}
-	if !strings.Contains(req.Scripts[0], "morechildren") {
-		t.Errorf("morechildren script must POST /api/morechildren; script = %s", req.Scripts[0])
 	}
 }
 
-// TestJSLit locks the injection-safety guarantee: jsLit output must always be a
-// valid JS/JSON string literal that round-trips to the input — so a smuggled
-// quote/backslash can never break out of the literal in the JS we send.
+func TestFetchListingShape(t *testing.T) {
+	sess := alwaysBody(`{"kind":"Listing","data":{"children":[]}}`)
+	s := openSession(t, &fakeBrowser{name: "primary", session: sess}, nil)
+
+	if _, err := s.FetchListing(context.Background(), "golang", "hot", 25); err != nil {
+		t.Fatal(err)
+	}
+	if len(sess.navs) != 1 || !strings.Contains(sess.navs[0], "/r/golang/hot/") {
+		t.Errorf("navs = %v", sess.navs)
+	}
+	if !strings.Contains(sess.evals[0], "/r/golang/hot.json") {
+		t.Errorf("listing JS missing the .json URL; js = %s", sess.evals[0])
+	}
+}
+
+// FetchMoreChildren must reuse the exact thread page FetchThread navigated to —
+// this is what makes the live-page backend's second Navigate a no-op.
+func TestSessionReusesThreadPage(t *testing.T) {
+	sess := alwaysBody(validListing)
+	s := openSession(t, &fakeBrowser{name: "primary", session: sess}, nil)
+
+	if _, err := s.FetchThread(context.Background(), "/r/news/comments/abc123/some_title/", 500, 20, "top"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.FetchMoreChildren(context.Background(), "t3_abc123", []string{"x1", "x2"}, "top"); err != nil {
+		t.Fatal(err)
+	}
+	if len(sess.navs) != 2 || sess.navs[0] != sess.navs[1] {
+		t.Fatalf("morechildren must re-navigate the same thread page; navs = %v", sess.navs)
+	}
+	if !strings.Contains(sess.evals[1], "morechildren") {
+		t.Errorf("morechildren JS must POST /api/morechildren; js = %s", sess.evals[1])
+	}
+}
+
+// A whole crawl runs on ONE browser session: re-opening per fetch would destroy
+// live-page reuse and leak a CDP target per fetch.
+func TestCrawlOpensOneSession(t *testing.T) {
+	primary := &fakeBrowser{name: "primary", session: alwaysBody(validListing)}
+	s := openSession(t, primary, nil)
+	if _, err := s.FetchThread(context.Background(), "/r/news/comments/abc123/t/", 500, 20, "top"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.FetchMoreChildren(context.Background(), "t3_abc123", []string{"x1"}, "top"); err != nil {
+		t.Fatal(err)
+	}
+	if primary.opened != 1 {
+		t.Fatalf("primary browser opened %d times across one crawl, want 1", primary.opened)
+	}
+}
+
+func TestResolveShareURL(t *testing.T) {
+	canonical := "https://www.reddit.com/r/news/comments/abc123/title/?utm_source=share"
+	sess := &fakeSession{evalFn: func(string) (string, error) { return canonical, nil }}
+	s := openSession(t, &fakeBrowser{name: "primary", session: sess}, nil)
+
+	got, err := s.ResolveShareURL(context.Background(), "https://www.reddit.com/r/news/s/abc")
+	if err != nil || got != canonical {
+		t.Fatalf("ResolveShareURL = %q, %v; want %q", got, err, canonical)
+	}
+
+	// A resolution that isn't a thread is an error.
+	sess2 := &fakeSession{evalFn: func(string) (string, error) { return "https://www.reddit.com/r/news/", nil }}
+	s2 := openSession(t, &fakeBrowser{name: "primary", session: sess2}, nil)
+	if _, err := s2.ResolveShareURL(context.Background(), "https://www.reddit.com/r/news/s/abc"); err == nil {
+		t.Error("expected error when share link resolves to a non-thread URL")
+	}
+}
+
+// --- fallback ---
+
+// A block on the primary retries the same fetch on the fallback and returns its
+// result, opening the fallback exactly once and recording the fallback in the
+// metric.
+func TestFetchFallsBackOnBlock(t *testing.T) {
+	primarySess := &fakeSession{evalFn: func(string) (string, error) {
+		return envStr(200, "<html>You've been blocked by network security</html>"), nil // → captcha
+	}}
+	fallbackSess := alwaysBody(validListing)
+	primary := &fakeBrowser{name: "lightpanda", session: primarySess}
+	fallback := &fakeBrowser{name: "crawl4ai", session: fallbackSess}
+	metrics := observability.NewMetrics()
+	f := NewFetcher(FetcherConfig{Primary: primary, Fallback: fallback, Metrics: metrics})
+	s, err := f.Open(context.Background())
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	got, err := s.FetchThread(context.Background(), "/r/news/comments/abc/t/", 500, 20, "top")
+	if err != nil {
+		t.Fatalf("expected fallback success, got %v", err)
+	}
+	if string(got) != validListing {
+		t.Fatalf("fallback body = %q", got)
+	}
+	if fallback.opened != 1 {
+		t.Errorf("fallback browser opened %d times, want 1", fallback.opened)
+	}
+	if !primarySess.closed {
+		t.Error("primary session must be closed after falling back")
+	}
+	// A second fetch stays on the fallback (sticky) — the primary isn't retried.
+	if _, err := s.FetchMoreChildren(context.Background(), "t3_abc", []string{"c1"}, "top"); err != nil {
+		t.Fatal(err)
+	}
+	if fallback.opened != 1 {
+		t.Errorf("fallback must be sticky (opened once), got %d", fallback.opened)
+	}
+	if len(primarySess.evals) != 1 {
+		t.Errorf("primary must not be retried after fallback; primary evals = %d", len(primarySess.evals))
+	}
+	// The fallback is recorded in the metric, tagged with the primary's failure
+	// reason — the operator-facing signal the README documents.
+	fbCount := testutil.ToFloat64(metrics.BrowserFallbacks.WithLabelValues("lightpanda", "crawl4ai", "captcha"))
+	if fbCount != 1 {
+		t.Errorf("omnifeed_browser_fallback_total{lightpanda,crawl4ai,captcha} = %v, want 1", fbCount)
+	}
+}
+
+// With no fallback configured, the primary's error surfaces unchanged.
+func TestNoFallbackConfigured(t *testing.T) {
+	primarySess := &fakeSession{evalFn: func(string) (string, error) {
+		return envStr(403, "blocked"), nil
+	}}
+	s := openSession(t, &fakeBrowser{name: "crawl4ai", session: primarySess}, nil)
+
+	_, err := s.FetchThread(context.Background(), "/r/news/comments/abc/t/", 500, 20, "top")
+	var fe *domain.FetchError
+	if !errors.As(err, &fe) || fe.Kind != domain.KindHTTP403 {
+		t.Fatalf("want http_403 error, got %v", err)
+	}
+}
+
+// Caller cancellation / the crawl's own timeout must NOT trigger fallback — the
+// fallback would only exceed the same budget.
+func TestNoFallbackOnCancel(t *testing.T) {
+	primarySess := &fakeSession{evalFn: func(string) (string, error) {
+		return "", &domain.FetchError{Kind: domain.KindCanceled, Err: context.Canceled}
+	}}
+	primary := &fakeBrowser{name: "lightpanda", session: primarySess}
+	fallback := &fakeBrowser{name: "crawl4ai", session: alwaysBody(validListing)}
+	s := openSession(t, primary, fallback)
+
+	if _, err := s.FetchThread(context.Background(), "/r/news/comments/abc/t/", 500, 20, "top"); err == nil {
+		t.Fatal("expected the canceled error to surface")
+	}
+	if fallback.opened != 0 {
+		t.Errorf("cancellation must not fall back; fallback opened %d times", fallback.opened)
+	}
+}
+
+func TestShouldFallback(t *testing.T) {
+	yes := []error{
+		// Fingerprint-shaped blocks and browser faults: a second browser can help.
+		&domain.FetchError{Kind: domain.KindCaptcha},
+		&domain.FetchError{Kind: domain.KindBotBlock},
+		&domain.FetchError{Kind: domain.KindHTTP403},
+		&domain.FetchError{Kind: domain.KindBadResponse},
+		errors.New("dead websocket"),
+	}
+	for _, e := range yes {
+		if !shouldFallback(e) {
+			t.Errorf("shouldFallback(%v) = false, want true", e)
+		}
+	}
+	no := []error{
+		nil,
+		// Caller cancellation / the crawl's own budget.
+		context.Canceled,
+		context.DeadlineExceeded,
+		&domain.FetchError{Kind: domain.KindCanceled},
+		&domain.FetchError{Kind: domain.KindTimeout},
+		// Reddit's own answers through the browser: deterministic (404/5xx) or
+		// IP-keyed (429) — a different browser gets the same answer.
+		&domain.FetchError{Kind: domain.KindError, StatusCode: 404},
+		&domain.FetchError{Kind: domain.KindHTTP429, StatusCode: 429},
+		&domain.FetchError{Kind: domain.KindUpstreamError, StatusCode: 503},
+	}
+	for _, e := range no {
+		if shouldFallback(e) {
+			t.Errorf("shouldFallback(%v) = true, want false", e)
+		}
+	}
+}
+
+// Deterministic Reddit-side outcomes (a deleted thread's 404, a 429 rate limit)
+// must surface as-is instead of being replayed through the fallback — the
+// fallback shares the egress IP and can't change what Reddit said.
+func TestNoFallbackOnRedditAnswer(t *testing.T) {
+	for _, status := range []int{404, 429, 503} {
+		primarySess := &fakeSession{evalFn: func(string) (string, error) {
+			return envStr(status, "reddit says no"), nil
+		}}
+		primary := &fakeBrowser{name: "lightpanda", session: primarySess}
+		fallback := &fakeBrowser{name: "crawl4ai", session: alwaysBody(validListing)}
+		s := openSession(t, primary, fallback)
+
+		_, err := s.FetchThread(context.Background(), "/r/news/comments/abc/t/", 500, 20, "top")
+		var fe *domain.FetchError
+		if !errors.As(err, &fe) || fe.StatusCode != status {
+			t.Fatalf("status %d: want the envelope error to surface, got %v", status, err)
+		}
+		if fallback.opened != 0 {
+			t.Errorf("status %d: reddit's own answer must not fall back; fallback opened %d times", status, fallback.opened)
+		}
+	}
+}
+
+// When the fallback browser itself fails to open, the PRIMARY's error must
+// surface (log-and-keep contract) — not the open failure — and the session must
+// not switch.
+func TestFallbackOpenFailureKeepsPrimaryError(t *testing.T) {
+	primarySess := &fakeSession{evalFn: func(string) (string, error) {
+		return envStr(403, "blocked"), nil
+	}}
+	primary := &fakeBrowser{name: "lightpanda", session: primarySess}
+	fallback := &fakeBrowser{name: "crawl4ai", openErr: errors.New("crawl4ai down")}
+	s := openSession(t, primary, fallback)
+
+	_, err := s.FetchThread(context.Background(), "/r/news/comments/abc/t/", 500, 20, "top")
+	var fe *domain.FetchError
+	if !errors.As(err, &fe) || fe.Kind != domain.KindHTTP403 {
+		t.Fatalf("want the primary's http_403 to surface, got %v", err)
+	}
+	if strings.Contains(err.Error(), "crawl4ai down") {
+		t.Errorf("open failure must not replace the primary error: %v", err)
+	}
+	if s.fellBack {
+		t.Error("a failed fallback open must not mark the session as fallen back")
+	}
+	// The next fetch retries the fallback open (fellBack never latched).
+	if _, err := s.FetchThread(context.Background(), "/r/news/comments/abc/t/", 500, 20, "top"); err == nil {
+		t.Fatal("expected error")
+	}
+	if fallback.opened != 2 {
+		t.Errorf("fallback open must be attempted per failing fetch; opened %d times", fallback.opened)
+	}
+}
+
+// FetchMoreChildren without a prior FetchThread has no thread page to run the
+// same-origin POST from — it must fail loudly, not fabricate a URL.
+func TestFetchMoreChildrenRequiresFetchThread(t *testing.T) {
+	s := openSession(t, &fakeBrowser{name: "primary", session: alwaysBody(validListing)}, nil)
+	if _, err := s.FetchMoreChildren(context.Background(), "t3_abc", []string{"c1"}, "top"); err == nil {
+		t.Fatal("expected error when FetchMoreChildren precedes FetchThread")
+	}
+}
+
+// --- pure snippet helpers ---
+
 func TestJSLit(t *testing.T) {
 	for _, in := range []string{
 		`https://www.reddit.com/r/x/comments/abc/t.json?a=1`,
@@ -243,63 +449,5 @@ func TestIsShareURL(t *testing.T) {
 		if IsShareURL(u) {
 			t.Errorf("IsShareURL(%q) = true, want false", u)
 		}
-	}
-}
-
-// crawl4aiRawJS builds an /execute_js response whose js_execution_result returns
-// a plain string (e.g. location.href) rather than a {s,b} envelope.
-func crawl4aiRawJS(jsReturn string) []byte {
-	return mustJSON(map[string]interface{}{
-		"success":             true,
-		"status_code":         200,
-		"js_execution_result": map[string]interface{}{"results": []interface{}{jsReturn}},
-	})
-}
-
-func TestResolveShareURL(t *testing.T) {
-	canonical := "https://www.reddit.com/r/news/comments/abc123/title/?utm_source=share"
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write(crawl4aiRawJS(canonical))
-	}))
-	defer srv.Close()
-	f := NewFetcher(httpx.New(nil), srv.URL, "")
-	got, err := f.ResolveShareURL(context.Background(), "https://www.reddit.com/r/news/s/abc")
-	if err != nil || got != canonical {
-		t.Fatalf("ResolveShareURL = %q, %v; want %q", got, err, canonical)
-	}
-
-	// A resolution that isn't a thread is an error.
-	srv2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write(crawl4aiRawJS("https://www.reddit.com/r/news/"))
-	}))
-	defer srv2.Close()
-	f2 := NewFetcher(httpx.New(nil), srv2.URL, "")
-	if _, err := f2.ResolveShareURL(context.Background(), "https://www.reddit.com/r/news/s/abc"); err == nil {
-		t.Error("expected error when share link resolves to a non-thread URL")
-	}
-}
-
-// FetchListing must request /r/{sub}/{sort}.json (same-origin, browser path) and
-// return Reddit's listing body unwrapped from the crawl4ai envelope.
-func TestFetchListing(t *testing.T) {
-	const listing = `{"kind":"Listing","data":{"children":[]}}`
-	var reqBody string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		b, _ := io.ReadAll(r.Body)
-		reqBody = string(b)
-		_, _ = w.Write(crawl4aiOK(200, listing))
-	}))
-	defer srv.Close()
-
-	f := NewFetcher(httpx.New(nil), srv.URL, "")
-	got, err := f.FetchListing(context.Background(), "golang", "hot", 25)
-	if err != nil {
-		t.Fatalf("FetchListing: %v", err)
-	}
-	if string(got) != listing {
-		t.Errorf("body = %q, want %q", got, listing)
-	}
-	if !strings.Contains(reqBody, `/r/golang/hot.json`) {
-		t.Errorf("crawl4ai request js_code missing the listing .json URL; got %s", reqBody)
 	}
 }
