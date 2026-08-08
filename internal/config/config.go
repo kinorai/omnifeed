@@ -48,6 +48,13 @@ type Config struct {
 	// containers, which can yield no content at all on pages without them.
 	Crawl4AITargetElements string
 
+	// LightpandaCDPURL, when set (e.g. ws://lightpanda:9222), makes the Reddit
+	// engine drive a Lightpanda CDP server as its browser backend instead of
+	// crawl4ai — lighter and faster for Reddit-style crawls — with crawl4ai kept
+	// as the automatic fallback. Empty (the default) keeps crawl4ai as the only
+	// backend, so the OSS default needs no extra service.
+	LightpandaCDPURL string
+
 	// Upstream SearXNG (optional). Empty disables the `search` MCP tool.
 	SearXNGURL     string
 	SearXNGTimeout time.Duration
@@ -110,6 +117,8 @@ func Load() (Config, error) {
 
 		Crawl4AIExcludedSelector: env("OMNIFEED_CRAWL4AI_EXCLUDED_SELECTOR", ""),
 		Crawl4AITargetElements:   env("OMNIFEED_CRAWL4AI_TARGET_ELEMENTS", ""),
+
+		LightpandaCDPURL: env("OMNIFEED_LIGHTPANDA_CDP_URL", ""),
 
 		SearXNGURL:   env("OMNIFEED_SEARXNG_URL", ""),
 		GitHubToken:  env("OMNIFEED_GITHUB_TOKEN", ""),
@@ -236,6 +245,12 @@ func Load() (Config, error) {
 	// reporting healthy while every crawl errors.
 	if c.Crawl4AIURL == "" {
 		return c, fmt.Errorf("OMNIFEED_CRAWL4AI_URL is required: every engine (Reddit and the generic fallback) fetches through crawl4ai")
+	}
+
+	// Lightpanda is opt-in; when set it must be a CDP WebSocket URL. crawl4ai
+	// stays required either way — it is the Lightpanda backend's fallback.
+	if c.LightpandaCDPURL != "" && !strings.HasPrefix(c.LightpandaCDPURL, "ws://") && !strings.HasPrefix(c.LightpandaCDPURL, "wss://") {
+		return c, fmt.Errorf("OMNIFEED_LIGHTPANDA_CDP_URL must be a ws:// or wss:// CDP URL, got %q", c.LightpandaCDPURL)
 	}
 
 	return c, nil

@@ -165,6 +165,7 @@ Everything is configured with `OMNIFEED_`-prefixed environment variables. In pra
 | `OMNIFEED_API_KEY` | _(unset)_ | Bearer token for `/crawl`, `/search`, `/mcp`. If unset, the proxy refuses to start unless `OMNIFEED_DEV_NO_AUTH=true`. Stdio MCP is unaffected. |
 | `OMNIFEED_CRAWL4AI_URL` | _(required)_ | Upstream crawl4ai endpoint. Reddit + the generic fallback fetch through it (the Hacker News engine reads `hn.algolia.com` directly); if empty, the proxy exits at startup. |
 | `OMNIFEED_CRAWL4AI_TOKEN` | _(unset)_ | Bearer token sent to crawl4ai (its `CRAWL4AI_API_TOKEN`). Needed when the upstream enforces auth — crawl4ai `0.9.x` binds non-loopback **only** when a token is set. Unset sends no `Authorization` header. |
+| `OMNIFEED_LIGHTPANDA_CDP_URL` | _(unset)_ | Opt-in: CDP WebSocket URL of a [Lightpanda](https://lightpanda.io) server (e.g. `ws://lightpanda:9222`). When set, the Reddit engine drives Lightpanda — a far lighter, faster headless browser — instead of crawl4ai, keeping crawl4ai as the automatic fallback. Unset (the default) keeps crawl4ai as the only browser backend, so nothing extra to run. Must be `ws://` or `wss://`. See [Reddit browser backend](#reddit-browser-backend-lightpanda-optional). |
 | `OMNIFEED_SEARXNG_URL` | _(unset)_ | Upstream SearXNG base URL (e.g. `http://searxng:8080`). When unset, `web_search` / `/search` are not exposed. The instance must enable the `json` format. |
 | `OMNIFEED_DEV_NO_AUTH` | `false` | Run the HTTP transports with **no** auth when no key is set (local/dev only). Ignored if a key is set. |
 | `OMNIFEED_LISTEN_ADDR` | `:8080` | HTTP listen address (`/crawl`, `/search`) |
@@ -271,9 +272,39 @@ flowchart TB
 
 ### <img src="https://raw.githubusercontent.com/Tarikul-Islam-Anik/Animated-Fluent-Emojis/master/Emojis/Objects/Shield.png" width="22" height="22" /> Reddit anti-bot handling
 
-Reddit's edge 403-blocks non-browser HTTP clients (it fingerprints the TLS/JA3 handshake), so the Reddit engine never calls Reddit directly. It drives crawl4ai's headless Chromium to a `www.reddit.com` page (which clears the bot wall), then runs a **same-origin `fetch()`** of the `.json` and `/api/morechildren` endpoints from inside that page. No Reddit auth, cookies, or API key. It reaches crawl4ai through the token-gated **`POST /execute_js`** endpoint (crawl4ai `0.9.x` rejects caller `js_code` on `/crawl`), so the upstream must run with `CRAWL4AI_EXECUTE_JS_ENABLED=true`.
+Reddit's edge 403-blocks non-browser HTTP clients (it fingerprints the TLS/JA3 handshake), so the Reddit engine never calls Reddit directly. It drives a **real headless browser** to a `www.reddit.com` page (which clears the bot wall), then runs a **same-origin `fetch()`** of the `.json` and `/api/morechildren` endpoints from inside that page. No Reddit auth, cookies, or API key. By default the browser is crawl4ai, reached through its token-gated **`POST /execute_js`** endpoint (crawl4ai `0.9.x` rejects caller `js_code` on `/crawl`), so the upstream must run with `CRAWL4AI_EXECUTE_JS_ENABLED=true`.
 
-> Sustained scraping can raise your source IP's risk score. If fetches start returning the block page, slow down, keep `expand` modest, or route crawl4ai through a residential proxy.
+> Sustained scraping can raise your source IP's risk score. If fetches start returning the block page, slow down, keep `expand` modest, or route the browser through a residential proxy.
+
+### <img src="https://raw.githubusercontent.com/Tarikul-Islam-Anik/Animated-Fluent-Emojis/master/Emojis/Animals/Panda.png" width="22" height="22" /> Reddit browser backend (Lightpanda, optional)
+
+The Reddit engine talks to its browser through a small `browser.Browser` port with two backends:
+
+- **crawl4ai** _(default)_ — no extra service beyond the crawl4ai you already run. Each fetch re-navigates the page (crawl4ai's `/execute_js` has no session reuse).
+- **[Lightpanda](https://lightpanda.io)** _(opt-in, set `OMNIFEED_LIGHTPANDA_CDP_URL`)_ — a from-scratch headless browser built for automation, **~16× less memory and ~9× faster** than headless Chrome on its own crawler benchmark. It holds one **live page per crawl**, so a deep thread's `/api/morechildren` expansion rounds reuse the same page and skip re-navigation (a re-navigation-free follow-up fetch is ~0.2s vs ~1.5s for a fresh navigation).
+
+When Lightpanda is enabled it becomes the primary and **crawl4ai stays the automatic fallback**: a fetch that fails on Lightpanda (a crash or dropped CDP connection, a nav that won't settle, or a Reddit block Lightpanda's newer engine trips on — 403/CAPTCHA/bot wall) is retried on crawl4ai, sticky for the rest of that crawl. Answers Reddit itself gave through the browser are **not** retried — a 404, a 429 rate limit (keyed on the egress IP both backends share), or a Reddit 5xx would just repeat at twice the cost — and neither are caller cancellation or the crawl's own timeout. Every fallback is logged and counted in `omnifeed_browser_fallback_total{from="lightpanda",to="crawl4ai",reason=…}` with the primary's failure reason — watch that counter to gauge Lightpanda's health (it keeps a blocked primary visible even when the fallback then succeeds and the request records `reason="ok"`). Lightpanda is in beta, which is exactly why it runs behind this fallback rather than as the default.
+
+Run one with Docker and point omnifeed at it:
+
+```bash
+docker run -d --name lightpanda -p 9222:9222 -e LIGHTPANDA_DISABLE_TELEMETRY=true \
+  lightpanda/browser:nightly \
+  /bin/lightpanda serve --host 0.0.0.0 --port 9222 --log_level info --block-private-networks
+# then set on omnifeed:
+OMNIFEED_LIGHTPANDA_CDP_URL=ws://lightpanda:9222
+```
+
+Operational notes (from Lightpanda's CLI reference):
+
+- **`--block-private-networks`** is browser-level SSRF defense (blocks in-page requests to private/internal IPs after DNS resolution) — keep it on; omnifeed's own `OMNIFEED_BLOCK_PRIVATE_IPS` validates URLs *before* dispatch, this guards what runs *inside* the page.
+- The CDP port also serves **`GET /json/version`** (use it as a liveness/readiness probe) and **Prometheus `GET /metrics`** (`cdp_connections_total`, `cdp_connection_limit_total`, …).
+- Defaults that matter: **16 simultaneous CDP connections** (`--cdp-max-connections`; omnifeed opens at most `OMNIFEED_PER_DOMAIN_CONCURRENCY` at a time), a **10s per-transfer HTTP cap** (`--http-timeout` — raise it if very large thread JSONs get cut), and a **30s stalled-JS watchdog** (`--watchdog-ms`) that closes the CDP connection — omnifeed's fallback absorbs that.
+- **Do not set `--obey-robots`** for the Reddit backend — reddit.com's robots.txt disallows everything, so every fetch would refuse.
+- Lightpanda never impersonates Chrome (`--user-agent` values containing "Mozilla" are rejected by design); Reddit currently accepts its native UA. `--user-agent-suffix` lets you append a contact string politely, and `--http-proxy` + `--proxy-bearer-token` route it through a proxy if your IP's risk score climbs.
+- `wss://` URLs work too, e.g. a [Lightpanda cloud](https://lightpanda.io) endpoint (`wss://…/ws?token=…`).
+
+`make check` stays hermetic (the CDP path is tested against a fake driver). To exercise the real path against a live server: `OMNIFEED_TEST_LIGHTPANDA_CDP_URL=ws://127.0.0.1:9222 go test ./internal/browser/lightpanda -run Integration`.
 
 ### <img src="https://raw.githubusercontent.com/Tarikul-Islam-Anik/Animated-Fluent-Emojis/master/Emojis/Activities/Puzzle%20Piece.png" width="22" height="22" /> Extending it
 
