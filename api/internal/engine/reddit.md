@@ -190,7 +190,7 @@ Name returns the engine identifier.
 
 Fetcher retrieves Reddit data through a real headless browser. Reddit's edge hard\-blocks non\-browser HTTP clients \(Go's net/http gets a 403 "network security" wall keyed on the TLS/JA3 fingerprint\), so we never hit Reddit directly. Instead a crawl opens a browser Session, navigates to a reddit.com page \(which clears the bot challenge\), and runs a same\-origin fetch\(\) of the target JSON endpoint from inside that page — the browser context passes the wall and the in\-page fetch inherits it, so the JSON comes back exactly as a logged\-out browser would see it \(no auth, no cookies\).
 
-The Session is backed by a browser.Browser. Two backends exist: crawl4ai \(default, re\-navigates per fetch\) and Lightpanda \(opt\-in, keeps one live page so a deep crawl's follow\-up fetches skip re\-navigation\). When a fallback browser is configured \(Lightpanda primary → crawl4ai fallback\), a fetch that fails on the primary is retried on the fallback, sticky for the rest of the crawl.
+The Session is backed by a browser.Browser \(crawl4ai's /execute\_js\).
 
 ```go
 type Fetcher struct {
@@ -214,19 +214,16 @@ NewFetcher constructs a Fetcher from cfg.
 func (f *Fetcher) Open(ctx context.Context) (*Session, error)
 ```
 
-Open starts a crawl session on the primary browser. The caller owns it and must Close it. Fallback happens lazily inside the session on the first fetch that fails — not here — so a primary whose process is down \(its Open succeeds lazily, its first fetch fails\) is still handled.
+Open starts a crawl session. The caller owns it and must Close it.
 
 <a name="FetcherConfig"></a>
 ## type FetcherConfig
 
-FetcherConfig configures a Fetcher. Primary is required; Fallback is optional \(set only when the primary is a backend worth retrying past, e.g. Lightpanda\).
+FetcherConfig configures a Fetcher.
 
 ```go
 type FetcherConfig struct {
-    Primary  browser.Browser
-    Fallback browser.Browser
-    Logger   *slog.Logger
-    Metrics  *observability.Metrics
+    Browser browser.Browser
 }
 ```
 
@@ -302,7 +299,7 @@ ParseSubredditListing decodes a subreddit listing \(.json\) — a single Listing
 <a name="Session"></a>
 ## type Session
 
-Session is one crawl's browser session: a live browsing context plus the automatic\-fallback machinery. All fetches in a crawl share one Session so the live\-page backend can reuse its page across them. Not safe for concurrent use.
+Session is one crawl's browser session. All fetches in a crawl share one Session so state like the recorded thread page carries across them. Not safe for concurrent use.
 
 ```go
 type Session struct {
@@ -317,7 +314,7 @@ type Session struct {
 func (s *Session) Close(ctx context.Context) error
 ```
 
-Close releases the active browser session.
+Close releases the browser session.
 
 <a name="Session.FetchListing"></a>
 ### func \(\*Session\) FetchListing
@@ -335,7 +332,7 @@ FetchListing retrieves a subreddit listing \(hot/new/top/…\) via its .json end
 func (s *Session) FetchMoreChildren(ctx context.Context, linkID string, childIDs []string, sort string) ([]byte, error)
 ```
 
-FetchMoreChildren expands collapsed reply branches via /api/morechildren. linkID must include the t3\_ prefix; childIDs are bare IDs \(no prefix\). It re\-navigates the thread page FetchThread recorded \(reused live on the Lightpanda backend, re\-navigated on crawl4ai\) and runs the same\-origin POST.
+FetchMoreChildren expands collapsed reply branches via /api/morechildren. linkID must include the t3\_ prefix; childIDs are bare IDs \(no prefix\). It re\-navigates the thread page FetchThread recorded and runs the same\-origin POST from it.
 
 <a name="Session.FetchThread"></a>
 ### func \(\*Session\) FetchThread
