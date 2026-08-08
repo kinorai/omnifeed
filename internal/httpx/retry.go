@@ -11,6 +11,7 @@ import (
 	"math/rand"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/kinorai/omnifeed/internal/domain"
@@ -43,11 +44,21 @@ func (c *RetryConfig) defaults() {
 // Client wraps http.Client with retry-on-429/5xx and Retry-After honoring.
 type Client struct {
 	HTTP *http.Client
-	// OnAttempt, when non-nil, is called once per HTTP attempt DoRetry makes.
-	// retry is false for the first try and true for every retry, so a caller can
-	// count retry volume — the wasted work #2's RetryableStatus veto cuts. Set on
-	// the shared crawl client; nil elsewhere.
-	OnAttempt func(retry bool)
+	// OnAttempt, when non-nil, is called once per HTTP attempt DoRetry makes,
+	// with the upstream this client is labeled for (see WithUpstream). retry is
+	// false for the first try and true for every retry, so a caller can count
+	// retry volume — the wasted work #2's RetryableStatus veto cuts. Set on the
+	// shared crawl client; nil elsewhere.
+	OnAttempt func(upstream string, retry bool)
+	// OnUpstream, when non-nil, is called once per HTTP attempt with the
+	// round-trip duration — request start until the response body is fully read
+	// (or closed), or until the transport error. status is "ok" for 2xx and
+	// "error" otherwise (non-2xx status, transport error, timeout).
+	OnUpstream func(upstream, op, status string, duration time.Duration)
+
+	// upstream/op label every attempt this client makes in metrics. Set once per
+	// adapter via WithUpstream so labels never derive from URLs.
+	upstream, op string
 }
 
 // New returns a Client wrapping the given http.Client. If nil is passed, a
@@ -57,6 +68,19 @@ func New(c *http.Client) *Client {
 		c = &http.Client{Timeout: 90 * time.Second}
 	}
 	return &Client{HTTP: c}
+}
+
+// WithUpstream returns a shallow copy of c whose attempts are labeled with the
+// given upstream/op pair (e.g. "crawl4ai"/"crawl"). The copy shares the
+// underlying http.Client and hooks, so adapters declare their identity once at
+// construction. Returns nil when c is nil (engines built without a client).
+func (c *Client) WithUpstream(upstream, op string) *Client {
+	if c == nil {
+		return nil
+	}
+	cp := *c
+	cp.upstream, cp.op = upstream, op
+	return &cp
 }
 
 // DoRetry sends an HTTP request with exponential-backoff-with-jitter retries
@@ -78,6 +102,16 @@ func (c *Client) DoRetry(
 	cfg RetryConfig,
 ) (*http.Response, error) {
 	cfg.defaults()
+
+	// Metric labels for this client's attempts. "unknown" keeps the label set
+	// bounded when a caller forgot WithUpstream (never derived from URLs).
+	upstream, op := c.upstream, c.op
+	if upstream == "" {
+		upstream = "unknown"
+	}
+	if op == "" {
+		op = "unknown"
+	}
 
 	delay := cfg.BaseDelay
 	var lastErr error
@@ -107,16 +141,31 @@ func (c *Client) DoRetry(
 		}
 
 		if c.OnAttempt != nil {
-			c.OnAttempt(attempt > 0)
+			c.OnAttempt(upstream, attempt > 0)
 		}
+		start := time.Now()
 		resp, err := c.HTTP.Do(req)
 		if err != nil {
+			if c.OnUpstream != nil {
+				c.OnUpstream(upstream, op, "error", time.Since(start))
+			}
 			lastErr = err
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				return nil, err
 			}
 			delay = min(delay*2, cfg.MaxDelay)
 			continue
+		}
+		if c.OnUpstream != nil {
+			// The round-trip isn't over at header receipt: wrap the body so the
+			// observation fires once it is fully read (or closed) — by the caller on
+			// the return paths below, or by the drain in the retryable path.
+			status := "error"
+			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+				status = "ok"
+			}
+			observe := func() { c.OnUpstream(upstream, op, status, time.Since(start)) }
+			resp.Body = &observedBody{ReadCloser: resp.Body, observe: observe}
 		}
 
 		// Non-retryable status — return immediately.
@@ -149,6 +198,30 @@ func (c *Client) DoRetry(
 	}
 
 	return nil, lastErr
+}
+
+// observedBody fires observe exactly once, when the response body has been
+// fully read (EOF) or is closed — whichever comes first — so the upstream
+// round-trip metric covers body transfer, not just header receipt.
+type observedBody struct {
+	io.ReadCloser
+	observe func()
+	once    sync.Once
+}
+
+func (b *observedBody) Read(p []byte) (int, error) {
+	n, err := b.ReadCloser.Read(p)
+	if err == io.EOF {
+		b.once.Do(b.observe)
+	}
+	return n, err
+}
+
+// Close observes the round-trip (if EOF hasn't already) and closes the
+// underlying body.
+func (b *observedBody) Close() error {
+	b.once.Do(b.observe)
+	return b.ReadCloser.Close()
 }
 
 // parseRetryAfter parses the integer-seconds form of Retry-After.

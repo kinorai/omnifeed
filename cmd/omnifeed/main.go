@@ -66,8 +66,13 @@ func run(cfg config.Config, logger *slog.Logger) error {
 	limiter := httpx.NewDomainLimiter(cfg.PerDomainConcurrency, cfg.PerDomainDelay)
 	metrics := observability.NewMetrics()
 	// Count every HTTP attempt the crawl client makes (first try + retries) so
-	// retry waste shows up in metrics, not just reconstructed from logs.
+	// retry waste shows up in metrics, not just reconstructed from logs, and
+	// time every upstream round-trip per attempt. Hooks must be set BEFORE the
+	// adapters below copy the client via WithUpstream.
 	httpClient.OnAttempt = metrics.ObserveAttempt
+	httpClient.OnUpstream = metrics.ObserveUpstream
+	// Surface time spent queued behind the per-domain politeness limiter.
+	limiter.OnWait = metrics.ObserveLimiterWait
 
 	// --- Engines ---
 
@@ -143,7 +148,8 @@ func run(cfg config.Config, logger *slog.Logger) error {
 		Register(discourseEngine).
 		Fallback(crawl4aiEngine).
 		BlockPrivateIPs(cfg.BlockPrivateIPs).
-		Logger(logger)
+		Logger(logger).
+		Metrics(metrics)
 
 	// --- Searcher (optional — search tool is exposed only when configured) ---
 
@@ -151,10 +157,13 @@ func run(cfg config.Config, logger *slog.Logger) error {
 	var searxngClient *httpx.Client
 	if cfg.SearXNGURL != "" {
 		searxngClient = httpx.New(&http.Client{Timeout: cfg.SearXNGTimeout})
+		searxngClient.OnAttempt = metrics.ObserveAttempt
+		searxngClient.OnUpstream = metrics.ObserveUpstream
 		searcher = searxng.New(searxng.Config{
 			Endpoint: cfg.SearXNGURL,
 			Client:   searxngClient,
 			Logger:   logger,
+			Metrics:  metrics,
 		})
 	} else {
 		logger.Info("search tool disabled (OMNIFEED_SEARXNG_URL not set)")

@@ -70,7 +70,7 @@ func New(cfg Config) *Engine {
 		cfg.Logger = slog.Default()
 	}
 	return &Engine{
-		client:  cfg.Client,
+		client:  cfg.Client.WithUpstream("github", "api"),
 		limiter: cfg.Limiter,
 		apiBase: strings.TrimRight(cfg.APIBase, "/"),
 		token:   cfg.Token,
@@ -130,7 +130,7 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, _ domain.EngineOption
 	defer cancel()
 
 	if e.limiter != nil {
-		release, lerr := e.limiter.Acquire(ctx, e.apiBase)
+		release, lerr := e.limiter.Acquire(ctx, e.Name(), e.apiBase)
 		if lerr != nil {
 			return domain.Document{}, lerr
 		}

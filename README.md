@@ -291,6 +291,24 @@ docker compose up # run the full stack locally (tokenless: ports 8080 / 8081 / 9
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the full workflow, [SECURITY.md](SECURITY.md) for vulnerability reporting, and [AGENTS.md](AGENTS.md) if you're a coding agent working in this repo.
 
+### Prometheus metrics
+
+Served on `OMNIFEED_METRICS_ADDR` (default `:9090`) at `/metrics`, alongside the Go/process collectors:
+
+| Metric | Type | Labels | What it measures |
+|---|---|---|---|
+| `omnifeed_requests_total` | counter | `engine, tenant, status, reason` | Crawl requests, with a bounded failure `reason` (`ok` on success) |
+| `omnifeed_request_seconds` | histogram | `engine, status, reason` | End-to-end crawl latency |
+| `omnifeed_request_attempts_total` | counter | `upstream, attempt` | HTTP attempts by the retrying client (`first` vs `retry`) |
+| `omnifeed_upstream_seconds` | histogram | `upstream, op, status` | Upstream HTTP round-trip per attempt (start → body fully read); `crawl4ai/crawl`, `crawl4ai/execute_js`, `searxng/search`, `github/api`, `hackernews/api`, `discourse/api` |
+| `omnifeed_domain_limiter_wait_seconds` | histogram | `engine` | Time blocked in per-domain limiter acquisition (semaphore + politeness delay) |
+| `omnifeed_response_chars` | histogram | `engine` | Characters actually returned to the caller (post-truncation), successful crawls only |
+| `omnifeed_engine_fallbacks_total` | counter | `from_engine, reason` | Dedicated-engine failures re-crawled via the generic fallback |
+| `omnifeed_searxng_unresponsive_engines_total` | counter | `engine, error` | Engines SearXNG reported unresponsive per search |
+| `omnifeed_reddit_expansion_rounds` | histogram | — | `/api/morechildren` rounds per Reddit crawl |
+| `omnifeed_search_requests_total` | counter | `searcher, status, reason` | Search queries |
+| `omnifeed_search_request_seconds` | histogram | `searcher, status` | Search latency |
+
 <img src="https://user-images.githubusercontent.com/74038190/212284100-561aa473-3905-4a80-b561-0d28506553ee.gif" width="100%">
 
 ## <img src="https://raw.githubusercontent.com/Tarikul-Islam-Anik/Animated-Fluent-Emojis/master/Emojis/Travel%20and%20places/Star.png" width="26" height="26" /> Star history

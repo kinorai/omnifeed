@@ -123,7 +123,7 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, eo domain.EngineOptio
 	// actually hits (redditOrigin = www.reddit.com) so thread and listing crawls
 	// share one per-domain slot — DomainLimiter buckets by Hostname(), and
 	// "reddit.com" != "www.reddit.com".
-	release, lerr := e.limiter.Acquire(ctx, redditOrigin+"/")
+	release, lerr := e.limiter.Acquire(ctx, e.Name(), redditOrigin+"/")
 	if lerr != nil {
 		return domain.Document{}, lerr
 	}
@@ -323,7 +323,7 @@ func encode[T any](v T, format string) ([]byte, error) {
 // It reuses the same browser-fetch path as threads (so it clears Reddit's wall),
 // but parses the flat Listing shape instead of a comment tree.
 func (e *Engine) crawlListing(ctx context.Context, rawURL, sub, sort string, opts Options) (domain.Document, error) {
-	release, lerr := e.limiter.Acquire(ctx, redditOrigin+"/r/"+sub+"/"+sort)
+	release, lerr := e.limiter.Acquire(ctx, e.Name(), redditOrigin+"/r/"+sub+"/"+sort)
 	if lerr != nil {
 		return domain.Document{}, lerr
 	}
