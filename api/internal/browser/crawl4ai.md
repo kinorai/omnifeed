@@ -6,7 +6,7 @@
 import "github.com/kinorai/omnifeed/internal/browser/crawl4ai"
 ```
 
-Package crawl4ai implements the browser.Browser port over crawl4ai's /execute\_js endpoint: it drives a real headless Chromium to a page and runs caller\-supplied JavaScript from inside it. This is the default Reddit backend and the fallback for the Lightpanda backend.
+Package crawl4ai implements the browser.Browser port over crawl4ai's /execute\_js endpoint: it drives a real headless Chromium to a page and runs caller\-supplied JavaScript from inside it. This is the Reddit engine's browser backend.
 
 crawl4ai has no session reuse on /execute\_js, so a Session here does not hold a live page: Navigate records the target URL and every Eval re\-navigates to it before running its script. Semantically each Eval is one fresh browser navigation — the same behaviour omnifeed's Reddit engine has always had.
 

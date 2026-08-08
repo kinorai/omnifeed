@@ -54,13 +54,6 @@ type Config struct {
     // containers, which can yield no content at all on pages without them.
     Crawl4AITargetElements string
 
-    // LightpandaCDPURL, when set (e.g. ws://lightpanda:9222), makes the Reddit
-    // engine drive a Lightpanda CDP server as its browser backend instead of
-    // crawl4ai — lighter and faster for Reddit-style crawls — with crawl4ai kept
-    // as the automatic fallback. Empty (the default) keeps crawl4ai as the only
-    // backend, so the OSS default needs no extra service.
-    LightpandaCDPURL string
-
     // Upstream SearXNG (optional). Empty disables the `search` MCP tool.
     SearXNGURL     string
     SearXNGTimeout time.Duration
