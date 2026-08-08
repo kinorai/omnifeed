@@ -117,13 +117,12 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, eo domain.EngineOptio
 	// The per-domain limiter spans the whole crawl including the share-link
 	// resolve and all expansion rounds — concurrent crawls of different reddit
 	// URLs serialize here. Fine for single-tenant deployments. Acquired BEFORE
-	// the browser session opens (matching crawlListing): with Lightpanda each
-	// Open dials its own CDP connection and the share resolve is a full browser
-	// navigation, so acquiring later would let concurrent crawls stampede Reddit
-	// un-throttled. Key the limiter on the same host the fetch actually hits
-	// (redditOrigin = www.reddit.com) so thread and listing crawls share one
-	// per-domain slot — DomainLimiter buckets by Hostname(), and "reddit.com"
-	// != "www.reddit.com".
+	// the browser session opens (matching crawlListing): the share resolve is a
+	// full browser navigation, so acquiring later would let concurrent crawls
+	// stampede Reddit un-throttled. Key the limiter on the same host the fetch
+	// actually hits (redditOrigin = www.reddit.com) so thread and listing crawls
+	// share one per-domain slot — DomainLimiter buckets by Hostname(), and
+	// "reddit.com" != "www.reddit.com".
 	release, lerr := e.limiter.Acquire(ctx, redditOrigin+"/")
 	if lerr != nil {
 		return domain.Document{}, lerr

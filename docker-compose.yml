@@ -51,27 +51,6 @@ services:
       start_period: 30s
     restart: unless-stopped
 
-  # Optional lighter/faster Reddit browser backend. Off by default (guarded by the
-  # "lightpanda" profile), so plain `docker compose up` stays crawl4ai-only. To use
-  # it: uncomment OMNIFEED_LIGHTPANDA_CDP_URL on the proxy below and start with
-  #   docker compose --profile lightpanda up
-  # crawl4ai remains the automatic fallback, so a Lightpanda hiccup degrades gracefully.
-  lightpanda:
-    image: lightpanda/browser:nightly
-    container_name: lightpanda
-    profiles: ["lightpanda"]
-    # The image's default CMD is `/bin/lightpanda serve --host 0.0.0.0 --port 9222
-    # --log_level info` behind a `tini --` entrypoint (so the command must restate
-    # the full binary path — a bare `serve` fails to exec). Restated here to add
-    # --block-private-networks: browser-level SSRF defense (blocks in-page requests
-    # to private/internal IPs after DNS resolution) on top of omnifeed's own
-    # OMNIFEED_BLOCK_PRIVATE_IPS URL validation. The server also exposes GET
-    # /json/version (liveness probe) and Prometheus GET /metrics on 9222.
-    command: ["/bin/lightpanda", "serve", "--host", "0.0.0.0", "--port", "9222", "--log_level", "info", "--block-private-networks"]
-    environment:
-      LIGHTPANDA_DISABLE_TELEMETRY: "true"
-    restart: unless-stopped
-
   proxy:
     image: kinorai/omnifeed:latest
     container_name: omnifeed
@@ -83,9 +62,6 @@ services:
       OMNIFEED_CRAWL4AI_URL: http://crawl4ai:11235/crawl
       OMNIFEED_SEARXNG_URL: http://searxng:8080
       OMNIFEED_CRAWL4AI_TOKEN: crawl4ai-dev-token  # must match crawl4ai's CRAWL4AI_API_TOKEN
-      # Uncomment (and start with `--profile lightpanda`) to drive Reddit through
-      # Lightpanda instead of crawl4ai, with crawl4ai kept as the fallback.
-      # OMNIFEED_LIGHTPANDA_CDP_URL: ws://lightpanda:9222
       # Set OMNIFEED_API_KEY to require Authorization: Bearer ... on /crawl.
       # OMNIFEED_API_KEY: changeme
       # Without OMNIFEED_API_KEY the proxy refuses to start; this is the explicit

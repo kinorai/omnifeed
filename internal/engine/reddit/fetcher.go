@@ -3,9 +3,7 @@ package reddit
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -14,7 +12,6 @@ import (
 	"github.com/kinorai/omnifeed/internal/antibot"
 	"github.com/kinorai/omnifeed/internal/browser"
 	"github.com/kinorai/omnifeed/internal/domain"
-	"github.com/kinorai/omnifeed/internal/observability"
 )
 
 // redditOrigin is the reddit.com host we navigate and fetch from. We use
@@ -32,64 +29,39 @@ const redditOrigin = "https://www.reddit.com"
 // wall and the in-page fetch inherits it, so the JSON comes back exactly as a
 // logged-out browser would see it (no auth, no cookies).
 //
-// The Session is backed by a browser.Browser. Two backends exist: crawl4ai
-// (default, re-navigates per fetch) and Lightpanda (opt-in, keeps one live page
-// so a deep crawl's follow-up fetches skip re-navigation). When a fallback
-// browser is configured (Lightpanda primary → crawl4ai fallback), a fetch that
-// fails on the primary is retried on the fallback, sticky for the rest of the
-// crawl.
+// The Session is backed by a browser.Browser (crawl4ai's /execute_js).
 type Fetcher struct {
-	primary  browser.Browser
-	fallback browser.Browser // nil when no fallback is configured
-	logger   *slog.Logger
-	metrics  *observability.Metrics
+	browser browser.Browser
 }
 
-// FetcherConfig configures a Fetcher. Primary is required; Fallback is optional
-// (set only when the primary is a backend worth retrying past, e.g. Lightpanda).
+// FetcherConfig configures a Fetcher.
 type FetcherConfig struct {
-	Primary  browser.Browser
-	Fallback browser.Browser
-	Logger   *slog.Logger
-	Metrics  *observability.Metrics
+	Browser browser.Browser
 }
 
 // NewFetcher constructs a Fetcher from cfg.
 func NewFetcher(cfg FetcherConfig) *Fetcher {
-	if cfg.Logger == nil {
-		cfg.Logger = slog.Default()
-	}
-	return &Fetcher{
-		primary:  cfg.Primary,
-		fallback: cfg.Fallback,
-		logger:   cfg.Logger,
-		metrics:  cfg.Metrics,
-	}
+	return &Fetcher{browser: cfg.Browser}
 }
 
-// Open starts a crawl session on the primary browser. The caller owns it and
-// must Close it. Fallback happens lazily inside the session on the first fetch
-// that fails — not here — so a primary whose process is down (its Open succeeds
-// lazily, its first fetch fails) is still handled.
+// Open starts a crawl session. The caller owns it and must Close it.
 func (f *Fetcher) Open(ctx context.Context) (*Session, error) {
-	bs, err := f.primary.Open(ctx)
+	bs, err := f.browser.Open(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("open %s browser: %w", f.primary.Name(), err)
+		return nil, fmt.Errorf("open %s browser: %w", f.browser.Name(), err)
 	}
-	return &Session{f: f, active: bs}, nil
+	return &Session{active: bs}, nil
 }
 
-// Session is one crawl's browser session: a live browsing context plus the
-// automatic-fallback machinery. All fetches in a crawl share one Session so the
-// live-page backend can reuse its page across them. Not safe for concurrent use.
+// Session is one crawl's browser session. All fetches in a crawl share one
+// Session so state like the recorded thread page carries across them. Not safe
+// for concurrent use.
 type Session struct {
-	f          *Fetcher
 	active     browser.Session
-	fellBack   bool   // sticky: once we've switched to the fallback, stay there
 	threadPage string // the thread page FetchThread navigated to, reused by morechildren
 }
 
-// Close releases the active browser session.
+// Close releases the browser session.
 func (s *Session) Close(ctx context.Context) error {
 	if s.active == nil {
 		return nil
@@ -97,75 +69,17 @@ func (s *Session) Close(ctx context.Context) error {
 	return s.active.Close(ctx)
 }
 
-// run executes recipe against the active browser session. On a fallback-worthy
-// error — and only if a fallback browser is configured, we haven't already
-// switched, and the crawl's context is still live — it opens the fallback
-// browser, swaps to it (sticky), and re-runs recipe there. recipe must be
-// self-contained (do its own Navigate) so it works on a fresh fallback session.
-func (s *Session) run(ctx context.Context, recipe func(bs browser.Session) (string, error)) (string, error) {
-	out, err := recipe(s.active)
-	if err == nil || s.fellBack || s.f.fallback == nil || ctx.Err() != nil || !shouldFallback(err) {
-		return out, err
-	}
-
-	fb, oerr := s.f.fallback.Open(ctx)
-	if oerr != nil {
-		s.f.logger.Warn("browser fallback open failed; keeping primary error",
-			"to", s.f.fallback.Name(), "open_err", oerr, "primary_err", err)
-		return out, err // surface the original primary error, not the open failure
-	}
-	s.f.logger.Warn("reddit browser fell back to secondary backend",
-		"from", s.f.primary.Name(), "to", s.f.fallback.Name(), "err", err)
-	if s.f.metrics != nil {
-		s.f.metrics.ObserveBrowserFallback(s.f.primary.Name(), s.f.fallback.Name(), observability.Reason(err))
-	}
-	_ = s.active.Close(ctx)
-	s.active = fb
-	s.fellBack = true
-	return recipe(s.active)
-}
-
-// shouldFallback reports whether err is worth retrying on the fallback backend.
-// Anything that means the primary failed to get us content is (a bot wall, a
-// nav failure, a dead connection, a bad response). NOT worth it: caller
-// cancellation and the crawl's own timeout (the fallback would only exceed the
-// same budget), and answers Reddit itself gave through the browser — a 429 is
-// keyed on the egress IP both backends share (an immediate replay aggravates
-// it) and a 404/5xx/other status is the same answer at twice the cost. Only a
-// fingerprint-shaped block (403, CAPTCHA, bot wall) is worth a second browser.
-func shouldFallback(err error) bool {
-	if err == nil {
-		return false
-	}
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return false
-	}
-	var fe *domain.FetchError
-	if errors.As(err, &fe) {
-		switch fe.Kind {
-		case domain.KindCanceled, domain.KindTimeout,
-			domain.KindHTTP429, domain.KindUpstreamError, domain.KindError:
-			return false
-		}
-	}
-	return true
-}
-
 // fetchViaBrowser navigates navURL, runs the in-page fetch snippet js, and
-// unwraps the {s,b} envelope into the Reddit body — the whole recipe wrapped in
-// the fallback machinery, so a block or failure on the primary retries the exact
-// same fetch on the fallback.
+// unwraps the {s,b} envelope into the Reddit body.
 func (s *Session) fetchViaBrowser(ctx context.Context, navURL, js string) ([]byte, error) {
-	out, err := s.run(ctx, func(bs browser.Session) (string, error) {
-		if err := bs.Navigate(ctx, navURL); err != nil {
-			return "", err
-		}
-		envStr, err := bs.Eval(ctx, js)
-		if err != nil {
-			return "", err
-		}
-		return unwrapEnvelope(envStr)
-	})
+	if err := s.active.Navigate(ctx, navURL); err != nil {
+		return nil, err
+	}
+	envStr, err := s.active.Eval(ctx, js)
+	if err != nil {
+		return nil, err
+	}
+	out, err := unwrapEnvelope(envStr)
 	if err != nil {
 		return nil, err
 	}
@@ -222,8 +136,8 @@ func (s *Session) FetchListing(ctx context.Context, sub, sort string, limit int)
 
 // FetchMoreChildren expands collapsed reply branches via /api/morechildren.
 // linkID must include the t3_ prefix; childIDs are bare IDs (no prefix). It
-// re-navigates the thread page FetchThread recorded (reused live on the
-// Lightpanda backend, re-navigated on crawl4ai) and runs the same-origin POST.
+// re-navigates the thread page FetchThread recorded and runs the same-origin
+// POST from it.
 func (s *Session) FetchMoreChildren(ctx context.Context, linkID string, childIDs []string, sort string) ([]byte, error) {
 	page := s.threadPage
 	if page == "" {
@@ -248,27 +162,17 @@ func (s *Session) FetchMoreChildren(ctx context.Context, linkID string, childIDs
 // read the resulting location. Returns the full canonical URL (tracking query
 // params and all — NormalizePermalink only looks at the path).
 func (s *Session) ResolveShareURL(ctx context.Context, shareURL string) (string, error) {
-	return s.run(ctx, func(bs browser.Session) (string, error) {
-		if err := bs.Navigate(ctx, shareURL); err != nil {
-			return "", err
-		}
-		resolved, err := bs.Eval(ctx, "return location.href;")
-		if err != nil {
-			return "", err
-		}
-		if !strings.Contains(resolved, "/comments/") {
-			if resolved != shareURL {
-				// Reddit answered with a real redirect to a non-thread page — the
-				// fallback would resolve the same way, so don't retry there.
-				return "", &domain.FetchError{Kind: domain.KindError,
-					Err: fmt.Errorf("share link did not resolve to a thread (got %q)", redactQuery(resolved))}
-			}
-			// No redirect happened at all: indistinguishable from an un-cleared bot
-			// wall, so leave the error fallback-worthy.
-			return "", fmt.Errorf("share link did not redirect (still on %q)", redactQuery(resolved))
-		}
-		return resolved, nil
-	})
+	if err := s.active.Navigate(ctx, shareURL); err != nil {
+		return "", err
+	}
+	resolved, err := s.active.Eval(ctx, "return location.href;")
+	if err != nil {
+		return "", err
+	}
+	if !strings.Contains(resolved, "/comments/") {
+		return "", fmt.Errorf("share link did not resolve to a thread (got %q)", redactQuery(resolved))
+	}
+	return resolved, nil
 }
 
 // --- in-page fetch snippets ---

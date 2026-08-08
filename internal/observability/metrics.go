@@ -14,13 +14,12 @@ import (
 type Metrics struct {
 	registry *prometheus.Registry
 
-	RequestsTotal    *prometheus.CounterVec   // engine, tenant, status, reason
-	RequestAttempts  *prometheus.CounterVec   // attempt (first|retry)
-	RequestSecs      *prometheus.HistogramVec // engine, status
-	RedditRounds     prometheus.Histogram
-	BrowserFallbacks *prometheus.CounterVec   // from, to
-	SearchesTotal    *prometheus.CounterVec   // searcher, status, reason
-	SearchSecs       *prometheus.HistogramVec // searcher, status
+	RequestsTotal   *prometheus.CounterVec   // engine, tenant, status, reason
+	RequestAttempts *prometheus.CounterVec   // attempt (first|retry)
+	RequestSecs     *prometheus.HistogramVec // engine, status
+	RedditRounds    prometheus.Histogram
+	SearchesTotal   *prometheus.CounterVec   // searcher, status, reason
+	SearchSecs      *prometheus.HistogramVec // searcher, status
 }
 
 // NewMetrics builds and registers all collectors.
@@ -46,10 +45,6 @@ func NewMetrics() *Metrics {
 			Help:    "Number of /api/morechildren rounds per Reddit crawl.",
 			Buckets: prometheus.LinearBuckets(0, 5, 9),
 		}),
-		BrowserFallbacks: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "omnifeed_browser_fallback_total",
-			Help: "Times a browser fetch failed on the primary backend and was retried on the fallback, by from/to backend and the failure reason that triggered it. A rising count is the signal that the primary (e.g. Lightpanda) is unhealthy or blocked — reason tells which, even when the fallback then succeeds and the request itself records reason=\"ok\".",
-		}, []string{"from", "to", "reason"}),
 		SearchesTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "omnifeed_search_requests_total",
 			Help: "Total search queries by searcher, status, and failure reason.",
@@ -60,7 +55,7 @@ func NewMetrics() *Metrics {
 			Buckets: prometheus.ExponentialBuckets(0.05, 2, 10),
 		}, []string{"searcher", "status"}),
 	}
-	reg.MustRegister(m.RequestsTotal, m.RequestAttempts, m.RequestSecs, m.RedditRounds, m.BrowserFallbacks, m.SearchesTotal, m.SearchSecs)
+	reg.MustRegister(m.RequestsTotal, m.RequestAttempts, m.RequestSecs, m.RedditRounds, m.SearchesTotal, m.SearchSecs)
 	reg.MustRegister(
 		collectors.NewGoCollector(),
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
@@ -84,15 +79,6 @@ func (m *Metrics) ObserveAttempt(retry bool) {
 		attempt = "retry"
 	}
 	m.RequestAttempts.WithLabelValues(attempt).Inc()
-}
-
-// ObserveBrowserFallback records that a browser fetch failed on the `from`
-// backend and was retried on `to` (e.g. lightpanda → crawl4ai). reason is the
-// bounded classification (see Reason) of the primary's failure — it is what
-// keeps a blocked-but-recovering primary visible when the request-level reason
-// ends up "ok".
-func (m *Metrics) ObserveBrowserFallback(from, to, reason string) {
-	m.BrowserFallbacks.WithLabelValues(from, to, reason).Inc()
 }
 
 // ObserveSearch records a single search query result. reason classifies WHY a
