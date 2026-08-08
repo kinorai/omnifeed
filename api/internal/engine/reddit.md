@@ -25,15 +25,19 @@ Package reddit implements the Reddit\-specific engine: fetches threads via the p
   - [func \(\*Engine\) Matches\(rawURL string\) bool](<#Engine.Matches>)
   - [func \(\*Engine\) Name\(\) string](<#Engine.Name>)
 - [type Fetcher](<#Fetcher>)
-  - [func NewFetcher\(client \*httpx.Client, crawl4aiURL, token string\) \*Fetcher](<#NewFetcher>)
-  - [func \(f \*Fetcher\) FetchListing\(ctx context.Context, sub, sort string, limit int\) \(\[\]byte, error\)](<#Fetcher.FetchListing>)
-  - [func \(f \*Fetcher\) FetchMoreChildren\(ctx context.Context, linkID string, childIDs \[\]string, sort string\) \(\[\]byte, error\)](<#Fetcher.FetchMoreChildren>)
-  - [func \(f \*Fetcher\) FetchThread\(ctx context.Context, permalink string, limit, depth int, sort string\) \(\[\]byte, error\)](<#Fetcher.FetchThread>)
-  - [func \(f \*Fetcher\) ResolveShareURL\(ctx context.Context, shareURL string\) \(string, error\)](<#Fetcher.ResolveShareURL>)
+  - [func NewFetcher\(cfg FetcherConfig\) \*Fetcher](<#NewFetcher>)
+  - [func \(f \*Fetcher\) Open\(ctx context.Context\) \(\*Session, error\)](<#Fetcher.Open>)
+- [type FetcherConfig](<#FetcherConfig>)
 - [type Gap](<#Gap>)
 - [type Options](<#Options>)
 - [type Post](<#Post>)
   - [func ParseSubredditListing\(raw \[\]byte\) \(\[\]Post, error\)](<#ParseSubredditListing>)
+- [type Session](<#Session>)
+  - [func \(s \*Session\) Close\(ctx context.Context\) error](<#Session.Close>)
+  - [func \(s \*Session\) FetchListing\(ctx context.Context, sub, sort string, limit int\) \(\[\]byte, error\)](<#Session.FetchListing>)
+  - [func \(s \*Session\) FetchMoreChildren\(ctx context.Context, linkID string, childIDs \[\]string, sort string\) \(\[\]byte, error\)](<#Session.FetchMoreChildren>)
+  - [func \(s \*Session\) FetchThread\(ctx context.Context, permalink string, limit, depth int, sort string\) \(\[\]byte, error\)](<#Session.FetchThread>)
+  - [func \(s \*Session\) ResolveShareURL\(ctx context.Context, shareURL string\) \(string, error\)](<#Session.ResolveShareURL>)
 - [type SubredditListing](<#SubredditListing>)
 - [type Thread](<#Thread>)
   - [func ParseThread\(raw \[\]byte, opts Options\) \(Thread, error\)](<#ParseThread>)
@@ -184,9 +188,9 @@ Name returns the engine identifier.
 <a name="Fetcher"></a>
 ## type Fetcher
 
-Fetcher retrieves raw JSON from Reddit. Reddit's edge hard\-blocks non\-browser HTTP clients \(Go's net/http gets a 403 "network security" wall keyed on the TLS/JA3 fingerprint\), so we never hit Reddit directly. Instead every fetch is routed through crawl4ai's POST /execute\_js endpoint: it drives a real headless Chromium to a reddit.com page \(which clears the bot challenge\), then runs a same\-origin fetch\(\) of the target JSON endpoint from inside that page and hands back the raw response text. The browser context passes the wall; the in\-page fetch inherits it, so the JSON comes back exactly as a logged\-out browser would see it — no auth, no cookies.
+Fetcher retrieves Reddit data through a real headless browser. Reddit's edge hard\-blocks non\-browser HTTP clients \(Go's net/http gets a 403 "network security" wall keyed on the TLS/JA3 fingerprint\), so we never hit Reddit directly. Instead a crawl opens a browser Session, navigates to a reddit.com page \(which clears the bot challenge\), and runs a same\-origin fetch\(\) of the target JSON endpoint from inside that page — the browser context passes the wall and the in\-page fetch inherits it, so the JSON comes back exactly as a logged\-out browser would see it \(no auth, no cookies\).
 
-Why /execute\_js \(not /crawl\): crawl4ai 0.9.x rejects caller\-supplied js\_code on /crawl "from an untrusted request". /execute\_js is the sanctioned endpoint that runs caller JS — it builds the crawler config server\-side. It must be enabled on the crawl4ai side \(CRAWL4AI\_EXECUTE\_JS\_ENABLED=true\) and, once crawl4ai has a token, requires it \(sent via OMNIFEED\_CRAWL4AI\_TOKEN\). There is no session reuse on /execute\_js, so each call is a fresh navigation.
+The Session is backed by a browser.Browser. Two backends exist: crawl4ai \(default, re\-navigates per fetch\) and Lightpanda \(opt\-in, keeps one live page so a deep crawl's follow\-up fetches skip re\-navigation\). When a fallback browser is configured \(Lightpanda primary → crawl4ai fallback\), a fetch that fails on the primary is retried on the fallback, sticky for the rest of the crawl.
 
 ```go
 type Fetcher struct {
@@ -198,46 +202,33 @@ type Fetcher struct {
 ### func NewFetcher
 
 ```go
-func NewFetcher(client *httpx.Client, crawl4aiURL, token string) *Fetcher
+func NewFetcher(cfg FetcherConfig) *Fetcher
 ```
 
-NewFetcher constructs a Fetcher that drives crawl4ai's /execute\_js endpoint to reach Reddit through a browser. crawl4aiURL is OMNIFEED\_CRAWL4AI\_URL \(the /crawl URL\); the sibling /execute\_js URL is derived from it. token, when set, is sent as \`Authorization: Bearer \<token\>\` \(crawl4ai's CRAWL4AI\_API\_TOKEN\).
+NewFetcher constructs a Fetcher from cfg.
 
-<a name="Fetcher.FetchListing"></a>
-### func \(\*Fetcher\) FetchListing
+<a name="Fetcher.Open"></a>
+### func \(\*Fetcher\) Open
 
 ```go
-func (f *Fetcher) FetchListing(ctx context.Context, sub, sort string, limit int) ([]byte, error)
+func (f *Fetcher) Open(ctx context.Context) (*Session, error)
 ```
 
-FetchListing retrieves a subreddit listing \(hot/new/top/…\) via its .json endpoint, fetched same\-origin from inside a real browser on reddit.com — the same bot\-wall evasion FetchThread uses. limit caps the number of posts.
+Open starts a crawl session on the primary browser. The caller owns it and must Close it. Fallback happens lazily inside the session on the first fetch that fails — not here — so a primary whose process is down \(its Open succeeds lazily, its first fetch fails\) is still handled.
 
-<a name="Fetcher.FetchMoreChildren"></a>
-### func \(\*Fetcher\) FetchMoreChildren
+<a name="FetcherConfig"></a>
+## type FetcherConfig
+
+FetcherConfig configures a Fetcher. Primary is required; Fallback is optional \(set only when the primary is a backend worth retrying past, e.g. Lightpanda\).
 
 ```go
-func (f *Fetcher) FetchMoreChildren(ctx context.Context, linkID string, childIDs []string, sort string) ([]byte, error)
+type FetcherConfig struct {
+    Primary  browser.Browser
+    Fallback browser.Browser
+    Logger   *slog.Logger
+    Metrics  *observability.Metrics
+}
 ```
-
-FetchMoreChildren expands collapsed reply branches via /api/morechildren. linkID must include the t3\_ prefix; childIDs are bare IDs \(no prefix\). Each call navigates the thread page afresh \(crawl4ai's /execute\_js has no session reuse\), then runs the same\-origin POST from that page.
-
-<a name="Fetcher.FetchThread"></a>
-### func \(\*Fetcher\) FetchThread
-
-```go
-func (f *Fetcher) FetchThread(ctx context.Context, permalink string, limit, depth int, sort string) ([]byte, error)
-```
-
-FetchThread retrieves a thread via the .json endpoint, fetched from inside a real browser on the reddit.com origin. limit/depth/sort map directly onto Reddit's comments\-endpoint query params \(limit = max comments, depth = max subtree nesting\): https://www.reddit.com/dev/api/#GET_comments_{article}
-
-<a name="Fetcher.ResolveShareURL"></a>
-### func \(\*Fetcher\) ResolveShareURL
-
-```go
-func (f *Fetcher) ResolveShareURL(ctx context.Context, shareURL string) (string, error)
-```
-
-ResolveShareURL resolves a Reddit share link \(/r/\{sub\}/s/\{code\}\) to its canonical /comments/ permalink: the browser follows the 301 redirect and we read the resulting location. Returns the full canonical URL \(tracking query params and all — NormalizePermalink only looks at the path\).
 
 <a name="Gap"></a>
 ## type Gap
@@ -307,6 +298,62 @@ func ParseSubredditListing(raw []byte) ([]Post, error)
 ```
 
 ParseSubredditListing decodes a subreddit listing \(.json\) — a single Listing whose children are t3 posts — into a slice of Posts \(no comment trees\).
+
+<a name="Session"></a>
+## type Session
+
+Session is one crawl's browser session: a live browsing context plus the automatic\-fallback machinery. All fetches in a crawl share one Session so the live\-page backend can reuse its page across them. Not safe for concurrent use.
+
+```go
+type Session struct {
+    // contains filtered or unexported fields
+}
+```
+
+<a name="Session.Close"></a>
+### func \(\*Session\) Close
+
+```go
+func (s *Session) Close(ctx context.Context) error
+```
+
+Close releases the active browser session.
+
+<a name="Session.FetchListing"></a>
+### func \(\*Session\) FetchListing
+
+```go
+func (s *Session) FetchListing(ctx context.Context, sub, sort string, limit int) ([]byte, error)
+```
+
+FetchListing retrieves a subreddit listing \(hot/new/top/…\) via its .json endpoint, fetched same\-origin from inside a real browser on reddit.com — the same bot\-wall evasion FetchThread uses. limit caps the number of posts.
+
+<a name="Session.FetchMoreChildren"></a>
+### func \(\*Session\) FetchMoreChildren
+
+```go
+func (s *Session) FetchMoreChildren(ctx context.Context, linkID string, childIDs []string, sort string) ([]byte, error)
+```
+
+FetchMoreChildren expands collapsed reply branches via /api/morechildren. linkID must include the t3\_ prefix; childIDs are bare IDs \(no prefix\). It re\-navigates the thread page FetchThread recorded \(reused live on the Lightpanda backend, re\-navigated on crawl4ai\) and runs the same\-origin POST.
+
+<a name="Session.FetchThread"></a>
+### func \(\*Session\) FetchThread
+
+```go
+func (s *Session) FetchThread(ctx context.Context, permalink string, limit, depth int, sort string) ([]byte, error)
+```
+
+FetchThread retrieves a thread via the .json endpoint, fetched from inside a real browser on the reddit.com origin. limit/depth/sort map directly onto Reddit's comments\-endpoint query params \(limit = max comments, depth = max subtree nesting\): https://www.reddit.com/dev/api/#GET_comments_{article}
+
+<a name="Session.ResolveShareURL"></a>
+### func \(\*Session\) ResolveShareURL
+
+```go
+func (s *Session) ResolveShareURL(ctx context.Context, shareURL string) (string, error)
+```
+
+ResolveShareURL resolves a Reddit share link \(/r/\{sub\}/s/\{code\}\) to its canonical /comments/ permalink: the browser follows the 301 redirect and we read the resulting location. Returns the full canonical URL \(tracking query params and all — NormalizePermalink only looks at the path\).
 
 <a name="SubredditListing"></a>
 ## type SubredditListing

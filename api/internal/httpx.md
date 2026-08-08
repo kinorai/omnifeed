@@ -31,7 +31,7 @@ Package httpx provides HTTP utilities shared across engines: a retrying HTTP cli
 func ClassifyClientError(err error, fallback domain.FailureKind) *domain.FetchError
 ```
 
-ClassifyClientError translates an error returned by DoRetry into a typed domain.FetchError. A StatusError carries the upstream status after retries: a 429 is unambiguous and becomes KindHTTP429, but a 5xx is ambiguous — it can be a genuine upstream fault OR, on the browser/anti\-bot paths, the block itself surfacing as a crawl4ai 5xx \(see reddit.browserExec\) — so the caller's fallback decides \(KindUpstreamError for a generic crawl, KindBotBlock for a Reddit navigation\). A context deadline becomes KindTimeout; a caller cancellation \(client abort\) becomes KindCanceled; anything else becomes the fallback. Returns nil when err is nil.
+ClassifyClientError translates an error returned by DoRetry into a typed domain.FetchError. A StatusError carries the upstream status after retries: a 429 is unambiguous and becomes KindHTTP429, but a 5xx is ambiguous — it can be a genuine upstream fault OR, on the browser/anti\-bot paths, the block itself surfacing as a crawl4ai 5xx \(see browser/crawl4ai\) — so the caller's fallback decides \(KindUpstreamError for a generic crawl, KindBotBlock for a Reddit navigation\). A context deadline becomes KindTimeout; a caller cancellation \(client abort\) becomes KindCanceled; anything else becomes the fallback. Returns nil when err is nil.
 
 <a name="HostMatcher"></a>
 ## func HostMatcher
