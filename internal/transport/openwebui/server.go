@@ -158,6 +158,12 @@ func (s *Server) crawlOne(ctx context.Context, rawURL string, opts domain.Engine
 	if err != nil {
 		status, reason = "error", observability.Reason(err)
 		s.logger.Warn("crawl failed", "url", rawURL, "engine", engName, "reason", reason, "err", err)
+	} else {
+		// Success exemplar (URL-level) for latency triage — the histogram's
+		// counterpart in VictoriaLogs; metrics can't carry the URL.
+		s.logger.Info("crawl completed", "url", rawURL, "engine", engName,
+			"duration_ms", time.Since(start).Milliseconds(),
+			"chars", utf8.RuneCountInString(doc.PageContent))
 	}
 	if s.metrics != nil {
 		s.metrics.Observe(engName, string(tenant), status, reason, time.Since(start))

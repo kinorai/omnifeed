@@ -120,6 +120,10 @@ func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, "search upstream failed: "+observability.Explain(err))
 		return
 	}
+	// Success exemplar (query-level) for latency triage — see the matching
+	// "crawl completed" / "mcp tool call completed" lines.
+	s.logger.Info("search completed", "query", req.Query,
+		"results", len(results), "duration_ms", time.Since(start).Milliseconds())
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
