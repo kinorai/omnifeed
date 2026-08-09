@@ -37,7 +37,6 @@ type Server struct {
 	logger         *slog.Logger
 	metrics        *observability.Metrics
 	maxURLsPerReq  int
-	blockPrivate   bool
 	redditDefaults reddit.Options
 }
 
@@ -48,7 +47,6 @@ type Config struct {
 	Logger            *slog.Logger
 	Metrics           *observability.Metrics
 	MaxURLsPerRequest int
-	BlockPrivateIPs   bool
 	RedditDefaults    reddit.Options
 }
 
@@ -66,7 +64,6 @@ func New(cfg Config) *Server {
 		logger:         cfg.Logger,
 		metrics:        cfg.Metrics,
 		maxURLsPerReq:  cfg.MaxURLsPerRequest,
-		blockPrivate:   cfg.BlockPrivateIPs,
 		redditDefaults: cfg.RedditDefaults,
 	}
 }
@@ -117,8 +114,13 @@ func (s *Server) crawl(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Syntax-only pre-check (blockPrivate=false ⇒ no DNS) so a malformed URL
+	// still fails the whole batch with a 400 before any crawl starts. The
+	// private/reserved-IP rejection — the part that costs a DNS lookup — runs
+	// once per URL at the Registry.Crawl choke point, not twice; a private
+	// target therefore surfaces as that URL's error document rather than a 400.
 	for _, u := range req.URLs {
-		if err := httpx.ValidateURL(u, s.blockPrivate); err != nil {
+		if err := httpx.ValidateURL(u, false); err != nil {
 			writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid URL %q", u))
 			return
 		}
