@@ -14,7 +14,7 @@ Package crawl4ai implements the fallback engine: dispatches generic URLs to an u
 - [type Config](<#Config>)
 - [type Engine](<#Engine>)
   - [func New\(cfg Config\) \*Engine](<#New>)
-  - [func \(e \*Engine\) Crawl\(ctx context.Context, rawURL string, \_ domain.EngineOptions\) \(domain.Document, error\)](<#Engine.Crawl>)
+  - [func \(e \*Engine\) Crawl\(ctx context.Context, rawURL string, opts domain.EngineOptions\) \(domain.Document, error\)](<#Engine.Crawl>)
   - [func \(\*Engine\) Matches\(string\) bool](<#Engine.Matches>)
   - [func \(\*Engine\) Name\(\) string](<#Engine.Name>)
 
@@ -66,6 +66,29 @@ type Config struct {
     // (OMNIFEED_CRAWL4AI_TARGET_ELEMENTS): on pages without a match the crawl
     // yields no content, which the thin-content guard turns into an error.
     TargetElements string
+    // ScanFullPage scrolls the page to the bottom (in ScrollDelay steps) before
+    // extraction so lazy-loaded content renders — multi-second on long pages.
+    // The default is owned by config (OMNIFEED_CRAWL4AI_SCAN_FULL_PAGE).
+    ScanFullPage bool
+    // ScrollDelay is the pause (seconds) between scroll steps; only sent when
+    // ScanFullPage is on (OMNIFEED_CRAWL4AI_SCROLL_DELAY).
+    ScrollDelay float64
+    // DelayBeforeHTML is the unconditional settle (seconds) after the WaitUntil
+    // signal before HTML extraction — paid on every crawl. The default is owned
+    // by config (OMNIFEED_CRAWL4AI_DELAY_BEFORE_HTML).
+    DelayBeforeHTML float64
+    // RemoveOverlays sends crawl4ai's remove_overlay_elements, whose geometry
+    // heuristic deletes any large absolute/fixed-position element before
+    // extraction. On sites whose main content lives in such containers
+    // (Wikipedia Vector-2022, several news fronts) it silently empties the
+    // whole page — the default is off (OMNIFEED_CRAWL4AI_REMOVE_OVERLAYS);
+    // remove_consent_popups stays on regardless and covers cookie modals.
+    RemoveOverlays bool
+    // BlockPrivateIPs hardens the raw-text bypass's direct fetches: resolved
+    // private/reserved addresses are refused at dial time (mirrors
+    // OMNIFEED_BLOCK_PRIVATE_IPS, which the registry enforces pre-dispatch via
+    // DNS lookup — the dial-time guard is what a rebinding race can't beat).
+    BlockPrivateIPs bool
 }
 ```
 
@@ -93,7 +116,7 @@ New returns a crawl4ai fallback Engine wired with the given config.
 ### func \(\*Engine\) Crawl
 
 ```go
-func (e *Engine) Crawl(ctx context.Context, rawURL string, _ domain.EngineOptions) (domain.Document, error)
+func (e *Engine) Crawl(ctx context.Context, rawURL string, opts domain.EngineOptions) (domain.Document, error)
 ```
 
 Crawl proxies rawURL to crawl4ai. The configured per\-domain limiter applies to avoid hammering sites that crawl4ai itself doesn't pace.

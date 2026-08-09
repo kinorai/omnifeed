@@ -22,8 +22,13 @@ Package observability wires structured logging, Prometheus metrics, and Kubernet
 - [type Metrics](<#Metrics>)
   - [func NewMetrics\(\) \*Metrics](<#NewMetrics>)
   - [func \(m \*Metrics\) Observe\(engine, tenant, status, reason string, duration time.Duration\)](<#Metrics.Observe>)
-  - [func \(m \*Metrics\) ObserveAttempt\(retry bool\)](<#Metrics.ObserveAttempt>)
+  - [func \(m \*Metrics\) ObserveAttempt\(upstream string, retry bool\)](<#Metrics.ObserveAttempt>)
+  - [func \(m \*Metrics\) ObserveFallback\(fromEngine, reason string\)](<#Metrics.ObserveFallback>)
+  - [func \(m \*Metrics\) ObserveLimiterWait\(engine, outcome string, duration time.Duration\)](<#Metrics.ObserveLimiterWait>)
+  - [func \(m \*Metrics\) ObserveResponseChars\(engine string, chars int\)](<#Metrics.ObserveResponseChars>)
   - [func \(m \*Metrics\) ObserveSearch\(searcher, status, reason string, duration time.Duration\)](<#Metrics.ObserveSearch>)
+  - [func \(m \*Metrics\) ObserveUnresponsiveEngine\(engine, errType string\)](<#Metrics.ObserveUnresponsiveEngine>)
+  - [func \(m \*Metrics\) ObserveUpstream\(upstream, op, status string, duration time.Duration\)](<#Metrics.ObserveUpstream>)
   - [func \(m \*Metrics\) RegisterMetrics\(mux \*http.ServeMux\)](<#Metrics.RegisterMetrics>)
 - [type ReadyCheck](<#ReadyCheck>)
 
@@ -124,12 +129,17 @@ Metrics holds Prometheus collectors emitted by the proxy.
 
 ```go
 type Metrics struct {
-    RequestsTotal   *prometheus.CounterVec   // engine, tenant, status, reason
-    RequestAttempts *prometheus.CounterVec   // attempt (first|retry)
-    RequestSecs     *prometheus.HistogramVec // engine, status
-    RedditRounds    prometheus.Histogram
-    SearchesTotal   *prometheus.CounterVec   // searcher, status, reason
-    SearchSecs      *prometheus.HistogramVec // searcher, status
+    RequestsTotal       *prometheus.CounterVec   // engine, tenant, status, reason
+    RequestAttempts     *prometheus.CounterVec   // upstream, attempt (first|retry)
+    RequestSecs         *prometheus.HistogramVec // engine, status, reason
+    UpstreamSecs        *prometheus.HistogramVec // upstream, op, status
+    LimiterWaitSecs     *prometheus.HistogramVec // engine
+    ResponseChars       *prometheus.HistogramVec // engine
+    EngineFallbacks     *prometheus.CounterVec   // from_engine, reason
+    SearxngUnresponsive *prometheus.CounterVec   // engine, error
+    RedditRounds        prometheus.Histogram
+    SearchesTotal       *prometheus.CounterVec   // searcher, status, reason
+    SearchSecs          *prometheus.HistogramVec // searcher, status
     // contains filtered or unexported fields
 }
 ```
@@ -156,10 +166,37 @@ Observe records a single crawl result. reason is a bounded classification of WHY
 ### func \(\*Metrics\) ObserveAttempt
 
 ```go
-func (m *Metrics) ObserveAttempt(retry bool)
+func (m *Metrics) ObserveAttempt(upstream string, retry bool)
 ```
 
-ObserveAttempt records one HTTP attempt from the retrying crawl client. retry is false for the first try and true for each retry, so attempt="retry" counts the re\-drives that \#2's RetryableStatus veto removes for non\-transient blocks.
+ObserveAttempt records one HTTP attempt from the retrying client against the named upstream. retry is false for the first try and true for each retry, so attempt="retry" counts the re\-drives that \#2's RetryableStatus veto removes for non\-transient blocks.
+
+<a name="Metrics.ObserveFallback"></a>
+### func \(\*Metrics\) ObserveFallback
+
+```go
+func (m *Metrics) ObserveFallback(fromEngine, reason string)
+```
+
+ObserveFallback counts one engine→generic\-fallback handoff: fromEngine is the dedicated engine that failed, reason its classified failure \(see Reason\).
+
+<a name="Metrics.ObserveLimiterWait"></a>
+### func \(\*Metrics\) ObserveLimiterWait
+
+```go
+func (m *Metrics) ObserveLimiterWait(engine, outcome string, duration time.Duration)
+```
+
+ObserveLimiterWait records the time an engine spent blocked acquiring the per\-domain limiter. Wired as the DomainLimiter's OnWait hook. outcome is "acquired" or "canceled" \(the wait died in the queue\).
+
+<a name="Metrics.ObserveResponseChars"></a>
+### func \(\*Metrics\) ObserveResponseChars
+
+```go
+func (m *Metrics) ObserveResponseChars(engine string, chars int)
+```
+
+ObserveResponseChars records the character count of a successful crawl's extracted content, PRE\-truncation \(the engine's output, before any transport max\_chars clipping\) — the quality guard for scrape\-option changes. Recorded at the registry choke point so the label names the engine that actually produced the document, fallbacks included.
 
 <a name="Metrics.ObserveSearch"></a>
 ### func \(\*Metrics\) ObserveSearch
@@ -169,6 +206,24 @@ func (m *Metrics) ObserveSearch(searcher, status, reason string, duration time.D
 ```
 
 ObserveSearch records a single search query result. reason classifies WHY a search failed \(see Reason\); it is "ok" on success. SearchSecs stays keyed on searcher\+status only — adding reason would just inflate histogram cardinality.
+
+<a name="Metrics.ObserveUnresponsiveEngine"></a>
+### func \(\*Metrics\) ObserveUnresponsiveEngine
+
+```go
+func (m *Metrics) ObserveUnresponsiveEngine(engine, errType string)
+```
+
+ObserveUnresponsiveEngine counts one engine SearXNG reported unresponsive on a search response, by engine name and error type.
+
+<a name="Metrics.ObserveUpstream"></a>
+### func \(\*Metrics\) ObserveUpstream
+
+```go
+func (m *Metrics) ObserveUpstream(upstream, op, status string, duration time.Duration)
+```
+
+ObserveUpstream records one upstream HTTP round\-trip attempt \(request start until the response body is fully read, or transport error\). status is "ok" for 2xx and "error" otherwise. Wired as the httpx client's OnUpstream hook.
 
 <a name="Metrics.RegisterMetrics"></a>
 ### func \(\*Metrics\) RegisterMetrics

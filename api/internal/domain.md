@@ -141,6 +141,15 @@ type EngineOptions struct {
     RedditSort        string // Reddit `sort`: comment sort order ("" = engine default)
     RedditMaxComments int    // hard cap on total comments emitted (0 = unlimited)
     RedditMaxTopLevel int    // hard cap on top-level threads (0 = unlimited)
+
+    // Generic-crawl (crawl4ai fallback) knobs.
+    //
+    // ScanFullPage scrolls the whole page before extraction so append-style
+    // infinite feeds load. Tri-state: nil = the deployment default
+    // (OMNIFEED_CRAWL4AI_SCAN_FULL_PAGE); callers opt in per URL — it costs
+    // multiple seconds and corrupts virtualized pages, so it's for feed/gallery
+    // URLs specifically.
+    ScanFullPage *bool
 }
 ```
 
@@ -165,8 +174,15 @@ const (
     KindTimeout       FailureKind = "timeout"        // context deadline exceeded — omnifeed's own timeout budget (crawl4ai/reddit)
     KindCanceled      FailureKind = "canceled"       // caller hung up before the fetch finished (client abort — not an omnifeed fault)
     KindUpstreamError FailureKind = "upstream_error" // upstream 5xx or unreachable
-    KindBadResponse   FailureKind = "bad_response"   // unparseable or empty upstream response
-    KindError         FailureKind = "error"          // anything else
+    // KindUpstreamRejected is crawl4ai's application-level 500 with the verdict
+    // scrubbed out of the response body (crawl4ai 0.9.2+ logs the real reason —
+    // bot wall, content-gate, or crash — server-side under a correlation id and
+    // returns a generic body). Indistinguishable client-side and dominated by
+    // per-page non-faults, so it gets one bounded retry (for the transient
+    // minority sharing the channel) and is not treated as an upstream outage.
+    KindUpstreamRejected FailureKind = "upstream_rejected"
+    KindBadResponse      FailureKind = "bad_response" // unparseable or empty upstream response
+    KindError            FailureKind = "error"        // anything else
 )
 ```
 

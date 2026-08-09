@@ -16,6 +16,7 @@ Package engine defines the dispatch mechanism that picks the right per\-URL hand
   - [func \(r \*Registry\) Crawl\(ctx context.Context, rawURL string, opts domain.EngineOptions\) \(domain.Document, error\)](<#Registry.Crawl>)
   - [func \(r \*Registry\) Fallback\(e domain.Engine\) \*Registry](<#Registry.Fallback>)
   - [func \(r \*Registry\) Logger\(l \*slog.Logger\) \*Registry](<#Registry.Logger>)
+  - [func \(r \*Registry\) Metrics\(m \*observability.Metrics\) \*Registry](<#Registry.Metrics>)
   - [func \(r \*Registry\) Register\(e domain.Engine\) \*Registry](<#Registry.Register>)
   - [func \(r \*Registry\) Resolve\(rawURL string\) domain.Engine](<#Registry.Resolve>)
 
@@ -75,6 +76,15 @@ func (r *Registry) Logger(l *slog.Logger) *Registry
 ```
 
 Logger sets the logger used to report engine→fallback handoffs.
+
+<a name="Registry.Metrics"></a>
+### func \(\*Registry\) Metrics
+
+```go
+func (r *Registry) Metrics(m *observability.Metrics) *Registry
+```
+
+Metrics sets the collectors used to count engine→fallback handoffs \(omnifeed\_engine\_fallbacks\_total\). Nil disables the counter.
 
 <a name="Registry.Register"></a>
 ### func \(\*Registry\) Register

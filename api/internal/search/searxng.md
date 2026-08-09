@@ -27,6 +27,9 @@ type Config struct {
     Endpoint string // base URL of the SearXNG instance, e.g. http://searxng:8080
     Client   *httpx.Client
     Logger   *slog.Logger
+    // Metrics, when non-nil, receives per-search unresponsive-engine counts
+    // (omnifeed_searxng_unresponsive_engines_total).
+    Metrics *observability.Metrics
 }
 ```
 
