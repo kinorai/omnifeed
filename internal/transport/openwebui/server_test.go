@@ -234,3 +234,29 @@ func TestCrawl_IgnoresSizeParams(t *testing.T) {
 		t.Fatalf("PageContent = %q, want the full document", docs[0].PageContent)
 	}
 }
+
+// ?scan_full_page= is tri-state: true/false override the deployment default in
+// either direction, absent (or garbage) leaves the engine default in charge.
+func TestBuildEngineOptionsScanFullPage(t *testing.T) {
+	srv := newTestServer(fakeEngine{}, auth.AlwaysAllow{}, 30)
+	for _, c := range []struct {
+		query string
+		want  *bool
+	}{
+		{"", nil},
+		{"scan_full_page=true", boolPtr(true)},
+		{"scan_full_page=false", boolPtr(false)},
+		{"scan_full_page=yes", nil}, // only the exact literals count
+	} {
+		req := httptest.NewRequest(http.MethodPost, "/crawl?"+c.query, nil)
+		got := srv.buildEngineOptions(req).ScanFullPage
+		switch {
+		case c.want == nil && got != nil:
+			t.Errorf("query %q: ScanFullPage = %v, want nil", c.query, *got)
+		case c.want != nil && (got == nil || *got != *c.want):
+			t.Errorf("query %q: ScanFullPage = %v, want %v", c.query, got, *c.want)
+		}
+	}
+}
+
+func boolPtr(b bool) *bool { return &b }

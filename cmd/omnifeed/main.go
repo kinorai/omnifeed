@@ -119,6 +119,7 @@ func run(cfg config.Config, logger *slog.Logger) error {
 		ScanFullPage:     cfg.Crawl4AIScanFullPage,
 		ScrollDelay:      cfg.Crawl4AIScrollDelay,
 		DelayBeforeHTML:  cfg.Crawl4AIDelayBeforeHTML,
+		RemoveOverlays:   cfg.Crawl4AIRemoveOverlays,
 		BlockPrivateIPs:  cfg.BlockPrivateIPs,
 	})
 

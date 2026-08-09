@@ -22,6 +22,13 @@ const (
 	KindTimeout       FailureKind = "timeout"        // context deadline exceeded — omnifeed's own timeout budget (crawl4ai/reddit)
 	KindCanceled      FailureKind = "canceled"       // caller hung up before the fetch finished (client abort — not an omnifeed fault)
 	KindUpstreamError FailureKind = "upstream_error" // upstream 5xx or unreachable
+	// KindUpstreamRejected is crawl4ai's application-level 500 with the verdict
+	// scrubbed out of the response body (crawl4ai 0.9.2+ logs the real reason —
+	// bot wall, content-gate, or crash — server-side under a correlation id and
+	// returns a generic body). Indistinguishable client-side, deterministic per
+	// page, and dominated by non-faults — so it is neither retried nor treated
+	// as an upstream outage.
+	KindUpstreamRejected FailureKind = "upstream_rejected"
 	KindBadResponse   FailureKind = "bad_response"   // unparseable or empty upstream response
 	KindError         FailureKind = "error"          // anything else
 )
