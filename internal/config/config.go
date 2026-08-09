@@ -47,6 +47,23 @@ type Config struct {
 	// default) keeps the feature off; non-empty restricts extraction to matching
 	// containers, which can yield no content at all on pages without them.
 	Crawl4AITargetElements string
+	// Crawl4AIScanFullPage makes the generic engine scroll the full page (in
+	// Crawl4AIScrollDelay steps) before extraction, so lazy-loaded content
+	// renders — at a multi-second cost on long pages. Off by default (crawl4ai's
+	// own default): most agent fetches want the main content, not the infinite
+	// scroll tail.
+	Crawl4AIScanFullPage bool
+	Crawl4AIScrollDelay  float64 // seconds between scroll steps when scanning the full page
+	// Crawl4AIDelayBeforeHTML is the unconditional settle (seconds) crawl4ai
+	// sleeps after the page-ready signal before extracting HTML — paid on every
+	// crawl whether or not the page needs it. crawl4ai's own default (0.1).
+	Crawl4AIDelayBeforeHTML float64
+	// Crawl4AIRemoveOverlays sends crawl4ai's remove_overlay_elements. Its
+	// geometry heuristic (delete any large absolute/fixed element) silently
+	// empties pages whose content sits in such containers — Wikipedia and
+	// several news fronts return only their <title>. Off by default;
+	// remove_consent_popups stays on regardless and covers cookie modals.
+	Crawl4AIRemoveOverlays bool
 
 	// Upstream SearXNG (optional). Empty disables the `search` MCP tool.
 	SearXNGURL     string
@@ -147,6 +164,18 @@ func Load() (Config, error) {
 	if c.Crawl4AIPruneThreshold, err = envFloat("OMNIFEED_CRAWL4AI_PRUNE_THRESHOLD", 0.48); err != nil {
 		return c, err
 	}
+	if c.Crawl4AIScanFullPage, err = envBool("OMNIFEED_CRAWL4AI_SCAN_FULL_PAGE", false); err != nil {
+		return c, err
+	}
+	if c.Crawl4AIScrollDelay, err = envFloat("OMNIFEED_CRAWL4AI_SCROLL_DELAY", 0.5); err != nil {
+		return c, err
+	}
+	if c.Crawl4AIDelayBeforeHTML, err = envFloat("OMNIFEED_CRAWL4AI_DELAY_BEFORE_HTML", 0.1); err != nil {
+		return c, err
+	}
+	if c.Crawl4AIRemoveOverlays, err = envBool("OMNIFEED_CRAWL4AI_REMOVE_OVERLAYS", false); err != nil {
+		return c, err
+	}
 	if c.SearXNGTimeout, err = envDuration("OMNIFEED_SEARXNG_TIMEOUT", 15*time.Second); err != nil {
 		return c, err
 	}
@@ -222,6 +251,15 @@ func Load() (Config, error) {
 
 	if c.Crawl4AIPruneThreshold < 0 || c.Crawl4AIPruneThreshold > 1 {
 		return c, fmt.Errorf("OMNIFEED_CRAWL4AI_PRUNE_THRESHOLD must be between 0 and 1, got %v", c.Crawl4AIPruneThreshold)
+	}
+
+	// 60s is crawl4ai's page_timeout clamp — a settle or scroll step longer than
+	// the whole page budget is a misconfiguration, not a preference.
+	if c.Crawl4AIDelayBeforeHTML < 0 || c.Crawl4AIDelayBeforeHTML > 60 {
+		return c, fmt.Errorf("OMNIFEED_CRAWL4AI_DELAY_BEFORE_HTML must be between 0 and 60 seconds, got %v", c.Crawl4AIDelayBeforeHTML)
+	}
+	if c.Crawl4AIScrollDelay < 0 || c.Crawl4AIScrollDelay > 60 {
+		return c, fmt.Errorf("OMNIFEED_CRAWL4AI_SCROLL_DELAY must be between 0 and 60 seconds, got %v", c.Crawl4AIScrollDelay)
 	}
 
 	switch c.Crawl4AIWaitUntil {

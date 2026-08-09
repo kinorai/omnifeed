@@ -28,6 +28,15 @@ type EngineOptions struct {
 	RedditSort        string // Reddit `sort`: comment sort order ("" = engine default)
 	RedditMaxComments int    // hard cap on total comments emitted (0 = unlimited)
 	RedditMaxTopLevel int    // hard cap on top-level threads (0 = unlimited)
+
+	// Generic-crawl (crawl4ai fallback) knobs.
+	//
+	// ScanFullPage scrolls the whole page before extraction so append-style
+	// infinite feeds load. Tri-state: nil = the deployment default
+	// (OMNIFEED_CRAWL4AI_SCAN_FULL_PAGE); callers opt in per URL — it costs
+	// multiple seconds and corrupts virtualized pages, so it's for feed/gallery
+	// URLs specifically.
+	ScanFullPage *bool
 }
 
 // Reddit comment-fetch defaults are defined here so config (env fallback) and

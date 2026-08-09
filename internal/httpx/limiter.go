@@ -15,6 +15,13 @@ type DomainLimiter struct {
 	maxConcurrent int
 	minDelay      time.Duration
 	limits        sync.Map // host → *domainSlot
+
+	// OnWait, when non-nil, is called on every Acquire exit with the engine
+	// that waited, the outcome ("acquired", or "canceled" when the caller's
+	// ctx died in the queue — the worst waits, which never acquire), and the
+	// time spent blocked (semaphore wait + politeness delay); ~0 when
+	// uncontended. Set once at wiring time.
+	OnWait func(engine, outcome string, waited time.Duration)
 }
 
 type domainSlot struct {
@@ -40,14 +47,17 @@ func (d *DomainLimiter) slotFor(rawURL string) *domainSlot {
 
 // Acquire blocks until a slot is available and the minimum delay since the
 // last request to the same domain has elapsed, or until ctx is done — a
-// canceled caller must not keep queuing behind a slow domain. Caller must
+// canceled caller must not keep queuing behind a slow domain. engine names the
+// caller for the wait metric (the limiter itself only knows hosts). Caller must
 // Release (call the returned func) when done; on error there is nothing to
 // release.
-func (d *DomainLimiter) Acquire(ctx context.Context, rawURL string) (func(), error) {
+func (d *DomainLimiter) Acquire(ctx context.Context, engine, rawURL string) (func(), error) {
+	start := time.Now()
 	s := d.slotFor(rawURL)
 	select {
 	case s.sem <- struct{}{}:
 	case <-ctx.Done():
+		d.observeWait(engine, "canceled", start)
 		return nil, ctx.Err()
 	}
 
@@ -62,14 +72,22 @@ func (d *DomainLimiter) Acquire(ctx context.Context, rawURL string) (func(), err
 		case <-ctx.Done():
 			t.Stop()
 			<-s.sem
+			d.observeWait(engine, "canceled", start)
 			return nil, ctx.Err()
 		}
 	}
 
+	d.observeWait(engine, "acquired", start)
 	return func() {
 		s.mu.Lock()
 		s.lastSend = time.Now()
 		s.mu.Unlock()
 		<-s.sem
 	}, nil
+}
+
+func (d *DomainLimiter) observeWait(engine, outcome string, start time.Time) {
+	if d.OnWait != nil {
+		d.OnWait(engine, outcome, time.Since(start))
+	}
 }

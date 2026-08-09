@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/kinorai/omnifeed/internal/auth"
 	"github.com/kinorai/omnifeed/internal/domain"
@@ -36,7 +37,6 @@ type Server struct {
 	logger         *slog.Logger
 	metrics        *observability.Metrics
 	maxURLsPerReq  int
-	blockPrivate   bool
 	redditDefaults reddit.Options
 }
 
@@ -47,7 +47,6 @@ type Config struct {
 	Logger            *slog.Logger
 	Metrics           *observability.Metrics
 	MaxURLsPerRequest int
-	BlockPrivateIPs   bool
 	RedditDefaults    reddit.Options
 }
 
@@ -65,7 +64,6 @@ func New(cfg Config) *Server {
 		logger:         cfg.Logger,
 		metrics:        cfg.Metrics,
 		maxURLsPerReq:  cfg.MaxURLsPerRequest,
-		blockPrivate:   cfg.BlockPrivateIPs,
 		redditDefaults: cfg.RedditDefaults,
 	}
 }
@@ -116,8 +114,13 @@ func (s *Server) crawl(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Syntax-only pre-check (blockPrivate=false ⇒ no DNS) so a malformed URL
+	// still fails the whole batch with a 400 before any crawl starts. The
+	// private/reserved-IP rejection — the part that costs a DNS lookup — runs
+	// once per URL at the Registry.Crawl choke point, not twice; a private
+	// target therefore surfaces as that URL's error document rather than a 400.
 	for _, u := range req.URLs {
-		if err := httpx.ValidateURL(u, s.blockPrivate); err != nil {
+		if err := httpx.ValidateURL(u, false); err != nil {
 			writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid URL %q", u))
 			return
 		}
@@ -157,7 +160,15 @@ func (s *Server) crawlOne(ctx context.Context, rawURL string, opts domain.Engine
 	if err != nil {
 		status, reason = "error", observability.Reason(err)
 		s.logger.Warn("crawl failed", "url", rawURL, "engine", engName, "reason", reason, "err", err)
+	} else {
+		// Success exemplar (URL-level) for latency triage — the histogram's
+		// counterpart in VictoriaLogs; metrics can't carry the URL.
+		s.logger.Info("crawl completed", "url", rawURL, "engine", engName,
+			"duration_ms", time.Since(start).Milliseconds(),
+			"chars", utf8.RuneCountInString(doc.PageContent))
 	}
+	// omnifeed_response_chars is recorded inside the registry (which knows the
+	// engine that actually served a fallback crawl), not here.
 	if s.metrics != nil {
 		s.metrics.Observe(engName, string(tenant), status, reason, time.Since(start))
 	}
@@ -197,6 +208,13 @@ func (s *Server) buildEngineOptions(r *http.Request) domain.EngineOptions {
 			// Engine will validate.
 			opts.RedditMaxRounds = parseIntDefault(ex, opts.RedditMaxRounds)
 		}
+	}
+	// Generic-crawl opt-in/out: ?scan_full_page=true scrolls append-style feeds,
+	// =false forces the scroll off when a deployment defaults it on. Absent =
+	// deployment default (tri-state, like the engine option itself).
+	if sfp := q.Get("scan_full_page"); sfp == "true" || sfp == "false" {
+		v := sfp == "true"
+		opts.ScanFullPage = &v
 	}
 	return opts
 }

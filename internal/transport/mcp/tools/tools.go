@@ -102,6 +102,12 @@ func FetchURL(reg *engine.Registry, defaults reddit.Options, metrics *observabil
 						"truncation marker to read the next chunk of the same page.",
 					"minimum": 0,
 				},
+				"scan_full_page": map[string]any{
+					"type": "boolean",
+					"description": "Generic pages only: scroll the entire page before extraction so append-style infinite feeds load " +
+						"their next batches. Costs several extra seconds and can corrupt virtualized pages — set true only for " +
+						"feed/listing/gallery URLs where the first fetch clearly missed items.",
+				},
 			},
 		},
 		Handle: crawlHandler(reg, defaults, metrics, defaultMaxChars),
@@ -147,9 +153,14 @@ func crawlHandler(reg *engine.Registry, defaults reddit.Options, metrics *observ
 		if mt, isNumber := args["max_top_level"].(float64); isNumber && mt >= 0 {
 			opts.RedditMaxTopLevel = int(mt)
 		}
+		if sfp, isBool := args["scan_full_page"].(bool); isBool {
+			opts.ScanFullPage = &sfp
+		}
 
 		start := time.Now()
 		doc, err := reg.Crawl(ctx, rawURL, opts)
+		// omnifeed_response_chars is recorded inside the registry (which knows
+		// the engine that actually served a fallback crawl), not here.
 		observe(metrics, engineName(reg, rawURL), err, start)
 		if err != nil {
 			return mcp.ToolResult{}, err

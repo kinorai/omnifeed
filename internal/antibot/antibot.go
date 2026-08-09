@@ -88,10 +88,24 @@ func IsStructuralBlock(body string) bool {
 }
 
 // RetryableStatus is an httpx.RetryConfig predicate shared by the Reddit and
-// generic crawl paths: retry genuine transient 429/5xx, but never a crawl4ai
-// anti-bot block (it recurs, and re-driving the crawl just pays the cost again).
+// generic crawl paths: retry genuine transient 429/5xx, but never a 5xx whose
+// body carries crawl4ai's explicit block verdict (it recurs, and re-driving
+// the crawl just pays the cost again). crawl4ai 0.9.2+ scrubs its 500 bodies,
+// which makes a deterministic verdict (block/content-gate) byte-identical to
+// a transient fault (worker OOM, pool churn) — both are retried, and the
+// callers bound the cost with a low MaxAttempts instead of a veto that would
+// strand the transients with no retry anywhere.
 func RetryableStatus(status int, body string) bool {
 	return status < 500 || !IsBlockResponse(body)
+}
+
+// IsScrubbedServerError reports whether body is the generic 500 crawl4ai
+// 0.9.2+ returns for its application-level failures ({"error":"Internal
+// server error","correlation_id":"…"}) after scrubbing the real verdict —
+// block wall, content-gate, or crash — into its own server log.
+func IsScrubbedServerError(body string) bool {
+	lower := strings.ToLower(body)
+	return strings.Contains(lower, "internal server error") && strings.Contains(lower, "correlation_id")
 }
 
 // Detect reports whether body looks like a bot wall / challenge page and, if

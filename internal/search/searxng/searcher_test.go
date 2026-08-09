@@ -7,8 +7,12 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
+
 	"github.com/kinorai/omnifeed/internal/domain"
 	"github.com/kinorai/omnifeed/internal/httpx"
+	"github.com/kinorai/omnifeed/internal/observability"
 )
 
 const fixture = `{
@@ -152,6 +156,84 @@ func TestSearch_ZeroResultsClassification(t *testing.T) {
 			}
 			if len(results) != tc.wantResults {
 				t.Fatalf("results: got %d, want %d", len(results), tc.wantResults)
+			}
+		})
+	}
+}
+
+// Every unresponsive_engines entry must increment
+// omnifeed_searxng_unresponsive_engines_total under {engine, error} so engine
+// cooldowns are visible per engine. Entries are [engine, error_type] pairs;
+// the error string is upstream free text and is normalized to a closed
+// vocabulary before becoming a label (cardinality guard), a missing error type
+// counts as "unknown", malformed entries are skipped silently, and the field's
+// absence increments nothing.
+func TestSearch_CountsUnresponsiveEngines(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want map[[2]string]float64 // {engine, error} → count
+	}{
+		{
+			name: "well-formed pairs, errors normalized",
+			body: `{"results":[],"unresponsive_engines":[` +
+				`["brave","Suspended: too many requests"],` +
+				`["duckduckgo","timeout"],` +
+				`["brave","Suspended: too many requests"]]}`,
+			want: map[[2]string]float64{
+				{"brave", "too_many_requests"}: 2,
+				{"duckduckgo", "timeout"}:      1,
+			},
+		},
+		{
+			name: "1-element pair counts as unknown, malformed entries skipped",
+			body: `{"results":[],"unresponsive_engines":[["startpage"],[],["",""],["qwant","CAPTCHA required"]]}`,
+			want: map[[2]string]float64{
+				{"startpage", "unknown"}: 1,
+				{"qwant", "captcha"}:     1,
+			},
+		},
+		{
+			name: "novel upstream message collapses to error",
+			body: `{"results":[],"unresponsive_engines":[["mojeek","SearxEngineAPIException: unexpected shape v2"]]}`,
+			want: map[[2]string]float64{
+				{"mojeek", "error"}: 1,
+			},
+		},
+		{
+			name: "no report increments nothing",
+			body: `{"results":[]}`,
+			want: map[[2]string]float64{},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := observability.NewMetrics()
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			t.Cleanup(srv.Close)
+			s := New(Config{Endpoint: srv.URL, Client: httpx.New(srv.Client()), Metrics: m})
+
+			if _, err := s.Search(context.Background(), "q", domain.SearchOptions{}); err != nil {
+				t.Fatalf("Search: %v", err)
+			}
+
+			for labels, want := range tc.want {
+				var dm dto.Metric
+				if err := m.SearxngUnresponsive.WithLabelValues(labels[0], labels[1]).Write(&dm); err != nil {
+					t.Fatal(err)
+				}
+				if got := dm.GetCounter().GetValue(); got != want {
+					t.Fatalf("counter{%s,%s} = %v, want %v", labels[0], labels[1], got, want)
+				}
+			}
+			// No stray series beyond the expected ones (malformed entries skipped).
+			ch := make(chan prometheus.Metric, 16)
+			m.SearxngUnresponsive.Collect(ch)
+			close(ch)
+			if got := len(ch); got != len(tc.want) {
+				t.Fatalf("series count = %d, want %d", got, len(tc.want))
 			}
 		})
 	}

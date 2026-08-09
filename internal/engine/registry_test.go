@@ -4,7 +4,10 @@ import (
 	"context"
 	"testing"
 
+	dto "github.com/prometheus/client_model/go"
+
 	"github.com/kinorai/omnifeed/internal/domain"
+	"github.com/kinorai/omnifeed/internal/observability"
 )
 
 // stubEngine is a no-op fallback used to prove the choke point runs BEFORE
@@ -89,5 +92,38 @@ func TestRegistryCrawl_FallsBackOnEngineError(t *testing.T) {
 	}
 	if fallback2.called {
 		t.Fatal("fallback ran despite a dead context")
+	}
+}
+
+// The engine→fallback handoff must be counted with the failing engine's name
+// and the classified failure reason (omnifeed_engine_fallbacks_total).
+func TestRegistryCrawl_CountsFallbacks(t *testing.T) {
+	m := observability.NewMetrics()
+	failing, fallback := &failingEngine{}, &stubEngine{}
+	r := New().Register(failing).Fallback(fallback).Metrics(m)
+
+	if _, err := r.Crawl(context.Background(), "http://8.8.8.8/", domain.EngineOptions{}); err != nil {
+		t.Fatalf("Crawl = %v, want the fallback's success", err)
+	}
+
+	var dm dto.Metric
+	if err := m.EngineFallbacks.WithLabelValues("failing", string(domain.KindHTTP403)).Write(&dm); err != nil {
+		t.Fatal(err)
+	}
+	if got := dm.GetCounter().GetValue(); got != 1 {
+		t.Fatalf(`engine_fallbacks{from_engine="failing",reason="http_403"} = %v, want 1`, got)
+	}
+
+	// The direct-fallback path (no engine matched) is not a handoff — no count.
+	stub := &stubEngine{}
+	r2 := New().Fallback(stub).Metrics(m)
+	if _, err := r2.Crawl(context.Background(), "http://8.8.8.8/", domain.EngineOptions{}); err != nil {
+		t.Fatalf("Crawl = %v, want success", err)
+	}
+	if err := m.EngineFallbacks.WithLabelValues("failing", string(domain.KindHTTP403)).Write(&dm); err != nil {
+		t.Fatal(err)
+	}
+	if got := dm.GetCounter().GetValue(); got != 1 {
+		t.Fatalf("counter moved on the no-match path: %v, want still 1", got)
 	}
 }
