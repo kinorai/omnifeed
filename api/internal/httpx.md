@@ -12,13 +12,16 @@ Package httpx provides HTTP utilities shared across engines: a retrying HTTP cli
 
 - [func ClassifyClientError\(err error, fallback domain.FailureKind\) \*domain.FetchError](<#ClassifyClientError>)
 - [func HostMatcher\(domain string\) \*regexp.Regexp](<#HostMatcher>)
+- [func NewGuardedClient\(blockPrivate bool, timeout time.Duration\) \*http.Client](<#NewGuardedClient>)
+- [func NewTransport\(\) \*http.Transport](<#NewTransport>)
 - [func ValidateURL\(rawURL string, blockPrivate bool\) error](<#ValidateURL>)
 - [type Client](<#Client>)
   - [func New\(c \*http.Client\) \*Client](<#New>)
   - [func \(c \*Client\) DoRetry\(ctx context.Context, method, url string, body \[\]byte, headers map\[string\]string, cfg RetryConfig\) \(\*http.Response, error\)](<#Client.DoRetry>)
+  - [func \(c \*Client\) WithUpstream\(upstream, op string\) \*Client](<#Client.WithUpstream>)
 - [type DomainLimiter](<#DomainLimiter>)
   - [func NewDomainLimiter\(maxConcurrent int, minDelay time.Duration\) \*DomainLimiter](<#NewDomainLimiter>)
-  - [func \(d \*DomainLimiter\) Acquire\(ctx context.Context, rawURL string\) \(func\(\), error\)](<#DomainLimiter.Acquire>)
+  - [func \(d \*DomainLimiter\) Acquire\(ctx context.Context, engine, rawURL string\) \(func\(\), error\)](<#DomainLimiter.Acquire>)
 - [type RetryConfig](<#RetryConfig>)
 - [type StatusError](<#StatusError>)
   - [func \(e \*StatusError\) Error\(\) string](<#StatusError.Error>)
@@ -41,6 +44,24 @@ func HostMatcher(domain string) *regexp.Regexp
 ```
 
 HostMatcher returns a case\-insensitive regexp matching host and all of its subdomains: HostMatcher\("reddit.com"\) matches reddit.com, www.reddit.com, and old.reddit.com, but not evilreddit.com or reddit.com.evil.com. Engines use it to claim URLs; centralizing the pattern keeps this security\-sensitive rule from drifting between engines.
+
+<a name="NewGuardedClient"></a>
+## func NewGuardedClient
+
+```go
+func NewGuardedClient(blockPrivate bool, timeout time.Duration) *http.Client
+```
+
+NewGuardedClient returns an http.Client for fetching caller\-supplied URLs directly \(no crawl4ai in between\). When blockPrivate is true, every dial is checked AFTER DNS resolution and refused if the resolved address is private/reserved — unlike ValidateURL's lookup\-then\-fetch, this can't be raced by DNS rebinding, and it covers every redirect hop because the guard sits below the client's redirect\-following.
+
+<a name="NewTransport"></a>
+## func NewTransport
+
+```go
+func NewTransport() *http.Transport
+```
+
+NewTransport returns the outbound transport shared by omnifeed's HTTP clients: DefaultTransport's dial/TLS/proxy behavior with a per\-host idle pool sized for this proxy's traffic. Go's DefaultTransport keeps only 2 idle connections per host, so concurrent requests to the same upstream \(crawl4ai, SearXNG, api.github.com\) evict each other's connections and re\-handshake TCP \+ TLS on the next call.
 
 <a name="ValidateURL"></a>
 ## func ValidateURL
@@ -67,11 +88,18 @@ Client wraps http.Client with retry\-on\-429/5xx and Retry\-After honoring.
 ```go
 type Client struct {
     HTTP *http.Client
-    // OnAttempt, when non-nil, is called once per HTTP attempt DoRetry makes.
-    // retry is false for the first try and true for every retry, so a caller can
-    // count retry volume — the wasted work #2's RetryableStatus veto cuts. Set on
-    // the shared crawl client; nil elsewhere.
-    OnAttempt func(retry bool)
+    // OnAttempt, when non-nil, is called once per HTTP attempt DoRetry makes,
+    // with the upstream this client is labeled for (see WithUpstream). retry is
+    // false for the first try and true for every retry, so a caller can count
+    // retry volume — the wasted work #2's RetryableStatus veto cuts. Set on the
+    // shared crawl client; nil elsewhere.
+    OnAttempt func(upstream string, retry bool)
+    // OnUpstream, when non-nil, is called once per HTTP attempt with the
+    // round-trip duration — request start until the response body is fully read
+    // (or closed), or until the transport error. status is "ok" for 2xx and
+    // "error" otherwise (non-2xx status, transport error, timeout).
+    OnUpstream func(upstream, op, status string, duration time.Duration)
+    // contains filtered or unexported fields
 }
 ```
 
@@ -97,6 +125,15 @@ Body is passed as a byte slice \(or nil\) so the helper can rebuild the request 
 
 Honors Retry\-After when the server provides it \(capped at MaxDelay\). Caller is responsible for closing the returned response body.
 
+<a name="Client.WithUpstream"></a>
+### func \(\*Client\) WithUpstream
+
+```go
+func (c *Client) WithUpstream(upstream, op string) *Client
+```
+
+WithUpstream returns a shallow copy of c whose attempts are labeled with the given upstream/op pair \(e.g. "crawl4ai"/"crawl"\). The copy shares the underlying http.Client and hooks, so adapters declare their identity once at construction. Returns nil when c is nil \(engines built without a client\).
+
 <a name="DomainLimiter"></a>
 ## type DomainLimiter
 
@@ -104,6 +141,13 @@ DomainLimiter caps concurrency and enforces a minimum delay between successive r
 
 ```go
 type DomainLimiter struct {
+
+    // OnWait, when non-nil, is called on every Acquire exit with the engine
+    // that waited, the outcome ("acquired", or "canceled" when the caller's
+    // ctx died in the queue — the worst waits, which never acquire), and the
+    // time spent blocked (semaphore wait + politeness delay); ~0 when
+    // uncontended. Set once at wiring time.
+    OnWait func(engine, outcome string, waited time.Duration)
     // contains filtered or unexported fields
 }
 ```
@@ -121,10 +165,10 @@ NewDomainLimiter returns a limiter with the given concurrency cap and per\-domai
 ### func \(\*DomainLimiter\) Acquire
 
 ```go
-func (d *DomainLimiter) Acquire(ctx context.Context, rawURL string) (func(), error)
+func (d *DomainLimiter) Acquire(ctx context.Context, engine, rawURL string) (func(), error)
 ```
 
-Acquire blocks until a slot is available and the minimum delay since the last request to the same domain has elapsed, or until ctx is done — a canceled caller must not keep queuing behind a slow domain. Caller must Release \(call the returned func\) when done; on error there is nothing to release.
+Acquire blocks until a slot is available and the minimum delay since the last request to the same domain has elapsed, or until ctx is done — a canceled caller must not keep queuing behind a slow domain. engine names the caller for the wait metric \(the limiter itself only knows hosts\). Caller must Release \(call the returned func\) when done; on error there is nothing to release.
 
 <a name="RetryConfig"></a>
 ## type RetryConfig

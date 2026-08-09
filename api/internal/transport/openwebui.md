@@ -37,7 +37,6 @@ type Config struct {
     Logger            *slog.Logger
     Metrics           *observability.Metrics
     MaxURLsPerRequest int
-    BlockPrivateIPs   bool
     RedditDefaults    reddit.Options
 }
 ```

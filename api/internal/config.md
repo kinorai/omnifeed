@@ -53,6 +53,23 @@ type Config struct {
     // default) keeps the feature off; non-empty restricts extraction to matching
     // containers, which can yield no content at all on pages without them.
     Crawl4AITargetElements string
+    // Crawl4AIScanFullPage makes the generic engine scroll the full page (in
+    // Crawl4AIScrollDelay steps) before extraction, so lazy-loaded content
+    // renders — at a multi-second cost on long pages. Off by default (crawl4ai's
+    // own default): most agent fetches want the main content, not the infinite
+    // scroll tail.
+    Crawl4AIScanFullPage bool
+    Crawl4AIScrollDelay  float64 // seconds between scroll steps when scanning the full page
+    // Crawl4AIDelayBeforeHTML is the unconditional settle (seconds) crawl4ai
+    // sleeps after the page-ready signal before extracting HTML — paid on every
+    // crawl whether or not the page needs it. crawl4ai's own default (0.1).
+    Crawl4AIDelayBeforeHTML float64
+    // Crawl4AIRemoveOverlays sends crawl4ai's remove_overlay_elements. Its
+    // geometry heuristic (delete any large absolute/fixed element) silently
+    // empties pages whose content sits in such containers — Wikipedia and
+    // several news fronts return only their <title>. Off by default;
+    // remove_consent_popups stays on regardless and covers cookie modals.
+    Crawl4AIRemoveOverlays bool
 
     // Upstream SearXNG (optional). Empty disables the `search` MCP tool.
     SearXNGURL     string
