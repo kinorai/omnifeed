@@ -15,6 +15,7 @@ import (
 
 	"github.com/kinorai/omnifeed/internal/domain"
 	"github.com/kinorai/omnifeed/internal/httpx"
+	"github.com/kinorai/omnifeed/internal/observability"
 )
 
 // maxResponseBytes caps how much of the SearXNG response is read; a JSON
@@ -26,6 +27,9 @@ type Config struct {
 	Endpoint string // base URL of the SearXNG instance, e.g. http://searxng:8080
 	Client   *httpx.Client
 	Logger   *slog.Logger
+	// Metrics, when non-nil, receives per-search unresponsive-engine counts
+	// (omnifeed_searxng_unresponsive_engines_total).
+	Metrics *observability.Metrics
 }
 
 // Searcher queries a SearXNG instance and reshapes results into the canonical
@@ -34,6 +38,7 @@ type Searcher struct {
 	searchURL string
 	client    *httpx.Client
 	logger    *slog.Logger
+	metrics   *observability.Metrics
 }
 
 // New returns a Searcher wired with the given config.
@@ -43,8 +48,9 @@ func New(cfg Config) *Searcher {
 	}
 	return &Searcher{
 		searchURL: strings.TrimRight(cfg.Endpoint, "/") + "/search",
-		client:    cfg.Client,
+		client:    cfg.Client.WithUpstream("searxng", "search"),
 		logger:    cfg.Logger,
+		metrics:   cfg.Metrics,
 	}
 }
 
@@ -122,6 +128,7 @@ func (s *Searcher) Search(ctx context.Context, query string, opts domain.SearchO
 		s.logger.Warn("searxng returned partial results",
 			"unresponsive_engines", formatUnresponsive(sr.UnresponsiveEngines),
 			"results", len(sr.Results))
+		s.countUnresponsive(sr.UnresponsiveEngines)
 	}
 
 	results := make([]domain.SearchResult, 0, len(sr.Results))
@@ -138,6 +145,52 @@ func (s *Searcher) Search(ctx context.Context, query string, opts domain.SearchO
 		}
 	}
 	return results, nil
+}
+
+// countUnresponsive increments the unresponsive-engine counter for each
+// [engine, error_type] pair SearXNG reported. The engine name is a bounded set
+// on a self-hosted instance (its own engine list); the error string is
+// upstream-controlled free text, so it is normalized to a fixed vocabulary
+// before becoming a label — a SearXNG upgrade that embeds detail in its
+// messages must not mint unbounded permanent series. Malformed entries (empty
+// pair or blank engine name) are skipped silently; a missing error type counts
+// as "unknown" — the engine still failed.
+func (s *Searcher) countUnresponsive(pairs [][]string) {
+	if s.metrics == nil {
+		return
+	}
+	for _, pair := range pairs {
+		if len(pair) == 0 || pair[0] == "" {
+			continue
+		}
+		errType := "unknown"
+		if len(pair) > 1 && pair[1] != "" {
+			errType = normalizeEngineError(pair[1])
+		}
+		s.metrics.ObserveUnresponsiveEngine(pair[0], errType)
+	}
+}
+
+// normalizeEngineError maps SearXNG's free-text unresponsive reasons onto a
+// closed label vocabulary. Substring checks, most specific first: SearXNG
+// composes messages like "Suspended: too many requests" or "CAPTCHA required",
+// and exception class names leak through as-is.
+func normalizeEngineError(msg string) string {
+	m := strings.ToLower(msg)
+	switch {
+	case strings.Contains(m, "captcha"):
+		return "captcha"
+	case strings.Contains(m, "too many request"):
+		return "too_many_requests"
+	case strings.Contains(m, "access denied"):
+		return "access_denied"
+	case strings.Contains(m, "timeout"):
+		return "timeout"
+	case strings.Contains(m, "suspended"):
+		return "suspended"
+	default:
+		return "error"
+	}
 }
 
 // formatUnresponsive renders SearXNG's [[engine, message], …] pairs as

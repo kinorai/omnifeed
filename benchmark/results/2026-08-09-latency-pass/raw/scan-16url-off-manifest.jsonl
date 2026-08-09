@@ -1,0 +1,32 @@
+{"idx":1,"url":"https://raw.githubusercontent.com/golang/go/master/README.md","run":1,"time_total_s":0.188860,"http_code":200,"chars":1455,"ok":true,"note":""}
+{"idx":2,"url":"https://en.wikipedia.org/wiki/Kubernetes","run":1,"time_total_s":2.699539,"http_code":200,"chars":24,"ok":true,"note":""}
+{"idx":3,"url":"https://go.dev/blog/loopvar-preview","run":1,"time_total_s":2.548197,"http_code":200,"chars":8447,"ok":true,"note":""}
+{"idx":4,"url":"https://react.dev/learn","run":1,"time_total_s":2.574238,"http_code":200,"chars":14779,"ok":true,"note":""}
+{"idx":5,"url":"https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Content-Type","run":1,"time_total_s":2.192948,"http_code":200,"chars":8792,"ok":true,"note":""}
+{"idx":6,"url":"https://www.paulgraham.com/greatwork.html","run":1,"time_total_s":2.501839,"http_code":200,"chars":66434,"ok":true,"note":""}
+{"idx":7,"url":"https://kubernetes.io/docs/concepts/workloads/pods/","run":1,"time_total_s":2.343182,"http_code":200,"chars":27332,"ok":true,"note":""}
+{"idx":8,"url":"https://docs.python.org/3/library/asyncio.html","run":1,"time_total_s":2.119248,"http_code":200,"chars":5384,"ok":true,"note":""}
+{"idx":9,"url":"https://arxiv.org/abs/1706.03762","run":1,"time_total_s":2.377317,"http_code":200,"chars":6280,"ok":true,"note":""}
+{"idx":10,"url":"https://htmx.org/docs/","run":1,"time_total_s":2.496155,"http_code":200,"chars":86208,"ok":true,"note":""}
+{"idx":11,"url":"https://tailwindcss.com/docs/installation","run":1,"time_total_s":2.199369,"http_code":200,"chars":2624,"ok":true,"note":""}
+{"idx":12,"url":"https://lite.cnn.com/","run":1,"time_total_s":2.165118,"http_code":200,"chars":17151,"ok":true,"note":""}
+{"idx":13,"url":"https://vercel.com/docs","run":1,"time_total_s":7.767489,"http_code":200,"chars":69,"ok":false,"note":"Error crawling URL: upstream_error (HTTP 500): upstream returned 500 "}
+{"idx":14,"url":"https://blog.cloudflare.com/","run":1,"time_total_s":2.230535,"http_code":200,"chars":7586,"ok":true,"note":""}
+{"idx":15,"url":"https://www.theverge.com/","run":1,"time_total_s":3.704254,"http_code":200,"chars":54891,"ok":true,"note":""}
+{"idx":16,"url":"https://dev.to/t/programming","run":1,"time_total_s":2.510815,"http_code":200,"chars":13465,"ok":true,"note":""}
+{"idx":1,"url":"https://raw.githubusercontent.com/golang/go/master/README.md","run":2,"time_total_s":0.010587,"http_code":200,"chars":1455,"ok":true,"note":""}
+{"idx":2,"url":"https://en.wikipedia.org/wiki/Kubernetes","run":2,"time_total_s":2.086855,"http_code":200,"chars":24,"ok":true,"note":""}
+{"idx":3,"url":"https://go.dev/blog/loopvar-preview","run":2,"time_total_s":2.393569,"http_code":200,"chars":8447,"ok":true,"note":""}
+{"idx":4,"url":"https://react.dev/learn","run":2,"time_total_s":2.516347,"http_code":200,"chars":14779,"ok":true,"note":""}
+{"idx":5,"url":"https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Content-Type","run":2,"time_total_s":2.146851,"http_code":200,"chars":8792,"ok":true,"note":""}
+{"idx":6,"url":"https://www.paulgraham.com/greatwork.html","run":2,"time_total_s":1.962984,"http_code":200,"chars":66434,"ok":true,"note":""}
+{"idx":7,"url":"https://kubernetes.io/docs/concepts/workloads/pods/","run":2,"time_total_s":2.283668,"http_code":200,"chars":27332,"ok":true,"note":""}
+{"idx":8,"url":"https://docs.python.org/3/library/asyncio.html","run":2,"time_total_s":2.051933,"http_code":200,"chars":5384,"ok":true,"note":""}
+{"idx":9,"url":"https://arxiv.org/abs/1706.03762","run":2,"time_total_s":2.344305,"http_code":200,"chars":6280,"ok":true,"note":""}
+{"idx":10,"url":"https://htmx.org/docs/","run":2,"time_total_s":2.407136,"http_code":200,"chars":86208,"ok":true,"note":""}
+{"idx":11,"url":"https://tailwindcss.com/docs/installation","run":2,"time_total_s":2.245885,"http_code":200,"chars":2624,"ok":true,"note":""}
+{"idx":12,"url":"https://lite.cnn.com/","run":2,"time_total_s":2.018919,"http_code":200,"chars":17151,"ok":true,"note":""}
+{"idx":13,"url":"https://vercel.com/docs","run":2,"time_total_s":8.369279,"http_code":200,"chars":69,"ok":false,"note":"Error crawling URL: upstream_error (HTTP 500): upstream returned 500 "}
+{"idx":14,"url":"https://blog.cloudflare.com/","run":2,"time_total_s":2.152804,"http_code":200,"chars":7586,"ok":true,"note":""}
+{"idx":15,"url":"https://www.theverge.com/","run":2,"time_total_s":3.713666,"http_code":200,"chars":54891,"ok":true,"note":""}
+{"idx":16,"url":"https://dev.to/t/programming","run":2,"time_total_s":2.438703,"http_code":200,"chars":13465,"ok":true,"note":""}

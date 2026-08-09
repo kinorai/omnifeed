@@ -145,7 +145,7 @@ func TestDoRetryReportsAttempts(t *testing.T) {
 
 		var firsts, retries int
 		c := New(nil)
-		c.OnAttempt = func(retry bool) {
+		c.OnAttempt = func(_ string, retry bool) {
 			if retry {
 				retries++
 			} else {
@@ -170,7 +170,7 @@ func TestDoRetryReportsAttempts(t *testing.T) {
 
 		var firsts, retries int
 		c := New(nil)
-		c.OnAttempt = func(retry bool) {
+		c.OnAttempt = func(_ string, retry bool) {
 			if retry {
 				retries++
 			} else {
@@ -187,6 +187,115 @@ func TestDoRetryReportsAttempts(t *testing.T) {
 		}
 		if firsts != 1 || retries != 2 {
 			t.Fatalf("attempts: first=%d retry=%d, want 1/2", firsts, retries)
+		}
+	})
+}
+
+// OnUpstream fires once per HTTP attempt with the client's WithUpstream labels:
+// a 200 records one "ok" observation once the caller drains/closes the body; a
+// retried 5xx records one "error" observation per attempt (drained internally).
+func TestDoRetryReportsUpstreamRoundTrips(t *testing.T) {
+	type obs struct{ upstream, op, status string }
+
+	t.Run("2xx observed ok after body read", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte("body"))
+		}))
+		defer srv.Close()
+
+		var got []obs
+		c := New(nil).WithUpstream("crawl4ai", "crawl")
+		c.OnUpstream = func(upstream, op, status string, _ time.Duration) {
+			got = append(got, obs{upstream, op, status})
+		}
+		resp, err := c.DoRetry(context.Background(), http.MethodGet, srv.URL, nil, nil, RetryConfig{})
+		if err != nil {
+			t.Fatalf("DoRetry() error = %v", err)
+		}
+		if len(got) != 0 {
+			t.Fatalf("observed before the body was read: %+v", got)
+		}
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close() // Close after EOF must not double-observe
+		if len(got) != 1 || got[0] != (obs{"crawl4ai", "crawl", "ok"}) {
+			t.Fatalf("observations = %+v, want one {crawl4ai crawl ok}", got)
+		}
+	})
+
+	t.Run("retried 5xx observed error per attempt", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError)
+		}))
+		defer srv.Close()
+
+		var got []obs
+		c := New(nil).WithUpstream("searxng", "search")
+		c.OnUpstream = func(upstream, op, status string, _ time.Duration) {
+			got = append(got, obs{upstream, op, status})
+		}
+		resp, err := c.DoRetry(context.Background(), http.MethodGet, srv.URL, nil, nil,
+			RetryConfig{MaxAttempts: 3, BaseDelay: time.Microsecond})
+		if resp != nil {
+			_ = resp.Body.Close()
+		}
+		if err == nil {
+			t.Fatal("DoRetry() error = nil, want a 5xx failure")
+		}
+		if len(got) != 3 {
+			t.Fatalf("observations = %d, want 3 (one per attempt)", len(got))
+		}
+		for _, o := range got {
+			if o != (obs{"searxng", "search", "error"}) {
+				t.Fatalf("observation = %+v, want {searxng search error}", o)
+			}
+		}
+	})
+
+	t.Run("transport error observed error", func(t *testing.T) {
+		var got []obs
+		c := New(&http.Client{Timeout: 50 * time.Millisecond}).WithUpstream("github", "api")
+		c.OnUpstream = func(upstream, op, status string, _ time.Duration) {
+			got = append(got, obs{upstream, op, status})
+		}
+		// Closed server → connection refused on every attempt.
+		srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+		srv.Close()
+		resp, err := c.DoRetry(context.Background(), http.MethodGet, srv.URL, nil, nil,
+			RetryConfig{MaxAttempts: 2, BaseDelay: time.Microsecond})
+		if resp != nil { // nil on this transport-error path, but satisfies the bodyclose linter
+			_ = resp.Body.Close()
+		}
+		if err == nil {
+			t.Fatal("DoRetry() error = nil, want transport failure")
+		}
+		if len(got) != 2 {
+			t.Fatalf("observations = %d, want 2", len(got))
+		}
+		for _, o := range got {
+			if o != (obs{"github", "api", "error"}) {
+				t.Fatalf("observation = %+v, want {github api error}", o)
+			}
+		}
+	})
+
+	t.Run("client without WithUpstream reports unknown labels", func(t *testing.T) {
+		var got []obs
+		c := New(nil)
+		c.OnUpstream = func(upstream, op, status string, _ time.Duration) {
+			got = append(got, obs{upstream, op, status})
+		}
+		srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+		srv.Close()
+		resp, err := c.DoRetry(context.Background(), http.MethodGet, srv.URL, nil, nil,
+			RetryConfig{MaxAttempts: 1})
+		if resp != nil { // nil on this transport-error path, but satisfies the bodyclose linter
+			_ = resp.Body.Close()
+		}
+		if err == nil {
+			t.Fatal("DoRetry() error = nil, want transport failure")
+		}
+		if len(got) != 1 || got[0] != (obs{"unknown", "unknown", "error"}) {
+			t.Fatalf("observations = %+v, want one {unknown unknown error}", got)
 		}
 	})
 }

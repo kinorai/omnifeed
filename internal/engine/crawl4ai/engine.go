@@ -45,6 +45,16 @@ type Engine struct {
 
 	excludedSelector string
 	targetElements   []string
+
+	scanFullPage    bool
+	scrollDelay     float64
+	delayBeforeHTML float64
+	removeOverlays  bool
+
+	// direct fetches raw non-HTML text without the browser (see rawtext.go).
+	// Its underlying http.Client refuses private/reserved dials post-DNS when
+	// the SSRF guard is on. Nil disables the bypass.
+	direct *httpx.Client
 }
 
 // Config configures the crawl4ai Engine.
@@ -81,6 +91,29 @@ type Config struct {
 	// (OMNIFEED_CRAWL4AI_TARGET_ELEMENTS): on pages without a match the crawl
 	// yields no content, which the thin-content guard turns into an error.
 	TargetElements string
+	// ScanFullPage scrolls the page to the bottom (in ScrollDelay steps) before
+	// extraction so lazy-loaded content renders — multi-second on long pages.
+	// The default is owned by config (OMNIFEED_CRAWL4AI_SCAN_FULL_PAGE).
+	ScanFullPage bool
+	// ScrollDelay is the pause (seconds) between scroll steps; only sent when
+	// ScanFullPage is on (OMNIFEED_CRAWL4AI_SCROLL_DELAY).
+	ScrollDelay float64
+	// DelayBeforeHTML is the unconditional settle (seconds) after the WaitUntil
+	// signal before HTML extraction — paid on every crawl. The default is owned
+	// by config (OMNIFEED_CRAWL4AI_DELAY_BEFORE_HTML).
+	DelayBeforeHTML float64
+	// RemoveOverlays sends crawl4ai's remove_overlay_elements, whose geometry
+	// heuristic deletes any large absolute/fixed-position element before
+	// extraction. On sites whose main content lives in such containers
+	// (Wikipedia Vector-2022, several news fronts) it silently empties the
+	// whole page — the default is off (OMNIFEED_CRAWL4AI_REMOVE_OVERLAYS);
+	// remove_consent_popups stays on regardless and covers cookie modals.
+	RemoveOverlays bool
+	// BlockPrivateIPs hardens the raw-text bypass's direct fetches: resolved
+	// private/reserved addresses are refused at dial time (mirrors
+	// OMNIFEED_BLOCK_PRIVATE_IPS, which the registry enforces pre-dispatch via
+	// DNS lookup — the dial-time guard is what a rebinding race can't beat).
+	BlockPrivateIPs bool
 }
 
 // New returns a crawl4ai fallback Engine wired with the given config.
@@ -93,16 +126,28 @@ func New(cfg Config) *Engine {
 	if excludedSelector == "" {
 		excludedSelector = DefaultExcludedSelector
 	}
+	// The bypass client copies the shared client's metric hooks (WithUpstream)
+	// but swaps in its own SSRF-guarded http.Client: direct fetches dial the
+	// open internet, which the crawl4ai-bound shared client never does.
+	direct := cfg.Client.WithUpstream("direct", "get")
+	if direct != nil {
+		direct.HTTP = httpx.NewGuardedClient(cfg.BlockPrivateIPs, rawFetchTimeout)
+	}
 	return &Engine{
 		endpoint:         cfg.Endpoint,
 		token:            cfg.Token,
-		client:           cfg.Client,
+		client:           cfg.Client.WithUpstream("crawl4ai", "crawl"),
 		limiter:          cfg.Limiter,
 		keepLinks:        cfg.KeepLinks,
 		pruneThreshold:   cfg.PruneThreshold,
 		waitUntil:        waitUntil,
 		excludedSelector: excludedSelector,
 		targetElements:   splitSelectors(cfg.TargetElements),
+		scanFullPage:     cfg.ScanFullPage,
+		scrollDelay:      cfg.ScrollDelay,
+		delayBeforeHTML:  cfg.DelayBeforeHTML,
+		removeOverlays:   cfg.RemoveOverlays,
+		direct:           direct,
 	}
 }
 
@@ -187,20 +232,34 @@ type crawlMarkdown struct {
 // without it: the selector list names chrome shapes (.sidebar, #toc, …), and on
 // the rare page whose main content matches one, the exclusion is what emptied
 // the page — not the page itself.
-func (e *Engine) Crawl(ctx context.Context, rawURL string, _ domain.EngineOptions) (domain.Document, error) {
+func (e *Engine) Crawl(ctx context.Context, rawURL string, opts domain.EngineOptions) (domain.Document, error) {
 	if e.endpoint == "" {
 		return domain.Document{}, fmt.Errorf("crawl4ai endpoint not configured (set OMNIFEED_CRAWL4AI_URL)")
 	}
 
-	release, err := e.limiter.Acquire(ctx, rawURL)
+	release, err := e.limiter.Acquire(ctx, e.Name(), rawURL)
 	if err != nil {
 		return domain.Document{}, err
 	}
 	defer release()
 
-	doc, err := e.crawlOnce(ctx, rawURL, e.excludedSelector)
+	// Raw non-HTML text (code files, JSON, markdown) needs no browser render —
+	// fetch it directly; any uncertainty falls through to the browser path.
+	if doc, ok := e.rawText(ctx, rawURL); ok {
+		return doc, nil
+	}
+
+	// Per-request opt-in/out wins over the deployment default: the scroll only
+	// pays off on append-style infinite feeds, which the caller can recognize
+	// and this engine can't.
+	scan := e.scanFullPage
+	if opts.ScanFullPage != nil {
+		scan = *opts.ScanFullPage
+	}
+
+	doc, err := e.crawlOnce(ctx, rawURL, e.excludedSelector, scan)
 	if err != nil && e.excludedSelector != "" && isThinContent(err) && ctx.Err() == nil {
-		return e.crawlOnce(ctx, rawURL, "")
+		return e.crawlOnce(ctx, rawURL, "", scan)
 	}
 	return doc, err
 }
@@ -212,8 +271,8 @@ func isThinContent(err error) bool {
 }
 
 // crawlOnce performs one crawl4ai request with the given excluded selector
-// ("" omits the field — exclude nothing).
-func (e *Engine) crawlOnce(ctx context.Context, rawURL, excludedSelector string) (domain.Document, error) {
+// ("" omits the field — exclude nothing) and full-page-scan setting.
+func (e *Engine) crawlOnce(ctx context.Context, rawURL, excludedSelector string, scanFullPage bool) (domain.Document, error) {
 	// Dropping links silently loses the primary content on link-dense pages —
 	// e.g. every story title on a Hacker News front page is an external link.
 	// keepLinks renders anchor text (ignore_links=false) and retains external
@@ -224,18 +283,19 @@ func (e *Engine) crawlOnce(ctx context.Context, rawURL, excludedSelector string)
 	params := map[string]interface{}{
 		"word_count_threshold":     10,
 		"wait_until":               e.waitUntil,
-		"delay_before_return_html": 1.0,
+		"delay_before_return_html": e.delayBeforeHTML,
 		// crawl4ai silently clamps page_timeout from an untrusted REST body to
 		// 60000 ms, so anything higher is a lie we'd tell ourselves in logs.
 		// (The client-side HTTP timeout is a separate knob and is unaffected.)
-		"page_timeout":   maxPageTimeoutMS,
-		"scan_full_page": true,
-		"scroll_delay":   0.5,
-		"max_retries":    2,
+		"page_timeout": maxPageTimeoutMS,
+		// max_retries stays at crawl4ai's default (0): its internal re-renders
+		// are dominated by content-gate failures that never succeed on re-drive,
+		// happen invisibly inside one HTTP call, and stack multiplicatively with
+		// our own client-side retry (which covers genuine transient 500s, at
+		// MaxAttempts 2, visibly in metrics).
 		// script/style/noscript carry no prose but do reach the markdown on pages
 		// that inline them, so they go out with the structural chrome.
 		"excluded_tags":              []string{"nav", "footer", "header", "form", "aside", "script", "style", "noscript"},
-		"remove_overlay_elements":    true,
 		"remove_consent_popups":      true,
 		"exclude_external_links":     excludeExternalLinks,
 		"exclude_social_media_links": true,
@@ -264,6 +324,18 @@ func (e *Engine) crawlOnce(ctx context.Context, rawURL, excludedSelector string)
 			},
 		},
 	}
+	// Full-page scan is opt-in: scroll_delay only means anything while scanning,
+	// so both keys stay out of the payload when the scan is off (crawl4ai's
+	// default is no scan).
+	if scanFullPage {
+		params["scan_full_page"] = true
+		params["scroll_delay"] = e.scrollDelay
+	}
+	// Overlay removal is opt-in: its geometry heuristic silently empties pages
+	// whose content sits in large fixed/absolute containers (see Config).
+	if e.removeOverlays {
+		params["remove_overlay_elements"] = true
+	}
 	// Selector-level chrome removal; omitted on the thin-content retry.
 	if excludedSelector != "" {
 		params["excluded_selector"] = excludedSelector
@@ -284,9 +356,13 @@ func (e *Engine) crawlOnce(ctx context.Context, rawURL, excludedSelector string)
 		return domain.Document{}, fmt.Errorf("marshal request: %w", err)
 	}
 
+	// MaxAttempts 2: crawl4ai 0.9.2+ scrubs 500 bodies, so a deterministic
+	// verdict (block/content-gate) and a transient fault (pool churn, worker
+	// OOM) are indistinguishable — one retry rescues the transients while a
+	// deterministic page costs at most 2× one crawl, not 3×.
 	resp, err := e.client.DoRetry(ctx, http.MethodPost, e.endpoint, body,
 		e.headers(),
-		httpx.RetryConfig{RetryableStatus: antibot.RetryableStatus})
+		httpx.RetryConfig{MaxAttempts: 2, RetryableStatus: antibot.RetryableStatus})
 	if err != nil {
 		return domain.Document{}, classifyCrawlError(err)
 	}
@@ -324,11 +400,13 @@ func (e *Engine) crawlOnce(ctx context.Context, rawURL, excludedSelector string)
 	}
 
 	result := cr.Results[0]
+	// Whitespace-only counts as empty here: a fit_markdown of "\n" must fall
+	// back to raw_markdown, not win the pick and defeat the fallback chain.
 	content := result.Markdown.FitMarkdown
-	if content == "" {
+	if strings.TrimSpace(content) == "" {
 		content = result.Markdown.RawMarkdown
 	}
-	if content == "" {
+	if strings.TrimSpace(content) == "" {
 		content = result.CleanedHTML
 	}
 
@@ -409,12 +487,20 @@ func classifyCrawlError(err error) *domain.FetchError {
 	fe := httpx.ClassifyClientError(err, domain.KindUpstreamError)
 	if fe != nil && fe.Kind == domain.KindUpstreamError {
 		var se *httpx.StatusError
-		if errors.As(err, &se) && antibot.IsBlockResponse(se.Body) {
+		switch {
+		case errors.As(err, &se) && antibot.IsBlockResponse(se.Body):
 			fe.Kind = blockKind(se.Body)
 			// Surface crawl4ai's verdict (the StatusError body) so the log/metric
 			// says WHY — minimal_text / no <body> / which wall — instead of the
 			// bare "upstream returned 500".
 			fe.Err = fmt.Errorf("crawl4ai %d: %s", se.StatusCode, truncate(se.Body, 200))
+		case errors.As(err, &se) && se.StatusCode == http.StatusInternalServerError && antibot.IsScrubbedServerError(se.Body):
+			// crawl4ai 0.9.2+ scrubs its crawl verdicts (blocks, content-gates,
+			// crashes) out of the 500 body — the reason lives in ITS log under a
+			// correlation id. Deterministic per page and dominated by non-faults,
+			// so it must not read as an upstream outage.
+			fe.Kind = domain.KindUpstreamRejected
+			fe.Err = fmt.Errorf("crawl4ai rejected the page (verdict scrubbed server-side; see crawl4ai logs): %s", truncate(se.Body, 120))
 		}
 	}
 	return fe

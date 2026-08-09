@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/kinorai/omnifeed/internal/domain"
@@ -70,7 +71,7 @@ func New(cfg Config) *Engine {
 		cfg.Logger = slog.Default()
 	}
 	return &Engine{
-		client:  cfg.Client,
+		client:  cfg.Client.WithUpstream("github", "api"),
 		limiter: cfg.Limiter,
 		apiBase: strings.TrimRight(cfg.APIBase, "/"),
 		token:   cfg.Token,
@@ -129,8 +130,15 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, _ domain.EngineOption
 	ctx, cancel := context.WithTimeout(ctx, e.timeout)
 	defer cancel()
 
+	// One limiter slot covers the WHOLE crawl, not each HTTP call inside it —
+	// crawlPull deliberately fans out its five REST reads concurrently within
+	// this slot. That exceeds PerDomainConcurrency for api.github.com by
+	// design: the domain limiter's politeness contract is for scraped sites,
+	// while this is an authenticated API with its own server-side quotas
+	// (secondary limit ~100 concurrent), and serializing the reads is exactly
+	// the 5×RTT this engine exists to avoid.
 	if e.limiter != nil {
-		release, lerr := e.limiter.Acquire(ctx, e.apiBase)
+		release, lerr := e.limiter.Acquire(ctx, e.Name(), e.apiBase)
 		if lerr != nil {
 			return domain.Document{}, lerr
 		}
@@ -184,56 +192,82 @@ func (e *Engine) crawlIssue(ctx context.Context, rawURL string, t target) (domai
 // comments come from the ISSUES endpoint — /pulls/{n}/comments returns the inline
 // review comments instead.
 func (e *Engine) crawlPull(ctx context.Context, rawURL string, t target) (domain.Document, error) {
-	raw, _, err := e.get(ctx, e.repoURL(t, "pulls/"+t.number))
-	if err != nil {
-		return domain.Document{}, fmt.Errorf("fetch pull request: %w", err)
-	}
-	var ap apiPull
-	if jerr := json.Unmarshal(raw, &ap); jerr != nil {
-		return domain.Document{}, &domain.FetchError{Kind: domain.KindBadResponse, Err: fmt.Errorf("parse pull request: %w", jerr)}
-	}
-
-	comments, collected, more, err := e.comments(ctx, t)
+	// The five REST reads are independent, so they run concurrently: a PR
+	// crawl costs one round-trip (plus comment pagination), not five in a row.
+	var (
+		ap                              apiPull
+		comments                        []Comment
+		collected                       int
+		more                            bool
+		inline                          []InlineComment
+		reviews                         []Review
+		af                              []apiFile
+		inlineHdr, reviewsHdr, filesHdr http.Header
+	)
+	err := runAll(
+		func() error {
+			raw, _, err := e.get(ctx, e.repoURL(t, "pulls/"+t.number))
+			if err != nil {
+				return fmt.Errorf("fetch pull request: %w", err)
+			}
+			if jerr := json.Unmarshal(raw, &ap); jerr != nil {
+				return &domain.FetchError{Kind: domain.KindBadResponse, Err: fmt.Errorf("parse pull request: %w", jerr)}
+			}
+			return nil
+		},
+		func() (err error) {
+			comments, collected, more, err = e.comments(ctx, t)
+			return err
+		},
+		func() error {
+			raw, hdr, err := e.get(ctx, e.repoURL(t, "pulls/"+t.number+"/comments")+"?per_page="+strconv.Itoa(perPage))
+			if err != nil {
+				return fmt.Errorf("fetch review comments: %w", err)
+			}
+			var arc []apiReviewComment
+			if jerr := json.Unmarshal(raw, &arc); jerr != nil {
+				return &domain.FetchError{Kind: domain.KindBadResponse, Err: fmt.Errorf("parse review comments: %w", jerr)}
+			}
+			inlineHdr = hdr
+			inline = make([]InlineComment, 0, len(arc))
+			for _, c := range arc {
+				inline = append(inline, InlineComment{
+					Path: c.Path, Line: c.Line, ReplyTo: c.InReplyTo,
+					Login: c.User.Login, Created: c.CreatedAt, Body: c.Body,
+				})
+			}
+			return nil
+		},
+		func() error {
+			raw, hdr, err := e.get(ctx, e.repoURL(t, "pulls/"+t.number+"/reviews")+"?per_page="+strconv.Itoa(perPage))
+			if err != nil {
+				return fmt.Errorf("fetch reviews: %w", err)
+			}
+			var ar []apiReview
+			if jerr := json.Unmarshal(raw, &ar); jerr != nil {
+				return &domain.FetchError{Kind: domain.KindBadResponse, Err: fmt.Errorf("parse reviews: %w", jerr)}
+			}
+			reviewsHdr = hdr
+			reviews = make([]Review, 0, len(ar))
+			for _, r := range ar {
+				reviews = append(reviews, Review{Login: r.User.Login, State: r.State, Submitted: r.SubmittedAt, Body: r.Body})
+			}
+			return nil
+		},
+		func() error {
+			raw, hdr, err := e.get(ctx, e.repoURL(t, "pulls/"+t.number+"/files")+"?per_page="+strconv.Itoa(perPage))
+			if err != nil {
+				return fmt.Errorf("fetch files: %w", err)
+			}
+			if jerr := json.Unmarshal(raw, &af); jerr != nil {
+				return &domain.FetchError{Kind: domain.KindBadResponse, Err: fmt.Errorf("parse files: %w", jerr)}
+			}
+			filesHdr = hdr
+			return nil
+		},
+	)
 	if err != nil {
 		return domain.Document{}, err
-	}
-
-	inlineRaw, inlineHdr, err := e.get(ctx, e.repoURL(t, "pulls/"+t.number+"/comments")+"?per_page="+strconv.Itoa(perPage))
-	if err != nil {
-		return domain.Document{}, fmt.Errorf("fetch review comments: %w", err)
-	}
-	var arc []apiReviewComment
-	if jerr := json.Unmarshal(inlineRaw, &arc); jerr != nil {
-		return domain.Document{}, &domain.FetchError{Kind: domain.KindBadResponse, Err: fmt.Errorf("parse review comments: %w", jerr)}
-	}
-	inline := make([]InlineComment, 0, len(arc))
-	for _, c := range arc {
-		inline = append(inline, InlineComment{
-			Path: c.Path, Line: c.Line, ReplyTo: c.InReplyTo,
-			Login: c.User.Login, Created: c.CreatedAt, Body: c.Body,
-		})
-	}
-
-	reviewsRaw, reviewsHdr, err := e.get(ctx, e.repoURL(t, "pulls/"+t.number+"/reviews")+"?per_page="+strconv.Itoa(perPage))
-	if err != nil {
-		return domain.Document{}, fmt.Errorf("fetch reviews: %w", err)
-	}
-	var ar []apiReview
-	if jerr := json.Unmarshal(reviewsRaw, &ar); jerr != nil {
-		return domain.Document{}, &domain.FetchError{Kind: domain.KindBadResponse, Err: fmt.Errorf("parse reviews: %w", jerr)}
-	}
-	reviews := make([]Review, 0, len(ar))
-	for _, r := range ar {
-		reviews = append(reviews, Review{Login: r.User.Login, State: r.State, Submitted: r.SubmittedAt, Body: r.Body})
-	}
-
-	filesRaw, filesHdr, err := e.get(ctx, e.repoURL(t, "pulls/"+t.number+"/files")+"?per_page="+strconv.Itoa(perPage))
-	if err != nil {
-		return domain.Document{}, fmt.Errorf("fetch files: %w", err)
-	}
-	var af []apiFile
-	if jerr := json.Unmarshal(filesRaw, &af); jerr != nil {
-		return domain.Document{}, &domain.FetchError{Kind: domain.KindBadResponse, Err: fmt.Errorf("parse files: %w", jerr)}
 	}
 	files, diffTruncated := budgetFiles(af)
 
@@ -282,6 +316,29 @@ func (e *Engine) crawlPull(ctx context.Context, rawURL string, t target) (domain
 		InlineComments: inline,
 		Files:          files,
 	}, rawURL, meta)
+}
+
+// runAll runs the given functions concurrently and waits for all of them; the
+// first (by argument order) non-nil error is returned, so failure reporting is
+// deterministic. No early cancellation: the losers are bounded by the crawl's
+// context timeout anyway, and cancel plumbing isn't worth it for five calls.
+func runAll(fns ...func() error) error {
+	errs := make([]error, len(fns))
+	var wg sync.WaitGroup
+	for i, fn := range fns {
+		wg.Add(1)
+		go func(i int, fn func() error) {
+			defer wg.Done()
+			errs[i] = fn()
+		}(i, fn)
+	}
+	wg.Wait()
+	for _, err := range errs {
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // comments fetches the conversation-tab comments of an issue or PR, following the

@@ -233,3 +233,44 @@ func TestFetchURL_MaxCharsClampedToCeiling(t *testing.T) {
 		t.Errorf("resolveMaxChars: got %d, want %d", got, MaxFetchChars)
 	}
 }
+
+// optsCapturingEngine records the EngineOptions it was crawled with.
+type optsCapturingEngine struct {
+	got *domain.EngineOptions
+}
+
+func (optsCapturingEngine) Name() string        { return "capture" }
+func (optsCapturingEngine) Matches(string) bool { return true }
+func (e optsCapturingEngine) Crawl(_ context.Context, _ string, opts domain.EngineOptions) (domain.Document, error) {
+	*e.got = opts
+	return domain.Document{PageContent: "ok", Metadata: map[string]string{domain.ContentTypeKey: domain.ContentTypeMarkdown}}, nil
+}
+
+// The scan_full_page tool argument must reach the engine as the tri-state
+// option: absent = nil (deployment default), true/false = explicit override.
+func TestFetchURL_ScanFullPageArg(t *testing.T) {
+	var got domain.EngineOptions
+	reg := engine.New().Fallback(optsCapturingEngine{got: &got})
+	tool := FetchURL(reg, reddit.Options{}, nil, 0)
+
+	if _, err := tool.Handle(context.Background(), map[string]any{"url": "https://example.com/feed"}); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if got.ScanFullPage != nil {
+		t.Errorf("absent arg: ScanFullPage = %v, want nil", *got.ScanFullPage)
+	}
+
+	if _, err := tool.Handle(context.Background(), map[string]any{"url": "https://example.com/feed", "scan_full_page": true}); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if got.ScanFullPage == nil || !*got.ScanFullPage {
+		t.Errorf("scan_full_page=true: ScanFullPage = %v, want true", got.ScanFullPage)
+	}
+
+	if _, err := tool.Handle(context.Background(), map[string]any{"url": "https://example.com/feed", "scan_full_page": false}); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if got.ScanFullPage == nil || *got.ScanFullPage {
+		t.Errorf("scan_full_page=false: ScanFullPage = %v, want false", got.ScanFullPage)
+	}
+}

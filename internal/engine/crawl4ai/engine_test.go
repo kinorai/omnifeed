@@ -370,6 +370,11 @@ func TestCrawlRequestPreservesCodeAndClampsTimeout(t *testing.T) {
 // without a live upstream.
 func crawlParams(t *testing.T, cfg Config) map[string]any {
 	t.Helper()
+	return crawlParamsOpts(t, cfg, domain.EngineOptions{})
+}
+
+func crawlParamsOpts(t *testing.T, cfg Config, opts domain.EngineOptions) map[string]any {
+	t.Helper()
 	var params map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		raw, _ := io.ReadAll(r.Body)
@@ -389,7 +394,7 @@ func crawlParams(t *testing.T, cfg Config) map[string]any {
 	cfg.Endpoint = srv.URL
 	cfg.Client = httpx.New(nil)
 	cfg.Limiter = httpx.NewDomainLimiter(2, 0)
-	if _, err := New(cfg).Crawl(context.Background(), "https://example.com/page", domain.EngineOptions{}); err != nil {
+	if _, err := New(cfg).Crawl(context.Background(), "https://example.com/page", opts); err != nil {
 		t.Fatalf("Crawl() error = %v", err)
 	}
 	return params
@@ -423,11 +428,94 @@ func TestCrawlRequestChromeDefaults(t *testing.T) {
 	if params["remove_consent_popups"] != true {
 		t.Errorf("remove_consent_popups = %#v, want true", params["remove_consent_popups"])
 	}
+	// The overlay-removal geometry heuristic silently empties pages whose
+	// content sits in large fixed/absolute containers (Wikipedia, news fronts)
+	// — it must stay out of the payload unless explicitly enabled.
+	if _, ok := params["remove_overlay_elements"]; ok {
+		t.Errorf("remove_overlay_elements = %#v, want the key absent by default", params["remove_overlay_elements"])
+	}
 	if got := params["excluded_selector"]; got != DefaultExcludedSelector {
 		t.Errorf("excluded_selector = %#v, want %q", got, DefaultExcludedSelector)
 	}
 	if _, ok := params["target_elements"]; ok {
 		t.Errorf("target_elements = %#v, want the key absent by default", params["target_elements"])
+	}
+}
+
+// RemoveOverlays opts back into crawl4ai's overlay removal.
+func TestCrawlRequestRemoveOverlaysOptIn(t *testing.T) {
+	params := crawlParams(t, Config{RemoveOverlays: true})
+	if params["remove_overlay_elements"] != true {
+		t.Errorf("remove_overlay_elements = %#v, want true when RemoveOverlays is set", params["remove_overlay_elements"])
+	}
+}
+
+// A per-request ScanFullPage option must win over the engine default, in both
+// directions — the caller knows it's fetching a feed; the engine doesn't.
+func TestCrawlScanFullPagePerRequestOverride(t *testing.T) {
+	on, off := true, false
+
+	params := crawlParamsOpts(t, Config{}, domain.EngineOptions{ScanFullPage: &on})
+	if params["scan_full_page"] != true {
+		t.Errorf("opts on, engine default off: scan_full_page = %#v, want true", params["scan_full_page"])
+	}
+
+	params = crawlParamsOpts(t, Config{ScanFullPage: true, ScrollDelay: 0.5}, domain.EngineOptions{ScanFullPage: &off})
+	if _, ok := params["scan_full_page"]; ok {
+		t.Errorf("opts off, engine default on: scan_full_page = %#v, want the key absent", params["scan_full_page"])
+	}
+}
+
+// A whitespace-only fit_markdown must fall back to raw_markdown — crawl4ai's
+// pruning can emit "\n" for a page whose raw markdown is perfectly usable, and
+// an == "" check would hand the caller the whitespace instead.
+func TestCrawlWhitespaceFitFallsBackToRaw(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		resp := map[string]any{"success": true, "results": []any{map[string]any{
+			"success": true, "status_code": 200,
+			"markdown": map[string]any{"fit_markdown": "\n \n", "raw_markdown": "# real content"},
+		}}}
+		b, _ := json.Marshal(resp)
+		_, _ = w.Write(b)
+	}))
+	defer srv.Close()
+
+	e := New(Config{Endpoint: srv.URL, Client: httpx.New(nil), Limiter: httpx.NewDomainLimiter(2, 0)})
+	doc, err := e.Crawl(context.Background(), "https://example.com/page", domain.EngineOptions{})
+	if err != nil {
+		t.Fatalf("Crawl() error = %v", err)
+	}
+	if doc.PageContent != "# real content" {
+		t.Errorf("PageContent = %q, want the raw_markdown fallback", doc.PageContent)
+	}
+}
+
+// crawl4ai 0.9.2+ scrubs its crawl verdicts out of 500 bodies. Such a 500 must
+// classify as upstream_rejected (not upstream_error, which reads as an outage)
+// and be attempted exactly twice — the scrubbed body makes a deterministic
+// verdict indistinguishable from a transient fault, so one retry rescues the
+// transients while MaxAttempts caps the deterministic-page cost.
+func TestCrawlScrubbed500RejectedNotRetried(t *testing.T) {
+	attempts := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		attempts++
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":"Internal server error","correlation_id":"415768e2265e"}`))
+	}))
+	defer srv.Close()
+
+	e := New(Config{Endpoint: srv.URL, Client: httpx.New(nil), Limiter: httpx.NewDomainLimiter(2, 0)})
+	_, err := e.Crawl(context.Background(), "https://example.com/page", domain.EngineOptions{})
+
+	var fe *domain.FetchError
+	if !errors.As(err, &fe) {
+		t.Fatalf("want *domain.FetchError, got %T: %v", err, err)
+	}
+	if fe.Kind != domain.KindUpstreamRejected {
+		t.Errorf("Kind = %q, want %q", fe.Kind, domain.KindUpstreamRejected)
+	}
+	if attempts != 2 {
+		t.Errorf("upstream attempts = %d, want 2 (one retry for possible transients, no more)", attempts)
 	}
 }
 
@@ -604,6 +692,86 @@ func TestCrawlEmptyExtractionIsThinContent(t *testing.T) {
 			}
 			if doc.PageContent != "" {
 				t.Fatalf("PageContent = %q, want empty on failure", doc.PageContent)
+			}
+		})
+	}
+}
+
+// The latency knobs must reach the wire exactly as configured: DelayBeforeHTML
+// always, scan_full_page/scroll_delay only when the scan is on (crawl4ai's own
+// default is no scan, so the keys stay out of the payload), and max_retries
+// never (crawl4ai's default 0 — re-driving a content-gate 500 burns tens of
+// seconds for nothing).
+func TestCrawlRequestLatencyKnobs(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		cfg          func(Config) Config
+		wantDelay    float64
+		wantScanKeys bool
+		wantScroll   float64
+	}{
+		{
+			name:      "scan off omits scan keys",
+			cfg:       func(c Config) Config { c.DelayBeforeHTML = 0.1; return c },
+			wantDelay: 0.1,
+		},
+		{
+			name: "scan on sends scan_full_page and scroll_delay",
+			cfg: func(c Config) Config {
+				c.DelayBeforeHTML = 1.0
+				c.ScanFullPage = true
+				c.ScrollDelay = 0.5
+				return c
+			},
+			wantDelay:    1.0,
+			wantScanKeys: true,
+			wantScroll:   0.5,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var params map[string]any
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				raw, _ := io.ReadAll(r.Body)
+				var req map[string]any
+				if err := json.Unmarshal(raw, &req); err != nil {
+					t.Errorf("decode request: %v", err)
+				}
+				params = req["crawler_config"].(map[string]any)["params"].(map[string]any)
+
+				resp := map[string]any{"success": true, "results": []any{map[string]any{
+					"success": true, "status_code": 200, "markdown": map[string]any{"raw_markdown": "# ok"},
+				}}}
+				b, _ := json.Marshal(resp)
+				_, _ = w.Write(b)
+			}))
+			defer srv.Close()
+
+			e := New(tc.cfg(Config{
+				Endpoint: srv.URL,
+				Client:   httpx.New(nil),
+				Limiter:  httpx.NewDomainLimiter(2, 0),
+			}))
+			if _, err := e.Crawl(context.Background(), "https://example.com/page", domain.EngineOptions{}); err != nil {
+				t.Fatalf("Crawl() error = %v", err)
+			}
+
+			if got := params["delay_before_return_html"].(float64); got != tc.wantDelay {
+				t.Errorf("delay_before_return_html = %v, want %v", got, tc.wantDelay)
+			}
+			if _, ok := params["max_retries"]; ok {
+				t.Errorf("max_retries present in payload, want it omitted (crawl4ai default 0)")
+			}
+			scan, scanOK := params["scan_full_page"]
+			scroll, scrollOK := params["scroll_delay"]
+			if tc.wantScanKeys {
+				if !scanOK || scan != true {
+					t.Errorf("scan_full_page = %v (present=%v), want true", scan, scanOK)
+				}
+				if !scrollOK || scroll.(float64) != tc.wantScroll {
+					t.Errorf("scroll_delay = %v (present=%v), want %v", scroll, scrollOK, tc.wantScroll)
+				}
+			} else if scanOK || scrollOK {
+				t.Errorf("scan_full_page/scroll_delay present (%v/%v), want both omitted when scan is off", scan, scroll)
 			}
 		})
 	}

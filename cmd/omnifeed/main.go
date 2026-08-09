@@ -62,12 +62,21 @@ func main() {
 func run(cfg config.Config, logger *slog.Logger) error {
 	// --- HTTP client with retry, shared by both engines ---
 
-	httpClient := httpx.New(&http.Client{Timeout: cfg.Crawl4AITimeout})
+	// One transport for every outbound client: a widened per-host idle pool so
+	// concurrent calls to the same upstream reuse connections instead of
+	// re-handshaking TLS (DefaultTransport keeps only 2 idle conns per host).
+	transport := httpx.NewTransport()
+	httpClient := httpx.New(&http.Client{Timeout: cfg.Crawl4AITimeout, Transport: transport})
 	limiter := httpx.NewDomainLimiter(cfg.PerDomainConcurrency, cfg.PerDomainDelay)
 	metrics := observability.NewMetrics()
 	// Count every HTTP attempt the crawl client makes (first try + retries) so
-	// retry waste shows up in metrics, not just reconstructed from logs.
+	// retry waste shows up in metrics, not just reconstructed from logs, and
+	// time every upstream round-trip per attempt. Hooks must be set BEFORE the
+	// adapters below copy the client via WithUpstream.
 	httpClient.OnAttempt = metrics.ObserveAttempt
+	httpClient.OnUpstream = metrics.ObserveUpstream
+	// Surface time spent queued behind the per-domain politeness limiter.
+	limiter.OnWait = metrics.ObserveLimiterWait
 
 	// --- Engines ---
 
@@ -107,6 +116,11 @@ func run(cfg config.Config, logger *slog.Logger) error {
 
 		ExcludedSelector: cfg.Crawl4AIExcludedSelector,
 		TargetElements:   cfg.Crawl4AITargetElements,
+		ScanFullPage:     cfg.Crawl4AIScanFullPage,
+		ScrollDelay:      cfg.Crawl4AIScrollDelay,
+		DelayBeforeHTML:  cfg.Crawl4AIDelayBeforeHTML,
+		RemoveOverlays:   cfg.Crawl4AIRemoveOverlays,
+		BlockPrivateIPs:  cfg.BlockPrivateIPs,
 	})
 
 	// The Hacker News, GitHub, and Discourse engines read their public JSON APIs
@@ -143,18 +157,22 @@ func run(cfg config.Config, logger *slog.Logger) error {
 		Register(discourseEngine).
 		Fallback(crawl4aiEngine).
 		BlockPrivateIPs(cfg.BlockPrivateIPs).
-		Logger(logger)
+		Logger(logger).
+		Metrics(metrics)
 
 	// --- Searcher (optional — search tool is exposed only when configured) ---
 
 	var searcher domain.Searcher
 	var searxngClient *httpx.Client
 	if cfg.SearXNGURL != "" {
-		searxngClient = httpx.New(&http.Client{Timeout: cfg.SearXNGTimeout})
+		searxngClient = httpx.New(&http.Client{Timeout: cfg.SearXNGTimeout, Transport: transport})
+		searxngClient.OnAttempt = metrics.ObserveAttempt
+		searxngClient.OnUpstream = metrics.ObserveUpstream
 		searcher = searxng.New(searxng.Config{
 			Endpoint: cfg.SearXNGURL,
 			Client:   searxngClient,
 			Logger:   logger,
+			Metrics:  metrics,
 		})
 	} else {
 		logger.Info("search tool disabled (OMNIFEED_SEARXNG_URL not set)")
@@ -212,7 +230,6 @@ func run(cfg config.Config, logger *slog.Logger) error {
 		Logger:            logger,
 		Metrics:           metrics,
 		MaxURLsPerRequest: cfg.MaxURLsPerRequest,
-		BlockPrivateIPs:   cfg.BlockPrivateIPs,
 		RedditDefaults:    redditDefaults,
 	})
 
