@@ -16,10 +16,12 @@ type DomainLimiter struct {
 	minDelay      time.Duration
 	limits        sync.Map // host → *domainSlot
 
-	// OnWait, when non-nil, is called on every successful Acquire with the
-	// engine that waited and the time it spent blocked (semaphore wait +
-	// politeness delay); ~0 when uncontended. Set once at wiring time.
-	OnWait func(engine string, waited time.Duration)
+	// OnWait, when non-nil, is called on every Acquire exit with the engine
+	// that waited, the outcome ("acquired", or "canceled" when the caller's
+	// ctx died in the queue — the worst waits, which never acquire), and the
+	// time spent blocked (semaphore wait + politeness delay); ~0 when
+	// uncontended. Set once at wiring time.
+	OnWait func(engine, outcome string, waited time.Duration)
 }
 
 type domainSlot struct {
@@ -55,6 +57,7 @@ func (d *DomainLimiter) Acquire(ctx context.Context, engine, rawURL string) (fun
 	select {
 	case s.sem <- struct{}{}:
 	case <-ctx.Done():
+		d.observeWait(engine, "canceled", start)
 		return nil, ctx.Err()
 	}
 
@@ -69,17 +72,22 @@ func (d *DomainLimiter) Acquire(ctx context.Context, engine, rawURL string) (fun
 		case <-ctx.Done():
 			t.Stop()
 			<-s.sem
+			d.observeWait(engine, "canceled", start)
 			return nil, ctx.Err()
 		}
 	}
 
-	if d.OnWait != nil {
-		d.OnWait(engine, time.Since(start))
-	}
+	d.observeWait(engine, "acquired", start)
 	return func() {
 		s.mu.Lock()
 		s.lastSend = time.Now()
 		s.mu.Unlock()
 		<-s.sem
 	}, nil
+}
+
+func (d *DomainLimiter) observeWait(engine, outcome string, start time.Time) {
+	if d.OnWait != nil {
+		d.OnWait(engine, outcome, time.Since(start))
+	}
 }

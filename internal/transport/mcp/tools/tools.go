@@ -155,13 +155,14 @@ func crawlHandler(reg *engine.Registry, defaults reddit.Options, metrics *observ
 		if err != nil {
 			return mcp.ToolResult{}, err
 		}
-		res := sized(doc, resolveMaxChars(args, defaultMaxChars), argInt(args, "start_char"))
 		if metrics != nil {
-			// Recorded AFTER sized() so the observation is the post-truncation text
-			// the caller actually receives — the quality guard for scrape changes.
-			metrics.ObserveResponseChars(engineName(reg, rawURL), utf8.RuneCountInString(res.Text))
+			// Recorded pre-truncation (the engine's extraction output, not the
+			// max_chars-clipped text this transport delivers) so the series is
+			// comparable with the loader path and a scrape regression can't
+			// hide behind the cap — the quality guard for scrape changes.
+			metrics.ObserveResponseChars(engineName(reg, rawURL), utf8.RuneCountInString(doc.PageContent))
 		}
-		return res, nil
+		return sized(doc, resolveMaxChars(args, defaultMaxChars), argInt(args, "start_char")), nil
 	}
 }
 
