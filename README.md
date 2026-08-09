@@ -301,10 +301,10 @@ Served on `OMNIFEED_METRICS_ADDR` (default `:9090`) at `/metrics`, alongside the
 | `omnifeed_request_seconds` | histogram | `engine, status, reason` | End-to-end crawl latency |
 | `omnifeed_request_attempts_total` | counter | `upstream, attempt` | HTTP attempts by the retrying client (`first` vs `retry`) |
 | `omnifeed_upstream_seconds` | histogram | `upstream, op, status` | Upstream HTTP round-trip per attempt (start → body fully read); `crawl4ai/crawl`, `crawl4ai/execute_js`, `searxng/search`, `github/api`, `hackernews/api`, `discourse/api` |
-| `omnifeed_domain_limiter_wait_seconds` | histogram | `engine` | Time blocked in per-domain limiter acquisition (semaphore + politeness delay) |
-| `omnifeed_response_chars` | histogram | `engine` | Characters actually returned to the caller (post-truncation), successful crawls only |
+| `omnifeed_domain_limiter_wait_seconds` | histogram | `engine, outcome` | Time blocked in per-domain limiter acquisition (semaphore + politeness delay); `outcome="canceled"` = the wait died in the queue |
+| `omnifeed_response_chars` | histogram | `engine` | Extracted content length (pre-truncation — the engine's output, before any transport `max_chars` clipping), successful crawls only |
 | `omnifeed_engine_fallbacks_total` | counter | `from_engine, reason` | Dedicated-engine failures re-crawled via the generic fallback |
-| `omnifeed_searxng_unresponsive_engines_total` | counter | `engine, error` | Engines SearXNG reported unresponsive per search |
+| `omnifeed_searxng_unresponsive_engines_total` | counter | `engine, error` | Engines SearXNG reported unresponsive per search; `error` normalized to a closed set (`timeout`, `captcha`, `suspended`, `too_many_requests`, `access_denied`, `error`, `unknown`) |
 | `omnifeed_reddit_expansion_rounds` | histogram | — | `/api/morechildren` rounds per Reddit crawl |
 | `omnifeed_search_requests_total` | counter | `searcher, status, reason` | Search queries |
 | `omnifeed_search_request_seconds` | histogram | `searcher, status` | Search latency |

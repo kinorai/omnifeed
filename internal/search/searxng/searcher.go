@@ -148,10 +148,13 @@ func (s *Searcher) Search(ctx context.Context, query string, opts domain.SearchO
 }
 
 // countUnresponsive increments the unresponsive-engine counter for each
-// [engine, error_type] pair SearXNG reported. Both values are bounded sets on a
-// self-hosted instance (its engine list × its error strings), so they are safe
-// as labels. Malformed entries (empty pair or blank engine name) are skipped
-// silently; a missing error type counts as "unknown" — the engine still failed.
+// [engine, error_type] pair SearXNG reported. The engine name is a bounded set
+// on a self-hosted instance (its own engine list); the error string is
+// upstream-controlled free text, so it is normalized to a fixed vocabulary
+// before becoming a label — a SearXNG upgrade that embeds detail in its
+// messages must not mint unbounded permanent series. Malformed entries (empty
+// pair or blank engine name) are skipped silently; a missing error type counts
+// as "unknown" — the engine still failed.
 func (s *Searcher) countUnresponsive(pairs [][]string) {
 	if s.metrics == nil {
 		return
@@ -162,9 +165,31 @@ func (s *Searcher) countUnresponsive(pairs [][]string) {
 		}
 		errType := "unknown"
 		if len(pair) > 1 && pair[1] != "" {
-			errType = pair[1]
+			errType = normalizeEngineError(pair[1])
 		}
 		s.metrics.ObserveUnresponsiveEngine(pair[0], errType)
+	}
+}
+
+// normalizeEngineError maps SearXNG's free-text unresponsive reasons onto a
+// closed label vocabulary. Substring checks, most specific first: SearXNG
+// composes messages like "Suspended: too many requests" or "CAPTCHA required",
+// and exception class names leak through as-is.
+func normalizeEngineError(msg string) string {
+	m := strings.ToLower(msg)
+	switch {
+	case strings.Contains(m, "captcha"):
+		return "captcha"
+	case strings.Contains(m, "too many request"):
+		return "too_many_requests"
+	case strings.Contains(m, "access denied"):
+		return "access_denied"
+	case strings.Contains(m, "timeout"):
+		return "timeout"
+	case strings.Contains(m, "suspended"):
+		return "suspended"
+	default:
+		return "error"
 	}
 }
 

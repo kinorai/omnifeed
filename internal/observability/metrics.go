@@ -41,9 +41,12 @@ func NewMetrics() *Metrics {
 			Help: `HTTP attempts by the retrying client, by upstream, split into the first try and retries. attempt="retry" is retry volume; it drops when a non-transient block stops being re-driven.`,
 		}, []string{"upstream", "attempt"}),
 		RequestSecs: prometheus.NewHistogramVec(prometheus.HistogramOpts{
-			Name:    "omnifeed_request_seconds",
-			Help:    "Crawl latency by engine, status, and failure reason (reason=\"ok\" on success).",
-			Buckets: prometheus.ExponentialBuckets(0.05, 2, 12),
+			Name: "omnifeed_request_seconds",
+			Help: "Crawl latency by engine, status, and failure reason (reason=\"ok\" on success).",
+			// 14 buckets → top ~409.6s: end-to-end can stack limiter wait +
+			// 3 retried 90s attempts (or a 4m Reddit crawl); a 102.4s ceiling
+			// would push exactly the pathological tail into +Inf.
+			Buckets: prometheus.ExponentialBuckets(0.05, 2, 14),
 		}, []string{"engine", "status", "reason"}),
 		UpstreamSecs: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name:    "omnifeed_upstream_seconds",
@@ -51,13 +54,15 @@ func NewMetrics() *Metrics {
 			Buckets: prometheus.ExponentialBuckets(0.05, 2, 12),
 		}, []string{"upstream", "op", "status"}),
 		LimiterWaitSecs: prometheus.NewHistogramVec(prometheus.HistogramOpts{
-			Name:    "omnifeed_domain_limiter_wait_seconds",
-			Help:    "Time spent blocked in per-domain limiter acquisition (semaphore wait + politeness delay); ~0 when uncontended.",
-			Buckets: prometheus.ExponentialBuckets(0.01, 2, 12),
-		}, []string{"engine"}),
+			Name: "omnifeed_domain_limiter_wait_seconds",
+			Help: "Time spent blocked in per-domain limiter acquisition (semaphore wait + politeness delay); ~0 when uncontended. outcome=\"canceled\" is a wait that died in the queue (caller gave up) — the worst waits, which never acquire.",
+			// 14 buckets → top ~81.9s: queued-behind-a-slow-domain waits run
+			// to the caller's deadline (90s crawl timeouts), well past 20s.
+			Buckets: prometheus.ExponentialBuckets(0.01, 2, 14),
+		}, []string{"engine", "outcome"}),
 		ResponseChars: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name:    "omnifeed_response_chars",
-			Help:    "Final returned content length in characters (post-truncation — what the caller receives) on successful crawls.",
+			Help:    "Extracted content length in characters on successful crawls, pre-truncation (the engine's output, not what a transport delivered after max_chars) — comparable across transports, the quality guard for scrape-option changes.",
 			Buckets: prometheus.ExponentialBuckets(100, 4, 10),
 		}, []string{"engine"}),
 		EngineFallbacks: prometheus.NewCounterVec(prometheus.CounterOpts{
@@ -120,9 +125,10 @@ func (m *Metrics) ObserveUpstream(upstream, op, status string, duration time.Dur
 }
 
 // ObserveLimiterWait records the time an engine spent blocked acquiring the
-// per-domain limiter. Wired as the DomainLimiter's OnWait hook.
-func (m *Metrics) ObserveLimiterWait(engine string, duration time.Duration) {
-	m.LimiterWaitSecs.WithLabelValues(engine).Observe(duration.Seconds())
+// per-domain limiter. Wired as the DomainLimiter's OnWait hook. outcome is
+// "acquired" or "canceled" (the wait died in the queue).
+func (m *Metrics) ObserveLimiterWait(engine, outcome string, duration time.Duration) {
+	m.LimiterWaitSecs.WithLabelValues(engine, outcome).Observe(duration.Seconds())
 }
 
 // ObserveResponseChars records the character count of the content actually

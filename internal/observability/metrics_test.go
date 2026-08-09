@@ -94,8 +94,8 @@ func TestNewCollectorsObservable(t *testing.T) {
 		t.Fatalf("UpstreamSecs count = %d, want 1", got)
 	}
 
-	m.ObserveLimiterWait("reddit", 10*time.Millisecond)
-	if got := histogramCount(t, m.LimiterWaitSecs.WithLabelValues("reddit")); got != 1 {
+	m.ObserveLimiterWait("reddit", "acquired", 10*time.Millisecond)
+	if got := histogramCount(t, m.LimiterWaitSecs.WithLabelValues("reddit", "acquired")); got != 1 {
 		t.Fatalf("LimiterWaitSecs count = %d, want 1", got)
 	}
 
