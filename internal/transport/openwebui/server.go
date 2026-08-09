@@ -212,6 +212,13 @@ func (s *Server) buildEngineOptions(r *http.Request) domain.EngineOptions {
 			opts.RedditMaxRounds = parseIntDefault(ex, opts.RedditMaxRounds)
 		}
 	}
+	// Generic-crawl opt-in/out: ?scan_full_page=true scrolls append-style feeds,
+	// =false forces the scroll off when a deployment defaults it on. Absent =
+	// deployment default (tri-state, like the engine option itself).
+	if sfp := q.Get("scan_full_page"); sfp == "true" || sfp == "false" {
+		v := sfp == "true"
+		opts.ScanFullPage = &v
+	}
 	return opts
 }
 

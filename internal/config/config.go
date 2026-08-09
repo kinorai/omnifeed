@@ -58,6 +58,12 @@ type Config struct {
 	// sleeps after the page-ready signal before extracting HTML — paid on every
 	// crawl whether or not the page needs it. crawl4ai's own default (0.1).
 	Crawl4AIDelayBeforeHTML float64
+	// Crawl4AIRemoveOverlays sends crawl4ai's remove_overlay_elements. Its
+	// geometry heuristic (delete any large absolute/fixed element) silently
+	// empties pages whose content sits in such containers — Wikipedia and
+	// several news fronts return only their <title>. Off by default;
+	// remove_consent_popups stays on regardless and covers cookie modals.
+	Crawl4AIRemoveOverlays bool
 
 	// Upstream SearXNG (optional). Empty disables the `search` MCP tool.
 	SearXNGURL     string
@@ -165,6 +171,9 @@ func Load() (Config, error) {
 		return c, err
 	}
 	if c.Crawl4AIDelayBeforeHTML, err = envFloat("OMNIFEED_CRAWL4AI_DELAY_BEFORE_HTML", 0.1); err != nil {
+		return c, err
+	}
+	if c.Crawl4AIRemoveOverlays, err = envBool("OMNIFEED_CRAWL4AI_REMOVE_OVERLAYS", false); err != nil {
 		return c, err
 	}
 	if c.SearXNGTimeout, err = envDuration("OMNIFEED_SEARXNG_TIMEOUT", 15*time.Second); err != nil {

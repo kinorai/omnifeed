@@ -28,8 +28,11 @@ func TestDetectClean(t *testing.T) {
 	}
 }
 
-// RetryableStatus (and IsBlockResponse) must veto retrying a crawl4ai anti-bot
-// 5xx while still retrying genuine transient faults.
+// RetryableStatus must veto retrying every crawl4ai plain 500 — 0.9.2+
+// reserves that status for its own deterministic crawl verdicts and scrubs
+// the reason from the body, so a generic-looking 500 is NOT transient — while
+// still retrying 429 and the pass-through infra statuses (502/503/504) unless
+// their body carries an explicit block verdict.
 func TestRetryableStatus(t *testing.T) {
 	const block = `{"error":"Blocked by anti-bot protection: Structural: minimal_text"}`
 	cases := []struct {
@@ -37,11 +40,13 @@ func TestRetryableStatus(t *testing.T) {
 		body   string
 		want   bool
 	}{
-		{500, block, false},                 // anti-bot 5xx → don't retry
-		{503, block, false},                 // any 5xx carrying the marker
-		{500, `{"error":"internal"}`, true}, // generic transient 5xx → retry
-		{429, "rate limited", true},         // 429 → retry
-		{200, block, true},                  // <500 is never vetoed here
+		{500, block, false},                  // anti-bot 5xx → don't retry
+		{503, block, false},                  // any 5xx carrying the marker
+		{500, `{"error":"internal"}`, false}, // scrubbed verdict channel → never retry
+		{500, `{"error":"Internal server error","correlation_id":"abc123"}`, false},
+		{503, `{"error":"upstream hiccup"}`, true}, // infra pass-through → retry
+		{429, "rate limited", true},               // 429 → retry
+		{200, block, true},                        // <500 is never vetoed here
 	}
 	for _, tc := range cases {
 		if got := RetryableStatus(tc.status, tc.body); got != tc.want {
@@ -71,6 +76,24 @@ func TestIsStructuralBlock(t *testing.T) {
 	for _, b := range walls {
 		if IsStructuralBlock(b) {
 			t.Errorf("IsStructuralBlock(%q) = true, want false", b)
+		}
+	}
+}
+
+// IsScrubbedServerError recognizes crawl4ai 0.9.2+'s generic 500 body (verdict
+// scrubbed server-side under a correlation id) and nothing else.
+func TestIsScrubbedServerError(t *testing.T) {
+	if !IsScrubbedServerError(`{"error":"Internal server error","correlation_id":"415768e2265e"}`) {
+		t.Error("scrubbed body not recognized")
+	}
+	for _, body := range []string{
+		`{"error":"Blocked by anti-bot protection: Structural: minimal_text"}`,
+		`{"error":"internal"}`,
+		"Internal Server Error", // classic plain 500 page, no correlation id
+		"",
+	} {
+		if IsScrubbedServerError(body) {
+			t.Errorf("IsScrubbedServerError(%q) = true, want false", body)
 		}
 	}
 }
