@@ -1,0 +1,34 @@
+{"idx":1,"url":"https://raw.githubusercontent.com/golang/go/master/README.md","run":1,"time_total_s":0.055988,"time_starttransfer_s":0.055878,"http_code":200,"chars":1455,"ok":true,"note":""}
+{"idx":2,"url":"https://en.wikipedia.org/wiki/Kubernetes","run":1,"time_total_s":8.667960,"time_starttransfer_s":8.667869,"http_code":200,"chars":24,"ok":true,"note":""}
+{"idx":3,"url":"https://go.dev/blog/loopvar-preview","run":1,"time_total_s":6.958661,"time_starttransfer_s":6.958561,"http_code":200,"chars":8447,"ok":true,"note":""}
+{"idx":4,"url":"https://react.dev/learn","run":1,"time_total_s":8.828109,"time_starttransfer_s":8.828005,"http_code":200,"chars":14466,"ok":true,"note":""}
+{"idx":5,"url":"https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Content-Type","run":1,"time_total_s":8.074750,"time_starttransfer_s":8.074665,"http_code":200,"chars":8792,"ok":true,"note":""}
+{"idx":6,"url":"https://www.paulgraham.com/greatwork.html","run":1,"time_total_s":8.480197,"time_starttransfer_s":8.479809,"http_code":200,"chars":66434,"ok":true,"note":""}
+{"idx":7,"url":"https://stackoverflow.com/questions/11227809/why-is-processing-a-sorted-array-faster-than-processing-an-unsorted-array","run":1,"time_total_s":11.909551,"time_starttransfer_s":11.909448,"http_code":200,"chars":128,"ok":false,"note":"JSON-RPC error: fetch_url failed: upstream_error (HTTP 500): upstream returned 500"}
+{"idx":8,"url":"https://kubernetes.io/docs/concepts/workloads/pods/","run":1,"time_total_s":8.464825,"time_starttransfer_s":8.464465,"http_code":200,"chars":27332,"ok":true,"note":""}
+{"idx":9,"url":"https://docs.python.org/3/library/asyncio.html","run":1,"time_total_s":4.881127,"time_starttransfer_s":4.881011,"http_code":200,"chars":5384,"ok":true,"note":""}
+{"idx":10,"url":"https://arxiv.org/abs/1706.03762","run":1,"time_total_s":4.246391,"time_starttransfer_s":4.246304,"http_code":200,"chars":6280,"ok":true,"note":""}
+{"idx":11,"url":"https://htmx.org/docs/","run":1,"time_total_s":8.467120,"time_starttransfer_s":8.466534,"http_code":200,"chars":86208,"ok":true,"note":""}
+{"idx":12,"url":"https://tailwindcss.com/docs/installation","run":1,"time_total_s":5.670267,"time_starttransfer_s":5.670186,"http_code":200,"chars":2624,"ok":true,"note":""}
+{"idx":13,"url":"https://lite.cnn.com/","run":1,"time_total_s":5.778425,"time_starttransfer_s":5.778134,"http_code":200,"chars":17283,"ok":true,"note":""}
+{"idx":14,"url":"https://vercel.com/docs","run":1,"time_total_s":26.180621,"time_starttransfer_s":26.180457,"http_code":200,"chars":128,"ok":false,"note":"JSON-RPC error: fetch_url failed: upstream_error (HTTP 500): upstream returned 500"}
+{"idx":15,"url":"https://blog.cloudflare.com/","run":1,"time_total_s":8.023300,"time_starttransfer_s":8.023157,"http_code":200,"chars":7586,"ok":true,"note":""}
+{"idx":16,"url":"https://news.ycombinator.com/item?id=8863","run":1,"time_total_s":0.510300,"time_starttransfer_s":0.509406,"http_code":200,"chars":27505,"ok":true,"note":""}
+{"idx":17,"url":"https://www.reddit.com/r/selfhosted/comments/1viw9sj/searched_for_proxmox_ve_on_the_internet/","run":1,"time_total_s":3.391805,"time_starttransfer_s":3.391712,"http_code":200,"chars":13101,"ok":true,"note":""}
+{"idx":1,"url":"https://raw.githubusercontent.com/golang/go/master/README.md","run":2,"time_total_s":0.054808,"time_starttransfer_s":0.054700,"http_code":200,"chars":1455,"ok":true,"note":""}
+{"idx":2,"url":"https://en.wikipedia.org/wiki/Kubernetes","run":2,"time_total_s":8.215371,"time_starttransfer_s":8.215297,"http_code":200,"chars":24,"ok":true,"note":""}
+{"idx":3,"url":"https://go.dev/blog/loopvar-preview","run":2,"time_total_s":6.824872,"time_starttransfer_s":6.824787,"http_code":200,"chars":8447,"ok":true,"note":""}
+{"idx":4,"url":"https://react.dev/learn","run":2,"time_total_s":8.664283,"time_starttransfer_s":8.664044,"http_code":200,"chars":14466,"ok":true,"note":""}
+{"idx":5,"url":"https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Content-Type","run":2,"time_total_s":8.100700,"time_starttransfer_s":8.100619,"http_code":200,"chars":8792,"ok":true,"note":""}
+{"idx":6,"url":"https://www.paulgraham.com/greatwork.html","run":2,"time_total_s":8.028131,"time_starttransfer_s":8.027785,"http_code":200,"chars":66434,"ok":true,"note":""}
+{"idx":7,"url":"https://stackoverflow.com/questions/11227809/why-is-processing-a-sorted-array-faster-than-processing-an-unsorted-array","run":2,"time_total_s":10.389342,"time_starttransfer_s":10.389243,"http_code":200,"chars":128,"ok":false,"note":"JSON-RPC error: fetch_url failed: upstream_error (HTTP 500): upstream returned 500"}
+{"idx":8,"url":"https://kubernetes.io/docs/concepts/workloads/pods/","run":2,"time_total_s":8.318520,"time_starttransfer_s":8.318324,"http_code":200,"chars":27332,"ok":true,"note":""}
+{"idx":9,"url":"https://docs.python.org/3/library/asyncio.html","run":2,"time_total_s":4.816718,"time_starttransfer_s":4.816620,"http_code":200,"chars":5384,"ok":true,"note":""}
+{"idx":10,"url":"https://arxiv.org/abs/1706.03762","run":2,"time_total_s":4.108403,"time_starttransfer_s":4.108247,"http_code":200,"chars":6280,"ok":true,"note":""}
+{"idx":11,"url":"https://htmx.org/docs/","run":2,"time_total_s":8.346194,"time_starttransfer_s":8.345623,"http_code":200,"chars":86208,"ok":true,"note":""}
+{"idx":12,"url":"https://tailwindcss.com/docs/installation","run":2,"time_total_s":5.728785,"time_starttransfer_s":5.728710,"http_code":200,"chars":2624,"ok":true,"note":""}
+{"idx":13,"url":"https://lite.cnn.com/","run":2,"time_total_s":5.336143,"time_starttransfer_s":5.336043,"http_code":200,"chars":17283,"ok":true,"note":""}
+{"idx":14,"url":"https://vercel.com/docs","run":2,"time_total_s":25.679019,"time_starttransfer_s":25.678945,"http_code":200,"chars":128,"ok":false,"note":"JSON-RPC error: fetch_url failed: upstream_error (HTTP 500): upstream returned 500"}
+{"idx":15,"url":"https://blog.cloudflare.com/","run":2,"time_total_s":7.559637,"time_starttransfer_s":7.559536,"http_code":200,"chars":7586,"ok":true,"note":""}
+{"idx":16,"url":"https://news.ycombinator.com/item?id=8863","run":2,"time_total_s":0.487933,"time_starttransfer_s":0.487625,"http_code":200,"chars":27505,"ok":true,"note":""}
+{"idx":17,"url":"https://www.reddit.com/r/selfhosted/comments/1viw9sj/searched_for_proxmox_ve_on_the_internet/","run":2,"time_total_s":3.187722,"time_starttransfer_s":3.187617,"http_code":200,"chars":13103,"ok":true,"note":""}

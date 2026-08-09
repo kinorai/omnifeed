@@ -1,0 +1,23 @@
+{"idx":1,"url":"https://dev.to/","pass":"on2","time_total_s":10.501278,"http_code":200,"chars":59735,"links":285,"ok":true,"note":""}
+{"idx":2,"url":"https://www.theverge.com/tech","pass":"on2","time_total_s":10.806843,"http_code":200,"chars":24829,"links":113,"ok":true,"note":""}
+{"idx":3,"url":"https://medium.com/tag/programming","pass":"on2","time_total_s":4.895938,"http_code":200,"chars":9986,"links":20,"ok":true,"note":""}
+{"idx":4,"url":"https://www.producthunt.com/","pass":"on2","time_total_s":10.373704,"http_code":200,"chars":69,"links":0,"ok":false,"note":"Error crawling URL: upstream_error (HTTP 500): upstream returned 500 "}
+{"idx":5,"url":"https://www.tumblr.com/explore/trending","pass":"on2","time_total_s":11.603344,"http_code":200,"chars":51137,"links":333,"ok":true,"note":""}
+{"idx":6,"url":"https://www.theguardian.com/technology","pass":"on2","time_total_s":3.231226,"http_code":200,"chars":27,"links":0,"ok":true,"note":""}
+{"idx":7,"url":"https://arstechnica.com/","pass":"on2","time_total_s":9.053234,"http_code":200,"chars":82,"links":0,"ok":true,"note":""}
+{"idx":8,"url":"https://techcrunch.com/","pass":"on2","time_total_s":9.858284,"http_code":200,"chars":18265,"links":66,"ok":true,"note":""}
+{"idx":9,"url":"https://github.com/golang/go/blob/master/src/net/http/server.go","pass":"on2","time_total_s":11.103818,"http_code":200,"chars":887,"links":4,"ok":true,"note":""}
+{"idx":10,"url":"https://mui.com/material-ui/react-table/","pass":"on2","time_total_s":9.391178,"http_code":200,"chars":10973,"links":24,"ok":true,"note":""}
+{"idx":11,"url":"https://tanstack.com/virtual/latest/docs/introduction","pass":"on2","time_total_s":6.894496,"http_code":200,"chars":2484,"links":2,"ok":true,"note":""}
+{"idx":12,"url":"https://nextjs.org/docs","pass":"on2","time_total_s":20.417401,"http_code":200,"chars":69,"links":0,"ok":false,"note":"Error crawling URL: upstream_error (HTTP 500): upstream returned 500 "}
+{"idx":13,"url":"https://angular.dev/overview","pass":"on2","time_total_s":8.303181,"http_code":200,"chars":7820,"links":12,"ok":true,"note":""}
+{"idx":14,"url":"https://svelte.dev/docs/svelte/overview","pass":"on2","time_total_s":3.855108,"http_code":200,"chars":1417,"links":7,"ok":true,"note":""}
+{"idx":15,"url":"https://vuejs.org/guide/introduction.html","pass":"on2","time_total_s":8.812968,"http_code":200,"chars":11488,"links":28,"ok":true,"note":""}
+{"idx":16,"url":"https://docs.stripe.com/api","pass":"on2","time_total_s":6.104670,"http_code":200,"chars":22409,"links":68,"ok":true,"note":""}
+{"idx":17,"url":"https://docs.github.com/en/actions","pass":"on2","time_total_s":5.558315,"http_code":200,"chars":3375,"links":15,"ok":true,"note":""}
+{"idx":18,"url":"https://caniuse.com/?search=grid","pass":"on2","time_total_s":17.862827,"http_code":200,"chars":109,"links":0,"ok":false,"note":"Error crawling URL: thin_content (HTTP 200): crawl4ai extracted 0 chars (raw_md=1 fit_md=1 cleaned_html=232) "}
+{"idx":19,"url":"https://bsky.app/profile/bsky.app","pass":"on2","time_total_s":3.780491,"http_code":200,"chars":31,"links":0,"ok":true,"note":""}
+{"idx":20,"url":"https://www.ebay.com/sch/i.html?_nkw=laptop","pass":"on2","time_total_s":16.532163,"http_code":200,"chars":71771,"links":203,"ok":true,"note":""}
+{"idx":21,"url":"https://www.etsy.com/search?q=poster","pass":"on2","time_total_s":8.819998,"http_code":200,"chars":69,"links":0,"ok":false,"note":"Error crawling URL: upstream_error (HTTP 500): upstream returned 500 "}
+{"idx":22,"url":"https://html.spec.whatwg.org/multipage/sections.html","pass":"on2","time_total_s":9.534934,"http_code":200,"chars":81941,"links":126,"ok":true,"note":""}
+{"idx":23,"url":"https://news.ycombinator.com/","pass":"on2","time_total_s":0.359094,"http_code":200,"chars":4557,"links":30,"ok":true,"note":""}
