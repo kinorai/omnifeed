@@ -131,9 +131,11 @@ func (m *Metrics) ObserveLimiterWait(engine, outcome string, duration time.Durat
 	m.LimiterWaitSecs.WithLabelValues(engine, outcome).Observe(duration.Seconds())
 }
 
-// ObserveResponseChars records the character count of the content actually
-// returned to the caller (post-truncation) on a successful crawl — the quality
-// guard for scrape-option changes.
+// ObserveResponseChars records the character count of a successful crawl's
+// extracted content, PRE-truncation (the engine's output, before any transport
+// max_chars clipping) — the quality guard for scrape-option changes. Recorded
+// at the registry choke point so the label names the engine that actually
+// produced the document, fallbacks included.
 func (m *Metrics) ObserveResponseChars(engine string, chars int) {
 	m.ResponseChars.WithLabelValues(engine).Observe(float64(chars))
 }

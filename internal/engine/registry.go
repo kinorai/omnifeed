@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"unicode/utf8"
 
 	"github.com/kinorai/omnifeed/internal/domain"
 	"github.com/kinorai/omnifeed/internal/httpx"
@@ -96,12 +97,29 @@ func (r *Registry) Crawl(ctx context.Context, rawURL string, opts domain.EngineO
 			if r.metrics != nil {
 				r.metrics.ObserveFallback(e.Name(), observability.Reason(err))
 			}
-			return r.fallback.Crawl(ctx, rawURL, opts)
+			doc, err = r.fallback.Crawl(ctx, rawURL, opts)
+			r.observeChars(r.fallback, doc, err)
+			return doc, err
 		}
+		r.observeChars(e, doc, err)
 		return doc, err
 	}
 	if r.fallback == nil {
 		return domain.Document{}, fmt.Errorf("no engine available for %s and no fallback configured", rawURL)
 	}
-	return r.fallback.Crawl(ctx, rawURL, opts)
+	doc, err := r.fallback.Crawl(ctx, rawURL, opts)
+	r.observeChars(r.fallback, doc, err)
+	return doc, err
+}
+
+// observeChars records the extracted content length of a successful crawl
+// under the engine that actually PRODUCED the document. This lives at the
+// dispatch choke point — not in the transports — because only the registry
+// knows which engine served a fallback crawl; labeling by URL-resolved engine
+// would attribute the generic engine's output to the engine that failed.
+func (r *Registry) observeChars(e domain.Engine, doc domain.Document, err error) {
+	if r.metrics == nil || err != nil {
+		return
+	}
+	r.metrics.ObserveResponseChars(e.Name(), utf8.RuneCountInString(doc.PageContent))
 }

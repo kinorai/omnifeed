@@ -118,8 +118,11 @@ func (s *session) Eval(ctx context.Context, js string) (string, error) {
 	if s.b.token != "" {
 		headers["Authorization"] = "Bearer " + s.b.token
 	}
+	// MaxAttempts 2 (matching the generic engine): 0.9.2+ scrubs 500 bodies, so
+	// one retry covers transient faults while a deterministic block costs at
+	// most 2× one navigation.
 	resp, err := s.b.client.DoRetry(ctx, http.MethodPost, s.b.execJSURL, reqBody, headers,
-		httpx.RetryConfig{RetryableStatus: antibot.RetryableStatus})
+		httpx.RetryConfig{MaxAttempts: 2, RetryableStatus: antibot.RetryableStatus})
 	if err != nil {
 		// A nav that trips crawl4ai's anti-bot detector surfaces here as a 5xx
 		// (DoRetry error path); classify unmatched client errors as a block.

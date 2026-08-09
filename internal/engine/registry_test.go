@@ -127,24 +127,3 @@ func TestRegistryCrawl_CountsFallbacks(t *testing.T) {
 		t.Fatalf("counter moved on the no-match path: %v, want still 1", got)
 	}
 }
-
-// An engine→fallback handoff must be counted on
-// omnifeed_engine_fallbacks_total under the failing engine's name and the
-// classified failure reason, so fallback volume is attributable per engine.
-func TestRegistryCrawl_FallbackIncrementsCounter(t *testing.T) {
-	failing, fallback := &failingEngine{}, &stubEngine{}
-	m := observability.NewMetrics()
-	r := New().Register(failing).Fallback(fallback).Metrics(m)
-
-	if _, err := r.Crawl(context.Background(), "http://8.8.8.8/", domain.EngineOptions{}); err != nil {
-		t.Fatalf("Crawl = %v, want the fallback's success", err)
-	}
-
-	var dm dto.Metric
-	if err := m.EngineFallbacks.WithLabelValues("failing", string(domain.KindHTTP403)).Write(&dm); err != nil {
-		t.Fatal(err)
-	}
-	if got := dm.GetCounter().GetValue(); got != 1 {
-		t.Fatalf("fallback counter{failing,http_403} = %v, want 1", got)
-	}
-}

@@ -492,8 +492,9 @@ func TestCrawlWhitespaceFitFallsBackToRaw(t *testing.T) {
 
 // crawl4ai 0.9.2+ scrubs its crawl verdicts out of 500 bodies. Such a 500 must
 // classify as upstream_rejected (not upstream_error, which reads as an outage)
-// and must be attempted exactly once — re-driving a deterministic verdict just
-// pays the full crawl cost again.
+// and be attempted exactly twice — the scrubbed body makes a deterministic
+// verdict indistinguishable from a transient fault, so one retry rescues the
+// transients while MaxAttempts caps the deterministic-page cost.
 func TestCrawlScrubbed500RejectedNotRetried(t *testing.T) {
 	attempts := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -513,8 +514,8 @@ func TestCrawlScrubbed500RejectedNotRetried(t *testing.T) {
 	if fe.Kind != domain.KindUpstreamRejected {
 		t.Errorf("Kind = %q, want %q", fe.Kind, domain.KindUpstreamRejected)
 	}
-	if attempts != 1 {
-		t.Errorf("upstream attempts = %d, want 1 (500 verdicts must not be retried)", attempts)
+	if attempts != 2 {
+		t.Errorf("upstream attempts = %d, want 2 (one retry for possible transients, no more)", attempts)
 	}
 }
 

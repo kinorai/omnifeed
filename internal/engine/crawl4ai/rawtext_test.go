@@ -32,11 +32,8 @@ func newRawTestEngine(t *testing.T) (*Engine, *bool) {
 // A raw-extension URL served with a raw content type must be fetched directly
 // — no crawl4ai (browser) round-trip at all.
 func TestRawTextBypassesBrowser(t *testing.T) {
-	raw := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	raw := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		if r.Method == http.MethodHead {
-			return
-		}
 		_, _ = w.Write([]byte("package main\n\nfunc main() {}\n"))
 	}))
 	defer raw.Close()
@@ -79,11 +76,12 @@ func TestRawTextHTMLContentTypeFallsBack(t *testing.T) {
 	}
 }
 
-// Probe failures must fall back silently — a deployment whose egress policy
-// blocks direct fetches keeps working exactly as before the bypass existed.
-func TestRawTextProbeFailureFallsBack(t *testing.T) {
+// Direct-fetch failures must fall back silently — a deployment whose egress
+// policy blocks direct fetches keeps working exactly as before the bypass
+// existed.
+func TestRawTextFetchFailureFallsBack(t *testing.T) {
 	e, browserHit := newRawTestEngine(t)
-	// Closed port: the HEAD probe gets connection refused.
+	// Closed port: the direct GET gets connection refused.
 	dead := httptest.NewServer(http.HandlerFunc(nil))
 	deadURL := dead.URL
 	dead.Close()
@@ -93,19 +91,19 @@ func TestRawTextProbeFailureFallsBack(t *testing.T) {
 		t.Fatalf("Crawl() error = %v", err)
 	}
 	if !*browserHit {
-		t.Error("crawl4ai endpoint not hit, want browser fallback on probe failure")
+		t.Error("crawl4ai endpoint not hit, want browser fallback on fetch failure")
 	}
 	if doc.PageContent != "# browser" {
 		t.Errorf("PageContent = %q, want the browser-path document", doc.PageContent)
 	}
 }
 
-// URLs without a raw-looking extension must not even be probed: ordinary pages
-// pay zero extra latency for the bypass.
-func TestRawTextNoExtensionSkipsProbe(t *testing.T) {
-	probed := false
+// URLs without a raw-looking extension must not even be attempted directly:
+// ordinary pages pay zero extra latency for the bypass.
+func TestRawTextNoExtensionSkipsDirectFetch(t *testing.T) {
+	fetched := false
 	raw := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		probed = true
+		fetched = true
 		w.Header().Set("Content-Type", "text/plain")
 		_, _ = w.Write([]byte("raw"))
 	}))
@@ -115,8 +113,8 @@ func TestRawTextNoExtensionSkipsProbe(t *testing.T) {
 	if _, err := e.Crawl(context.Background(), raw.URL+"/article", domain.EngineOptions{}); err != nil {
 		t.Fatalf("Crawl() error = %v", err)
 	}
-	if probed {
-		t.Error("extensionless URL was probed, want the probe skipped")
+	if fetched {
+		t.Error("extensionless URL was fetched directly, want no direct request at all")
 	}
 	if !*browserHit {
 		t.Error("crawl4ai endpoint not hit, want browser path")
@@ -126,11 +124,8 @@ func TestRawTextNoExtensionSkipsProbe(t *testing.T) {
 // A binary body behind a raw content type (mislabeled upstream) must fall back
 // rather than hand the caller undecodable bytes.
 func TestRawTextBinaryBodyFallsBack(t *testing.T) {
-	raw := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	raw := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
-		if r.Method == http.MethodHead {
-			return
-		}
 		_, _ = w.Write([]byte{0xff, 0xfe, 0x00, 0x01, 0x02})
 	}))
 	defer raw.Close()
