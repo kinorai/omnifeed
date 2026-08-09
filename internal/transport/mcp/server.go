@@ -33,6 +33,7 @@ import (
 	"slices"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/kinorai/omnifeed/internal/auth"
 	"github.com/kinorai/omnifeed/internal/version"
@@ -274,6 +275,7 @@ func (s *Server) handleToolsCall(ctx context.Context, req rpcRequest) rpcRespons
 		return errorResp(req.ID, codeInvalidParams, "unknown tool: "+p.Name)
 	}
 
+	start := time.Now()
 	res, err := tool.Handle(ctx, p.Arguments)
 	if err != nil {
 		var paramErr ParamError
@@ -283,6 +285,14 @@ func (s *Server) handleToolsCall(ctx context.Context, req rpcRequest) rpcRespons
 		s.logger.Warn("mcp tool call failed", "tool", p.Name, "args", p.Arguments, "err", err)
 		return errorResp(req.ID, codeInternalError, toolFailureMessage(p.Name, err))
 	}
+	// Success exemplar for latency triage: metrics carry the duration
+	// distributions but can never carry the URL/query (label cardinality) —
+	// this line is how a slow histogram bucket is traced back to the exact
+	// call in VictoriaLogs.
+	s.logger.Info("mcp tool call completed",
+		"tool", p.Name, "args", p.Arguments,
+		"duration_ms", time.Since(start).Milliseconds(),
+		"chars", utf8.RuneCountInString(res.Text))
 
 	return ok(req.ID, map[string]any{
 		"content": []map[string]any{
