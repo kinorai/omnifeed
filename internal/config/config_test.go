@@ -83,3 +83,48 @@ func TestLoad_DiscourseHosts(t *testing.T) {
 		})
 	}
 }
+
+// The crawl4ai latency knobs default to crawl4ai's own defaults (no full-page
+// scan, 0.1s settle) and reject out-of-range values — a settle longer than the
+// 60s page budget is a misconfiguration, not a preference.
+func TestLoad_Crawl4AILatencyKnobs(t *testing.T) {
+	t.Run("defaults", func(t *testing.T) {
+		cfg, err := loadWith(t, "", "")
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.Crawl4AIScanFullPage {
+			t.Errorf("Crawl4AIScanFullPage default = true, want false")
+		}
+		if cfg.Crawl4AIScrollDelay != 0.5 {
+			t.Errorf("Crawl4AIScrollDelay default = %v, want 0.5", cfg.Crawl4AIScrollDelay)
+		}
+		if cfg.Crawl4AIDelayBeforeHTML != 0.1 {
+			t.Errorf("Crawl4AIDelayBeforeHTML default = %v, want 0.1", cfg.Crawl4AIDelayBeforeHTML)
+		}
+	})
+	t.Run("explicit values", func(t *testing.T) {
+		t.Setenv("OMNIFEED_CRAWL4AI_SCAN_FULL_PAGE", "true")
+		t.Setenv("OMNIFEED_CRAWL4AI_DELAY_BEFORE_HTML", "1.0")
+		cfg, err := loadWith(t, "OMNIFEED_CRAWL4AI_SCROLL_DELAY", "0.25")
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if !cfg.Crawl4AIScanFullPage || cfg.Crawl4AIScrollDelay != 0.25 || cfg.Crawl4AIDelayBeforeHTML != 1.0 {
+			t.Errorf("got scan=%v scroll=%v delay=%v, want true/0.25/1.0",
+				cfg.Crawl4AIScanFullPage, cfg.Crawl4AIScrollDelay, cfg.Crawl4AIDelayBeforeHTML)
+		}
+	})
+	for _, tc := range []struct{ key, value string }{
+		{"OMNIFEED_CRAWL4AI_DELAY_BEFORE_HTML", "-0.1"},
+		{"OMNIFEED_CRAWL4AI_DELAY_BEFORE_HTML", "61"},
+		{"OMNIFEED_CRAWL4AI_SCROLL_DELAY", "-1"},
+		{"OMNIFEED_CRAWL4AI_SCROLL_DELAY", "61"},
+	} {
+		t.Run(tc.key+"="+tc.value+" is a config error", func(t *testing.T) {
+			if _, err := loadWith(t, tc.key, tc.value); err == nil {
+				t.Fatalf("want error for %s=%s", tc.key, tc.value)
+			}
+		})
+	}
+}

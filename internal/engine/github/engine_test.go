@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/kinorai/omnifeed/internal/domain"
@@ -151,11 +152,15 @@ func TestCrawlIssueCapsComments(t *testing.T) {
 }
 
 // pullHandler serves the five PR endpoints from the given bodies, recording the
-// paths it was asked for.
+// paths it was asked for. The recorder is mutex-guarded: crawlPull fetches the
+// five endpoints concurrently.
 func pullHandler(t *testing.T, paths *[]string, files string) http.HandlerFunc {
 	t.Helper()
+	var mu sync.Mutex
 	return func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
 		*paths = append(*paths, r.URL.Path)
+		mu.Unlock()
 		switch r.URL.Path {
 		case "/repos/o/r/pulls/9":
 			_, _ = io.WriteString(w, `{"title":"Add engine","state":"open","draft":false,"merged":false,

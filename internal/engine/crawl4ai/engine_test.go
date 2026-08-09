@@ -608,3 +608,83 @@ func TestCrawlEmptyExtractionIsThinContent(t *testing.T) {
 		})
 	}
 }
+
+// The latency knobs must reach the wire exactly as configured: DelayBeforeHTML
+// always, scan_full_page/scroll_delay only when the scan is on (crawl4ai's own
+// default is no scan, so the keys stay out of the payload), and max_retries
+// never (crawl4ai's default 0 — re-driving a content-gate 500 burns tens of
+// seconds for nothing).
+func TestCrawlRequestLatencyKnobs(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		cfg          func(Config) Config
+		wantDelay    float64
+		wantScanKeys bool
+		wantScroll   float64
+	}{
+		{
+			name:      "scan off omits scan keys",
+			cfg:       func(c Config) Config { c.DelayBeforeHTML = 0.1; return c },
+			wantDelay: 0.1,
+		},
+		{
+			name: "scan on sends scan_full_page and scroll_delay",
+			cfg: func(c Config) Config {
+				c.DelayBeforeHTML = 1.0
+				c.ScanFullPage = true
+				c.ScrollDelay = 0.5
+				return c
+			},
+			wantDelay:    1.0,
+			wantScanKeys: true,
+			wantScroll:   0.5,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var params map[string]any
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				raw, _ := io.ReadAll(r.Body)
+				var req map[string]any
+				if err := json.Unmarshal(raw, &req); err != nil {
+					t.Errorf("decode request: %v", err)
+				}
+				params = req["crawler_config"].(map[string]any)["params"].(map[string]any)
+
+				resp := map[string]any{"success": true, "results": []any{map[string]any{
+					"success": true, "status_code": 200, "markdown": map[string]any{"raw_markdown": "# ok"},
+				}}}
+				b, _ := json.Marshal(resp)
+				_, _ = w.Write(b)
+			}))
+			defer srv.Close()
+
+			e := New(tc.cfg(Config{
+				Endpoint: srv.URL,
+				Client:   httpx.New(nil),
+				Limiter:  httpx.NewDomainLimiter(2, 0),
+			}))
+			if _, err := e.Crawl(context.Background(), "https://example.com/page", domain.EngineOptions{}); err != nil {
+				t.Fatalf("Crawl() error = %v", err)
+			}
+
+			if got := params["delay_before_return_html"].(float64); got != tc.wantDelay {
+				t.Errorf("delay_before_return_html = %v, want %v", got, tc.wantDelay)
+			}
+			if _, ok := params["max_retries"]; ok {
+				t.Errorf("max_retries present in payload, want it omitted (crawl4ai default 0)")
+			}
+			scan, scanOK := params["scan_full_page"]
+			scroll, scrollOK := params["scroll_delay"]
+			if tc.wantScanKeys {
+				if !scanOK || scan != true {
+					t.Errorf("scan_full_page = %v (present=%v), want true", scan, scanOK)
+				}
+				if !scrollOK || scroll.(float64) != tc.wantScroll {
+					t.Errorf("scroll_delay = %v (present=%v), want %v", scroll, scrollOK, tc.wantScroll)
+				}
+			} else if scanOK || scrollOK {
+				t.Errorf("scan_full_page/scroll_delay present (%v/%v), want both omitted when scan is off", scan, scroll)
+			}
+		})
+	}
+}

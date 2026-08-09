@@ -45,6 +45,15 @@ type Engine struct {
 
 	excludedSelector string
 	targetElements   []string
+
+	scanFullPage    bool
+	scrollDelay     float64
+	delayBeforeHTML float64
+
+	// direct fetches raw non-HTML text without the browser (see rawtext.go).
+	// Its underlying http.Client refuses private/reserved dials post-DNS when
+	// the SSRF guard is on. Nil disables the bypass.
+	direct *httpx.Client
 }
 
 // Config configures the crawl4ai Engine.
@@ -81,6 +90,22 @@ type Config struct {
 	// (OMNIFEED_CRAWL4AI_TARGET_ELEMENTS): on pages without a match the crawl
 	// yields no content, which the thin-content guard turns into an error.
 	TargetElements string
+	// ScanFullPage scrolls the page to the bottom (in ScrollDelay steps) before
+	// extraction so lazy-loaded content renders — multi-second on long pages.
+	// The default is owned by config (OMNIFEED_CRAWL4AI_SCAN_FULL_PAGE).
+	ScanFullPage bool
+	// ScrollDelay is the pause (seconds) between scroll steps; only sent when
+	// ScanFullPage is on (OMNIFEED_CRAWL4AI_SCROLL_DELAY).
+	ScrollDelay float64
+	// DelayBeforeHTML is the unconditional settle (seconds) after the WaitUntil
+	// signal before HTML extraction — paid on every crawl. The default is owned
+	// by config (OMNIFEED_CRAWL4AI_DELAY_BEFORE_HTML).
+	DelayBeforeHTML float64
+	// BlockPrivateIPs hardens the raw-text bypass's direct fetches: resolved
+	// private/reserved addresses are refused at dial time (mirrors
+	// OMNIFEED_BLOCK_PRIVATE_IPS, which the registry enforces pre-dispatch via
+	// DNS lookup — the dial-time guard is what a rebinding race can't beat).
+	BlockPrivateIPs bool
 }
 
 // New returns a crawl4ai fallback Engine wired with the given config.
@@ -93,6 +118,13 @@ func New(cfg Config) *Engine {
 	if excludedSelector == "" {
 		excludedSelector = DefaultExcludedSelector
 	}
+	// The bypass client copies the shared client's metric hooks (WithUpstream)
+	// but swaps in its own SSRF-guarded http.Client: direct fetches dial the
+	// open internet, which the crawl4ai-bound shared client never does.
+	direct := cfg.Client.WithUpstream("direct", "get")
+	if direct != nil {
+		direct.HTTP = httpx.NewGuardedClient(cfg.BlockPrivateIPs, rawFetchTimeout)
+	}
 	return &Engine{
 		endpoint:         cfg.Endpoint,
 		token:            cfg.Token,
@@ -103,6 +135,10 @@ func New(cfg Config) *Engine {
 		waitUntil:        waitUntil,
 		excludedSelector: excludedSelector,
 		targetElements:   splitSelectors(cfg.TargetElements),
+		scanFullPage:     cfg.ScanFullPage,
+		scrollDelay:      cfg.ScrollDelay,
+		delayBeforeHTML:  cfg.DelayBeforeHTML,
+		direct:           direct,
 	}
 }
 
@@ -198,6 +234,12 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, _ domain.EngineOption
 	}
 	defer release()
 
+	// Raw non-HTML text (code files, JSON, markdown) needs no browser render —
+	// fetch it directly; any uncertainty falls through to the browser path.
+	if doc, ok := e.rawText(ctx, rawURL); ok {
+		return doc, nil
+	}
+
 	doc, err := e.crawlOnce(ctx, rawURL, e.excludedSelector)
 	if err != nil && e.excludedSelector != "" && isThinContent(err) && ctx.Err() == nil {
 		return e.crawlOnce(ctx, rawURL, "")
@@ -224,14 +266,14 @@ func (e *Engine) crawlOnce(ctx context.Context, rawURL, excludedSelector string)
 	params := map[string]interface{}{
 		"word_count_threshold":     10,
 		"wait_until":               e.waitUntil,
-		"delay_before_return_html": 1.0,
+		"delay_before_return_html": e.delayBeforeHTML,
 		// crawl4ai silently clamps page_timeout from an untrusted REST body to
 		// 60000 ms, so anything higher is a lie we'd tell ourselves in logs.
 		// (The client-side HTTP timeout is a separate knob and is unaffected.)
-		"page_timeout":   maxPageTimeoutMS,
-		"scan_full_page": true,
-		"scroll_delay":   0.5,
-		"max_retries":    2,
+		"page_timeout": maxPageTimeoutMS,
+		// max_retries stays at crawl4ai's default (0): a failed render here is
+		// dominated by content-gate 500s that never succeed on re-drive, and the
+		// registry's engine fallback already covers genuine transients.
 		// script/style/noscript carry no prose but do reach the markdown on pages
 		// that inline them, so they go out with the structural chrome.
 		"excluded_tags":              []string{"nav", "footer", "header", "form", "aside", "script", "style", "noscript"},
@@ -263,6 +305,13 @@ func (e *Engine) crawlOnce(ctx context.Context, rawURL, excludedSelector string)
 				},
 			},
 		},
+	}
+	// Full-page scan is opt-in: scroll_delay only means anything while scanning,
+	// so both keys stay out of the payload when the scan is off (crawl4ai's
+	// default is no scan).
+	if e.scanFullPage {
+		params["scan_full_page"] = true
+		params["scroll_delay"] = e.scrollDelay
 	}
 	// Selector-level chrome removal; omitted on the thin-content retry.
 	if excludedSelector != "" {
