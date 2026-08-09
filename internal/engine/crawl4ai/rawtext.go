@@ -19,16 +19,14 @@ import (
 // (raw code files, JSON, markdown, plain text) has nothing for a browser to
 // render — Chromium's page-idle machinery just spins on it (raw
 // .githubusercontent.com files measured at 30–39s vs ~200ms for a plain GET).
-// rawText sniffs the content type with a cheap HEAD probe (spent only on URLs
-// whose path extension looks raw — see rawTextExts) and fetches such URLs
-// directly. Anything uncertain — probe failure, non-200, HTML, binary,
-// oversized, restricted egress — falls back to the browser path silently, so
-// the bypass can never make a fetch fail that would have succeeded before.
+// For URLs whose path extension looks raw (see rawTextExts), rawText issues a
+// direct GET and lets the response's Content-Type decide: non-HTML text is
+// returned as-is (truncated at maxRawBodyBytes if huge); anything uncertain —
+// fetch failure, non-200, HTML, binary, restricted egress — closes the body
+// and falls back to the browser path silently, so the bypass can never make a
+// fetch fail that would have succeeded before.
 
 const (
-	// rawProbeTimeout bounds the HEAD probe; a site slower than this gets the
-	// browser path, which is no worse than before the bypass existed.
-	rawProbeTimeout = 10 * time.Second
 	// rawFetchTimeout bounds the direct GET including the body read.
 	rawFetchTimeout = 30 * time.Second
 	// maxRawBodyBytes mirrors the crawl4ai response cap.
@@ -37,12 +35,12 @@ const (
 	rawUserAgent = "omnifeed"
 )
 
-// rawTextExts are the path extensions that justify spending a HEAD probe. The
-// probe's content-type verdict still decides — a .md URL served as text/html
-// takes the browser path — but ordinary pages (no extension, .html, …) skip
-// the probe entirely, so the bypass adds zero latency to them. The cost of the
-// gate: an extensionless raw URL (a JSON API path, a bare LICENSE file) keeps
-// the browser path it has today.
+// rawTextExts are the path extensions that justify attempting the direct GET.
+// The response's content-type verdict still decides — a .md URL served as
+// text/html takes the browser path — but ordinary pages (no extension, .html,
+// …) skip the attempt entirely, so the bypass adds zero latency to them. The
+// cost of the gate: an extensionless raw URL (a JSON API path, a bare LICENSE
+// file) keeps the browser path it has today.
 var rawTextExts = map[string]bool{
 	".md": true, ".markdown": true, ".txt": true, ".text": true, ".rst": true, ".adoc": true,
 	".json": true, ".ndjson": true, ".jsonl": true, ".xml": true, ".yaml": true, ".yml": true,
@@ -108,32 +106,21 @@ func (e *Engine) rawText(ctx context.Context, rawURL string) (domain.Document, b
 	}
 	headers := map[string]string{"User-Agent": rawUserAgent}
 
-	probeCtx, cancel := context.WithTimeout(ctx, rawProbeTimeout)
+	fetchCtx, cancel := context.WithTimeout(ctx, rawFetchTimeout)
 	defer cancel()
-	// MaxAttempts 1: a retry here would delay the browser fallback, which
-	// handles flaky hosts better anyway.
-	probe, err := e.direct.DoRetry(probeCtx, http.MethodHead, rawURL, nil, headers, httpx.RetryConfig{MaxAttempts: 1})
-	if err != nil {
-		return domain.Document{}, false
-	}
-	_, _ = io.Copy(io.Discard, probe.Body)
-	_ = probe.Body.Close()
-	if probe.StatusCode != http.StatusOK || !isRawTextType(rawContentType(probe)) {
-		return domain.Document{}, false
-	}
-
-	fetchCtx, cancelFetch := context.WithTimeout(ctx, rawFetchTimeout)
-	defer cancelFetch()
+	// MaxAttempts 1: a retry here would only delay the browser fallback, which
+	// handles flaky hosts better anyway. The Content-Type check runs on the
+	// response HEADERS, before any body read, so an HTML page costs one
+	// aborted GET — no separate HEAD probe (HEAD-hostile hosts would forfeit
+	// the bypass, and the GET's verdict is the one that covers the bytes).
 	resp, err := e.direct.DoRetry(fetchCtx, http.MethodGet, rawURL, nil, headers, httpx.RetryConfig{MaxAttempts: 1})
 	if err != nil {
 		return domain.Document{}, false
 	}
-	defer func() {
-		_, _ = io.Copy(io.Discard, resp.Body)
-		_ = resp.Body.Close()
-	}()
-	// Re-check on the GET: servers may answer HEAD and GET differently, and
-	// only the GET's verdict covers the bytes we're about to return.
+	// Close without draining on every exit: a mismatched or oversized body may
+	// be arbitrarily large, and abandoning the connection is cheaper than
+	// pulling gigabytes just to keep it reusable.
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK || !isRawTextType(rawContentType(resp)) {
 		return domain.Document{}, false
 	}

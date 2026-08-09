@@ -288,13 +288,15 @@ func (e *Engine) crawlOnce(ctx context.Context, rawURL, excludedSelector string,
 		// 60000 ms, so anything higher is a lie we'd tell ourselves in logs.
 		// (The client-side HTTP timeout is a separate knob and is unaffected.)
 		"page_timeout": maxPageTimeoutMS,
-		// max_retries stays at crawl4ai's default (0): a failed render here is
-		// dominated by content-gate 500s that never succeed on re-drive, and the
-		// registry's engine fallback already covers genuine transients.
+		// max_retries stays at crawl4ai's default (0): its internal re-renders
+		// are dominated by content-gate failures that never succeed on re-drive,
+		// happen invisibly inside one HTTP call, and stack multiplicatively with
+		// our own client-side retry (which covers genuine transient 500s, at
+		// MaxAttempts 2, visibly in metrics).
 		// script/style/noscript carry no prose but do reach the markdown on pages
 		// that inline them, so they go out with the structural chrome.
-		"excluded_tags":         []string{"nav", "footer", "header", "form", "aside", "script", "style", "noscript"},
-		"remove_consent_popups": true,
+		"excluded_tags":              []string{"nav", "footer", "header", "form", "aside", "script", "style", "noscript"},
+		"remove_consent_popups":      true,
 		"exclude_external_links":     excludeExternalLinks,
 		"exclude_social_media_links": true,
 		"exclude_external_images":    true,
@@ -354,9 +356,13 @@ func (e *Engine) crawlOnce(ctx context.Context, rawURL, excludedSelector string,
 		return domain.Document{}, fmt.Errorf("marshal request: %w", err)
 	}
 
+	// MaxAttempts 2: crawl4ai 0.9.2+ scrubs 500 bodies, so a deterministic
+	// verdict (block/content-gate) and a transient fault (pool churn, worker
+	// OOM) are indistinguishable — one retry rescues the transients while a
+	// deterministic page costs at most 2× one crawl, not 3×.
 	resp, err := e.client.DoRetry(ctx, http.MethodPost, e.endpoint, body,
 		e.headers(),
-		httpx.RetryConfig{RetryableStatus: antibot.RetryableStatus})
+		httpx.RetryConfig{MaxAttempts: 2, RetryableStatus: antibot.RetryableStatus})
 	if err != nil {
 		return domain.Document{}, classifyCrawlError(err)
 	}

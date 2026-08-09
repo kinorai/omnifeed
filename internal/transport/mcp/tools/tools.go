@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"strconv"
 	"time"
-	"unicode/utf8"
 
 	"github.com/kinorai/omnifeed/internal/domain"
 	"github.com/kinorai/omnifeed/internal/engine"
@@ -160,16 +159,11 @@ func crawlHandler(reg *engine.Registry, defaults reddit.Options, metrics *observ
 
 		start := time.Now()
 		doc, err := reg.Crawl(ctx, rawURL, opts)
+		// omnifeed_response_chars is recorded inside the registry (which knows
+		// the engine that actually served a fallback crawl), not here.
 		observe(metrics, engineName(reg, rawURL), err, start)
 		if err != nil {
 			return mcp.ToolResult{}, err
-		}
-		if metrics != nil {
-			// Recorded pre-truncation (the engine's extraction output, not the
-			// max_chars-clipped text this transport delivers) so the series is
-			// comparable with the loader path and a scrape regression can't
-			// hide behind the cap — the quality guard for scrape changes.
-			metrics.ObserveResponseChars(engineName(reg, rawURL), utf8.RuneCountInString(doc.PageContent))
 		}
 		return sized(doc, resolveMaxChars(args, defaultMaxChars), argInt(args, "start_char")), nil
 	}

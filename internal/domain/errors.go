@@ -25,12 +25,12 @@ const (
 	// KindUpstreamRejected is crawl4ai's application-level 500 with the verdict
 	// scrubbed out of the response body (crawl4ai 0.9.2+ logs the real reason —
 	// bot wall, content-gate, or crash — server-side under a correlation id and
-	// returns a generic body). Indistinguishable client-side, deterministic per
-	// page, and dominated by non-faults — so it is neither retried nor treated
-	// as an upstream outage.
+	// returns a generic body). Indistinguishable client-side and dominated by
+	// per-page non-faults, so it gets one bounded retry (for the transient
+	// minority sharing the channel) and is not treated as an upstream outage.
 	KindUpstreamRejected FailureKind = "upstream_rejected"
-	KindBadResponse   FailureKind = "bad_response"   // unparseable or empty upstream response
-	KindError         FailureKind = "error"          // anything else
+	KindBadResponse      FailureKind = "bad_response" // unparseable or empty upstream response
+	KindError            FailureKind = "error"        // anything else
 )
 
 // FetchError carries the classified cause of a failed crawl/fetch. Engines

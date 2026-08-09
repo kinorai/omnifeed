@@ -130,6 +130,13 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, _ domain.EngineOption
 	ctx, cancel := context.WithTimeout(ctx, e.timeout)
 	defer cancel()
 
+	// One limiter slot covers the WHOLE crawl, not each HTTP call inside it —
+	// crawlPull deliberately fans out its five REST reads concurrently within
+	// this slot. That exceeds PerDomainConcurrency for api.github.com by
+	// design: the domain limiter's politeness contract is for scraped sites,
+	// while this is an authenticated API with its own server-side quotas
+	// (secondary limit ~100 concurrent), and serializing the reads is exactly
+	// the 5×RTT this engine exists to avoid.
 	if e.limiter != nil {
 		release, lerr := e.limiter.Acquire(ctx, e.Name(), e.apiBase)
 		if lerr != nil {

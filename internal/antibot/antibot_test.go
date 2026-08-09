@@ -28,11 +28,10 @@ func TestDetectClean(t *testing.T) {
 	}
 }
 
-// RetryableStatus must veto retrying every crawl4ai plain 500 — 0.9.2+
-// reserves that status for its own deterministic crawl verdicts and scrubs
-// the reason from the body, so a generic-looking 500 is NOT transient — while
-// still retrying 429 and the pass-through infra statuses (502/503/504) unless
-// their body carries an explicit block verdict.
+// RetryableStatus must veto retrying a 5xx that carries crawl4ai's explicit
+// block verdict, while still retrying scrubbed/generic 5xx — 0.9.2+ makes a
+// deterministic verdict body-identical to a transient fault, so callers bound
+// the cost with MaxAttempts rather than a veto stranding the transients.
 func TestRetryableStatus(t *testing.T) {
 	const block = `{"error":"Blocked by anti-bot protection: Structural: minimal_text"}`
 	cases := []struct {
@@ -40,13 +39,13 @@ func TestRetryableStatus(t *testing.T) {
 		body   string
 		want   bool
 	}{
-		{500, block, false},                  // anti-bot 5xx → don't retry
-		{503, block, false},                  // any 5xx carrying the marker
-		{500, `{"error":"internal"}`, false}, // scrubbed verdict channel → never retry
-		{500, `{"error":"Internal server error","correlation_id":"abc123"}`, false},
-		{503, `{"error":"upstream hiccup"}`, true}, // infra pass-through → retry
-		{429, "rate limited", true},               // 429 → retry
-		{200, block, true},                        // <500 is never vetoed here
+		{500, block, false},                 // anti-bot 5xx → don't retry
+		{503, block, false},                 // any 5xx carrying the marker
+		{500, `{"error":"internal"}`, true}, // generic 5xx → retry (may be transient)
+		{500, `{"error":"Internal server error","correlation_id":"abc123"}`, true}, // scrubbed = ambiguous → retry, MaxAttempts bounds it
+		{503, `{"error":"upstream hiccup"}`, true},                                 // infra pass-through → retry
+		{429, "rate limited", true},                                                // 429 → retry
+		{200, block, true},                                                         // <500 is never vetoed here
 	}
 	for _, tc := range cases {
 		if got := RetryableStatus(tc.status, tc.body); got != tc.want {

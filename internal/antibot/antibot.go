@@ -7,10 +7,7 @@
 // metrics/logs.
 package antibot
 
-import (
-	"net/http"
-	"strings"
-)
+import "strings"
 
 // scanLimit bounds how much of a body Detect inspects. Challenge pages are
 // tiny and their tell-tale markers appear near the top, so scanning the first
@@ -91,17 +88,14 @@ func IsStructuralBlock(body string) bool {
 }
 
 // RetryableStatus is an httpx.RetryConfig predicate shared by the Reddit and
-// generic crawl paths: retry genuine transient 429/5xx, but never a crawl4ai
-// application-level 500. crawl4ai 0.9.2+ reserves plain 500 for its own crawl
-// verdicts (blocks, content-gates, crashes) and scrubs the reason from the
-// body (server.py: "Deliberate operational statuses (502/503/504 …) pass
-// through") — so a 500 is deterministic per page and re-driving it just pays
-// the full crawl cost again. 502/503/504 (infra hops) stay retryable unless
-// the body carries an explicit block verdict (older crawl4ai versions).
+// generic crawl paths: retry genuine transient 429/5xx, but never a 5xx whose
+// body carries crawl4ai's explicit block verdict (it recurs, and re-driving
+// the crawl just pays the cost again). crawl4ai 0.9.2+ scrubs its 500 bodies,
+// which makes a deterministic verdict (block/content-gate) byte-identical to
+// a transient fault (worker OOM, pool churn) — both are retried, and the
+// callers bound the cost with a low MaxAttempts instead of a veto that would
+// strand the transients with no retry anywhere.
 func RetryableStatus(status int, body string) bool {
-	if status == http.StatusInternalServerError {
-		return false
-	}
 	return status < 500 || !IsBlockResponse(body)
 }
 
