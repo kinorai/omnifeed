@@ -17,8 +17,7 @@
 #   ./scripts/container mcp        # one-shot stdio MCP server (for stdio-only clients)
 #
 # Requires: Apple `container` (>= 1.0.0) and macOS 26 (Tahoe). Nothing else —
-# no jq, no Docker. Prefer this over Docker on Apple Silicon; if you'd rather run
-# the existing docker-compose.yml unchanged, see the socktainer note in README.md.
+# no jq, no Docker. Prefer this over Docker on Apple Silicon.
 set -euo pipefail
 export PATH="/usr/local/bin:/opt/homebrew/bin:$PATH"
 
