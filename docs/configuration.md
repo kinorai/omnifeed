@@ -4,6 +4,11 @@ Everything is configured with `OMNIFEED_`-prefixed environment variables. In pra
 you only ever **set three** — `OMNIFEED_API_KEY`, `OMNIFEED_CRAWL4AI_URL`, and
 (optionally) `OMNIFEED_SEARXNG_URL`. The rest have sane defaults.
 
+**Egress.** Reddit and the generic fallback reach the web through crawl4ai, but three
+engines call their upstream themselves: Hacker News reads `hn.algolia.com`, GitHub reads
+`api.github.com`, and Discourse reads each host in `OMNIFEED_DISCOURSE_HOSTS`. A
+deployment that firewalls outbound traffic to crawl4ai alone breaks those three.
+
 | Variable | Default | Purpose |
 |---|---|---|
 | `OMNIFEED_API_KEY` | _(unset)_ | Bearer token for `/crawl`, `/search`, `/mcp`. If unset, the proxy refuses to start unless `OMNIFEED_DEV_NO_AUTH=true`. Stdio MCP is unaffected. |
@@ -27,7 +32,7 @@ you only ever **set three** — `OMNIFEED_API_KEY`, `OMNIFEED_CRAWL4AI_URL`, and
 | `OMNIFEED_CRAWL4AI_TARGET_ELEMENTS` | _(unset — feature off)_ | Comma-separated CSS selectors; when non-empty the generic engine extracts markdown **only** from matching containers (crawl4ai `target_elements`). Powerful on article/repo pages but risky: a page without a match returns **empty content**, and the thin-content guard then surfaces an explicit error instead of the page. Validate against your own corpus before enabling. Suggested starting list: `article, main, [role=main], .markdown-body, .post-content, #content`. |
 | `OMNIFEED_SEARXNG_TIMEOUT` | `15s` | Per-query timeout to SearXNG |
 | `OMNIFEED_SEARCH_MAX_RESULTS` | `25` | Hard cap on the search `limit` argument (1–100) |
-| `OMNIFEED_FETCH_MAX_CHARS` | `120000` | Default character cap on **markdown** content returned by the `fetch_url` MCP tool (`0` = unlimited). Over the cap, the reply ends with a resumable truncation marker. TOON/JSON output (Reddit, Hacker News) is never cut — use the Reddit knobs below instead. Does not apply to `/crawl` (see [Controlling fetched content size](#controlling-fetched-content-size)). |
+| `OMNIFEED_FETCH_MAX_CHARS` | `120000` | Default character cap on **markdown** content returned by the `fetch_url` MCP tool (`0` = unlimited). Over the cap, the reply ends with a resumable truncation marker. TOON/JSON output (every dedicated engine: Reddit, Hacker News, GitHub, Discourse) is never cut — use the Reddit knobs below instead. Does not apply to `/crawl` (see [Controlling fetched content size](#controlling-fetched-content-size)). |
 | `OMNIFEED_GITHUB_TOKEN` | _(unset)_ | Personal access token for the GitHub engine (issue / pull-request pages read from `api.github.com`). Unset means anonymous, which works but is limited to 60 requests/hour/IP; a token raises it to 5000/hour. |
 | `OMNIFEED_DISCOURSE_HOSTS` | `meta.discourse.org,discuss.python.org,users.rust-lang.org,internals.rust-lang.org,discuss.pytorch.org` | Comma-separated hostnames the Discourse engine claims topic (`/t/…`) URLs on. Discourse is self-hosted software living on **arbitrary** domains and an engine cannot probe a host to find out, so the allowlist is explicit: **list the forums you actually use**. Matching is exact and case-insensitive (no subdomain wildcards); unlisted forums still work — they just go through the generic browser fallback, which returns less of the thread. Set to the **empty string** to disable the engine entirely. |
 | `OMNIFEED_REDDIT_TIMEOUT` | `4m` | Wall-clock cap for a Reddit thread expansion |
@@ -65,7 +70,7 @@ Both knobs are per-request on the tool, and both are **markdown-only**:
 
 Offsets and lengths count **characters, not bytes**, so a window never splits a multibyte character, and the marker counts against `max_chars`, so a reply never exceeds the requested ceiling. The same numbers come back in the response `_meta` as `truncated`, `total_chars`, and `next_start_char`. `fetch_url` also declares `anthropic/maxResultSizeChars: 500000` in `tools/list`, which raises Claude Code's per-tool text budget to match the ceiling; other clients ignore it.
 
-**TOON and JSON output is never truncated.** Its length markers would describe rows that are no longer there, so structured engines are bounded by their own element caps instead — see the Reddit knobs below.
+**TOON and JSON output is never truncated** — that covers every dedicated engine, not just Reddit. Its length markers would describe rows that are no longer there, so structured engines are bounded by their own element caps instead — see the Reddit knobs below.
 
 `POST /crawl` has **no size params and is always unlimited**: RAG pipelines chunk and embed whatever they receive, so a cap there would silently drop retrievable text rather than protect a context window (and one shared offset would corrupt every other URL in a batch).
 

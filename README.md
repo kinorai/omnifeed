@@ -22,7 +22,7 @@ the same treatment.
 </p>
 
 - **`web_search`** queries a SearXNG instance (Google/Bing/DDG, Reddit included) and returns ranked URLs with titles and snippets.
-- **`fetch_url`** renders any URL through crawl4ai as clean markdown — and Reddit (threads *and* `/r/{sub}` listings), Hacker News, GitHub issues / pull requests, and Discourse topics come back as TOON through dedicated engines that read their public APIs directly.
+- **`fetch_url`** renders any URL through crawl4ai as clean markdown — and dedicated engines return TOON instead: Reddit (threads *and* `/r/{sub}` listings) through a real browser, plus Hacker News, GitHub issues / pull requests, and Discourse topics read straight from their public APIs.
 
 <img src="https://user-images.githubusercontent.com/74038190/212284100-561aa473-3905-4a80-b561-0d28506553ee.gif" width="100%">
 
