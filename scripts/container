@@ -95,6 +95,25 @@ token_of() {
 # gen_token -> a fresh random hex token (openssl ships with macOS).
 gen_token() { openssl rand -hex 24; }
 
+# engines_is_last FILE — true when `engines:` is the file's last top-level key.
+engines_is_last() {
+  awk '/^[A-Za-z_][A-Za-z0-9_]*:/ { last = $1 } END { exit(last == "engines:" ? 0 : 1) }' "$1"
+}
+
+# env_of NAME VAR -> the value VAR was created with, empty if unset.
+env_of() {
+  container inspect "$1" 2>/dev/null | grep -o "$2=[^\"]*" | head -1 | cut -d= -f2- || true
+}
+
+# mount_src_of NAME DEST -> host path mounted at DEST, empty if not mounted.
+# jq-free (macOS ships none). `container inspect` escapes every path slash, so
+# drop the backslashes first; "destination" precedes "source" in each mount.
+mount_src_of() {
+  container inspect "$1" 2>/dev/null | tr -d '\\' | awk -F'"' -v dest="$2" '
+    /"destination"/ { hit = ($4 == dest) }
+    /"source"/      { if (hit) { print $4; exit } }'
+}
+
 # wait_http URL [tries] — poll until the endpoint answers (2s between tries).
 wait_http() {
   local url="$1" tries="${2:-30}" i
@@ -141,6 +160,14 @@ render_searxng_settings() {
   fi
   [ -n "${key:-}" ] || return 0
 
+  # A custom SEARXNG_SETTINGS file need not declare braveapi at all. Without the
+  # block there is nothing to inject into, so mount the file untouched rather
+  # than render a copy that claims a key it does not carry.
+  if ! grep -q '^  - name: braveapi$' "$SEARXNG_SETTINGS"; then
+    warn "braveapi: no '- name: braveapi' block in $SEARXNG_SETTINGS — key not injected"
+    return 0
+  fi
+
   runtime="$REPO/searxng/settings.runtime.yml"
   rm -f "$runtime"
   ( umask 077
@@ -168,7 +195,16 @@ render_searxng_settings() {
   #   startpage  the pool's slowest engine and the repeat 1h-CAPTCHA offender. It
   #              proxies Google, which `google cse` already covers. Keyless users
   #              keep it: it is a free general-web engine their pool needs.
-  printf '\n  # Rendered overrides: redundant while braveapi is keyed.\n  - name: brave\n    disabled: true\n  - name: startpage\n    disabled: true\n' >> "$runtime"
+  #
+  # They append at EOF so a later entry wins the merge, which requires `engines:`
+  # to be the file's last top-level key. That holds for the committed file; a
+  # custom SEARXNG_SETTINGS may order keys differently, and grafting list items
+  # onto whatever block ends the file would break the parse. Skip it and say so.
+  if engines_is_last "$runtime"; then
+    printf '\n  # Rendered overrides: redundant while braveapi is keyed.\n  - name: brave\n    disabled: true\n  - name: startpage\n    disabled: true\n' >> "$runtime"
+  else
+    warn "braveapi: 'engines:' is not the last top-level key in $SEARXNG_SETTINGS — brave/startpage left enabled"
+  fi
   chmod 600 "$runtime"
   SEARXNG_SETTINGS="$runtime"
   log "braveapi: key injected from ${source}"
@@ -185,6 +221,15 @@ up() {
 
   # 1. Upstreams (reused if already present — crawl4ai is slow to boot).
   render_searxng_settings
+  # `run` reuses an existing container, so env and mounts only apply on first
+  # create. An existing searxng from before these settings would silently keep
+  # the old ones — recreate it when either drifted, the same way the crawl4ai
+  # token is handled below.
+  if exists "$SEARXNG" \
+     && [ "$(env_of "$SEARXNG" GRANIAN_BLOCKING_THREADS)" != "12" \
+          -o "$(mount_src_of "$SEARXNG" /etc/searxng/settings.yml)" != "$SEARXNG_SETTINGS" ]; then
+    log "searxng settings changed — recreating it"; rm_one "$SEARXNG"
+  fi
   # GRANIAN_BLOCKING_THREADS: worker threads (image default 4). With 4, a 5th
   # simultaneous search queues. Searches are ~95% network wait, so the extra
   # threads cost only idle memory; the limiter is off, so this cannot trip it.
@@ -309,10 +354,26 @@ exec_in() {
   esac
   shift
   [ $# -gt 0 ] || set -- sh
-  exec container exec -i "$target" "$@"
+  # -t only when both ends are a terminal: an interactive `sh` needs a prompt and
+  # line editing, but `exec searxng cat settings.yml > out.yml` must stay clean.
+  # The ${a[@]+…} guard is for bash 3.2 (stock macOS): set -u aborts on a naked
+  # empty-array expansion there.
+  local tty=()
+  { [ -t 0 ] && [ -t 1 ]; } && tty=(-t)
+  exec container exec -i ${tty[@]+"${tty[@]}"} "$target" "$@"
 }
 
-stats() { container stats "$SEARXNG" "$CRAWL4AI" "$OMNIFEED"; }
+# stats — live CPU / memory. Skips containers that are not running: `container
+# stats` errors on a missing name, and set -e would abort the whole command.
+stats() {
+  ensure_system
+  local n present=()
+  for n in "$SEARXNG" "$CRAWL4AI" "$OMNIFEED"; do
+    is_running "$n" && present+=("$n")
+  done
+  [ "${#present[@]}" -gt 0 ] || die "no containers running — start the stack first:  $0 up"
+  container stats "${present[@]}"
+}
 
 status() {
   printf '%-12s %-9s %-16s %s\n' SERVICE STATE IP CONTAINER
