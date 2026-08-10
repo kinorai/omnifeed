@@ -75,10 +75,14 @@ Same result as `docker compose up` — SearXNG + crawl4ai + omnifeed, **tokenles
 | `./scripts/container down` | stop + remove it (`make container-down`) |
 | `./scripts/container status` | state / IP / health at a glance |
 | `./scripts/container logs [svc] [-f]` | tail logs (`omnifeed` \| `searxng` \| `crawl4ai`) |
+| `./scripts/container exec <svc> [cmd…]` | run a command in one service (default `sh`) |
+| `./scripts/container stats` | live CPU / memory of the three containers |
 | `./scripts/container restart` | recreate the stack |
 | `./scripts/container update` | pull newer images, then recreate |
 | `./scripts/container build` | build omnifeed from local source, then start |
 | `./scripts/container mcp` | one-shot stdio MCP server (stdio-only clients) |
+
+The omnifeed image is distroless and ships no shell, so `exec omnifeed sh` fails by design — read its HTTP surface (`:9090/metrics`, `/livez`, `/readyz`) or use `logs`.
 
 All three images track `latest`; crawl4ai `0.9.x` needs a token and routes Reddit through `POST /execute_js`, so `up` generates a shared token, wires it to crawl4ai (`CRAWL4AI_API_TOKEN`) and omnifeed (`OMNIFEED_CRAWL4AI_TOKEN`), and enables `execute_js` automatically.
 
