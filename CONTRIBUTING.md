@@ -46,7 +46,7 @@ rebuilds and publishes the image; other types don't release.
 1. Create `internal/engine/<name>/engine.go` implementing `domain.Engine`.
 2. Wire it in `cmd/omnifeed/main.go` via `registry.Register(...)` **before** the fallback.
 3. Add a `*_test.go` covering URL matching + at least one fixture.
-4. Document it in README under *Architecture* and in the supported-sources list.
+4. Document it in README under *Architecture* and in the `fetch_url` bullet at the top; put any new env vars in the `docs/configuration.md` table.
 
 ## Adding a new transport (e.g. OpenAI tool-call endpoint)
 

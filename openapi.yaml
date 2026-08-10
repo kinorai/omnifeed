@@ -3,7 +3,7 @@
 # internal/transport/openwebui and internal/transport/searchapi.
 #
 # The MCP transport (JSON-RPC) and the health/metrics endpoints are documented
-# in the README, not here.
+# in the README and docs/configuration.md, not here.
 openapi: 3.0.3
 info:
   title: omnifeed
@@ -19,7 +19,7 @@ info:
 
     The MCP transport (JSON-RPC at `/mcp`, default `:8081`) and the health/metrics
     endpoints (`/livez`, `/readyz`, `/metrics`, default `:9090`) are documented in
-    the README.
+    the README and docs/configuration.md.
   license:
     name: MIT
     url: https://github.com/kinorai/omnifeed/blob/main/LICENSE
