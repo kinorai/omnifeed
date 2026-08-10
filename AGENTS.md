@@ -71,7 +71,7 @@ cmd/omnifeed/    entry point + wiring
 
 - **Commits:** [Conventional Commits](https://www.conventionalcommits.org/). `feat:` → minor release, `fix:`/`perf:`/`chore(deps):` → patch, others don't release (git-cliff + goreleaser read history).
 - **Tests:** new behavior ships with a test. Prefer table tests and `httptest` fakes over live calls.
-- **Config:** every knob is an `OMNIFEED_`-prefixed env var declared in `internal/config/config.go` — add new ones there, with a default, and document them in the README table.
+- **Config:** every knob is an `OMNIFEED_`-prefixed env var declared in `internal/config/config.go` — add new ones there, with a default, and document them in the `docs/configuration.md` table.
 - **Errors/metrics:** classify with `observability.Reason`; record search via `metrics.ObserveSearch`, crawl via `metrics.Observe`.
 - Match the surrounding style; don't refactor unrelated code in a feature change.
 
