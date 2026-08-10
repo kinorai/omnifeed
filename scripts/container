@@ -9,6 +9,8 @@
 #   ./scripts/container down      # stop + remove the three containers
 #   ./scripts/container status    # show state / IP / health at a glance
 #   ./scripts/container logs [svc] [-f]   # tail logs (svc: omnifeed|searxng|crawl4ai)
+#   ./scripts/container exec <svc> [cmd…] # run a command in one service (default: sh)
+#   ./scripts/container stats     # live CPU / memory of the three containers
 #   ./scripts/container restart   # down + up
 #   ./scripts/container update    # pull newer images, then recreate
 #   ./scripts/container build     # build omnifeed from local source, then up
@@ -51,7 +53,9 @@ CRAWL4AI_MEMORY="${OMNIFEED_CRAWL4AI_MEMORY:-4G}"  # headless Chromium; 1G defau
 
 # settings.yml mounted into searxng. Swapped for a rendered, gitignored runtime
 # copy when a Brave Search API key is available (see render_searxng_settings).
-SEARXNG_SETTINGS="$REPO/searxng/settings.yml"
+# Point SEARXNG_SETTINGS at your own file to run a different engine pool without
+# forking this repo; the Brave rendering below still applies to it.
+SEARXNG_SETTINGS="${SEARXNG_SETTINGS:-$REPO/searxng/settings.yml}"
 
 # ---- helpers ---------------------------------------------------------------
 log()  { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
@@ -158,9 +162,13 @@ render_searxng_settings() {
       }
                                         { print }
     ' "$SEARXNG_SETTINGS" > "$runtime" )
-  # With the API engine keyed, the brave HTML scraper is redundant and routinely
-  # 429-suspended — disable it in the rendered copy (merge-by-name override).
-  printf '\n  # Rendered override: brave HTML scraper off while braveapi is keyed.\n  - name: brave\n    disabled: true\n' >> "$runtime"
+  # Two engines are redundant once the API engine is keyed — disable them in the
+  # rendered copy only (merge-by-name override), never in the committed file:
+  #   brave      the HTML scraper, routinely 429-suspended
+  #   startpage  the pool's slowest engine and the repeat 1h-CAPTCHA offender. It
+  #              proxies Google, which `google cse` already covers. Keyless users
+  #              keep it: it is a free general-web engine their pool needs.
+  printf '\n  # Rendered overrides: redundant while braveapi is keyed.\n  - name: brave\n    disabled: true\n  - name: startpage\n    disabled: true\n' >> "$runtime"
   chmod 600 "$runtime"
   SEARXNG_SETTINGS="$runtime"
   log "braveapi: key injected from ${source}"
@@ -177,8 +185,12 @@ up() {
 
   # 1. Upstreams (reused if already present — crawl4ai is slow to boot).
   render_searxng_settings
+  # GRANIAN_BLOCKING_THREADS: worker threads (image default 4). With 4, a 5th
+  # simultaneous search queues. Searches are ~95% network wait, so the extra
+  # threads cost only idle memory; the limiter is off, so this cannot trip it.
   run_or_start "$SEARXNG" \
     -e SEARXNG_SECRET=dev-only-change-me \
+    -e GRANIAN_BLOCKING_THREADS=12 \
     -v "$SEARXNG_SETTINGS:/etc/searxng/settings.yml" \
     "$SEARXNG_IMAGE"
 
@@ -283,6 +295,25 @@ logs() {
   container logs "$@" "$target"
 }
 
+# exec SVC CMD... — run a command inside one service. Reach for it when a
+# container behaves unlike its config: `exec searxng sh` and read what it loaded.
+# The omnifeed image is distroless and ships no shell — inspect it over HTTP
+# (:9090/metrics, /livez, /readyz) or with `logs` instead.
+exec_in() {
+  local target
+  case "${1:-}" in
+    searxng)  target="$SEARXNG" ;;
+    crawl4ai) target="$CRAWL4AI" ;;
+    omnifeed) target="$OMNIFEED" ;;
+    *) die "exec needs a service: omnifeed|searxng|crawl4ai" ;;
+  esac
+  shift
+  [ $# -gt 0 ] || set -- sh
+  exec container exec -i "$target" "$@"
+}
+
+stats() { container stats "$SEARXNG" "$CRAWL4AI" "$OMNIFEED"; }
+
 status() {
   printf '%-12s %-9s %-16s %s\n' SERVICE STATE IP CONTAINER
   local pair label cname st
@@ -334,6 +365,8 @@ case "$cmd" in
   update)     update ;;
   build)      build ;;
   logs)       logs "$@" ;;
+  exec)       exec_in "$@" ;;
+  stats)      stats ;;
   status|ps)  status ;;
   mcp)        mcp ;;
   ""|-h|--help|help) usage ;;

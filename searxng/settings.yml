@@ -19,6 +19,14 @@ search:
     - html
     - json
 
+outgoing:
+  # httpx expires an idle connection after 5s by default. Agent searches arrive
+  # in bursts with longer gaps, so every burst re-handshook TLS to every engine.
+  # 60s keeps the pool warm between bursts. request_timeout rides the upstream
+  # default (3.0): SearXNG has no early return, so a query costs as much as its
+  # slowest enabled engine.
+  keepalive_expiry: 60.0
+
 # Disable engines that are dead weight for a dev/devops gateway. With
 # use_default_settings: true, listing an engine by name overrides its default
 # settings — here, turning it off:

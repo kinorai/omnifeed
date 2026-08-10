@@ -17,6 +17,11 @@ services:
       - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
     environment:
       SEARXNG_SECRET: dev-only-change-me
+      # Granian worker threads (image default 4): with 4, a 5th simultaneous
+      # search queues behind the others. Searches are ~95% network wait, so the
+      # extra threads cost only idle memory, and the limiter is off here so
+      # raising this cannot trip bot detection.
+      GRANIAN_BLOCKING_THREADS: "12"
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/healthz"]
       interval: 10s

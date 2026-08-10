@@ -89,7 +89,13 @@ export BRAVEAPI_KEY_COMMAND="security find-generic-password -s omnifeed-braveapi
 export BRAVEAPI_KEY_COMMAND="bw get password omnifeed-braveapi"                       # Bitwarden
 ```
 
-`./scripts/container up` then renders `searxng/settings.runtime.yml` (gitignored, mode `600`) with the key filled in and mounts that instead. `BRAVEAPI_KEY` takes precedence; with neither set, the committed keyless file is mounted as before. Either way the key never enters git and is never printed.
+`./scripts/container up` then renders `searxng/settings.runtime.yml` (gitignored, mode `600`) with the key filled in and mounts that instead. It also disables the `brave` HTML scraper and `startpage` in that rendered copy — both are redundant once the API engine is keyed. `BRAVEAPI_KEY` takes precedence; with neither set, the committed keyless file is mounted as before, with the full engine pool intact. Either way the key never enters git and is never printed.
+
+**Your own engine pool (optional).** Set `SEARXNG_SETTINGS` to the path of your own `settings.yml` to change engines, timeouts, or anything else without forking this repo. The Brave rendering above still applies to your file.
+
+```bash
+export SEARXNG_SETTINGS=/path/to/my-searxng-settings.yml
+```
 
 ### <img src="https://raw.githubusercontent.com/Tarikul-Islam-Anik/Animated-Fluent-Emojis/master/Emojis/Objects/Electric%20Plug.png" width="22" height="22" /> As an MCP server
 
