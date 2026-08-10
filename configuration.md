@@ -4,6 +4,11 @@ Everything is configured with `OMNIFEED_`-prefixed environment variables. In pra
 you only ever **set three** — `OMNIFEED_API_KEY`, `OMNIFEED_CRAWL4AI_URL`, and
 (optionally) `OMNIFEED_SEARXNG_URL`. The rest have sane defaults.
 
+Every variable below is read by the omnifeed **binary**. The Apple `container`
+launcher reads a few `OMNIFEED_`-prefixed variables of its own — container name
+prefix, host ports, images — which the binary never sees. Those live in
+[apple-container.md](apple-container.md).
+
 **Egress.** Reddit and the generic fallback reach the web through crawl4ai, but three
 engines call their upstream themselves: Hacker News reads `hn.algolia.com`, GitHub reads
 `api.github.com`, and Discourse reads each host in `OMNIFEED_DISCOURSE_HOSTS`. A

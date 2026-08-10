@@ -33,6 +33,39 @@ crawl4ai requires a bearer token to serve beyond loopback and gates in-page JS b
 (`CRAWL4AI_API_TOKEN`) and omnifeed (`OMNIFEED_CRAWL4AI_TOKEN`), and enables
 `execute_js` automatically.
 
+## A second stack on the same Mac (optional)
+
+`up` names its containers `searxng`, `crawl4ai` and `omnifeed`, and publishes host
+ports `8080`, `8081`, `9090` and `11235`. Run it from a second clone with those
+defaults and it does **not** start a second stack — it adopts the running `searxng`
+and `crawl4ai`, and removes and recreates the running `omnifeed`. The same host ports
+also collide with the Docker Compose stack, which publishes exactly the same four.
+
+Give the second copy its own name prefix and ports:
+
+```bash
+OMNIFEED_PREFIX=dev- \
+OMNIFEED_PORT_HTTP=18080 OMNIFEED_PORT_MCP=18081 OMNIFEED_PORT_METRICS=19090 \
+OMNIFEED_CRAWL4AI_PORT=21235 \
+  ./scripts/container up
+```
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `OMNIFEED_PREFIX` | _(empty)_ | Prepended to all three container names (`dev-` → `dev-searxng`, …) |
+| `OMNIFEED_PORT_HTTP` | `8080` | Host port for `/crawl` + `/search` |
+| `OMNIFEED_PORT_MCP` | `8081` | Host port for MCP HTTP/SSE |
+| `OMNIFEED_PORT_METRICS` | `9090` | Host port for `/metrics`, `/livez`, `/readyz` |
+| `OMNIFEED_CRAWL4AI_PORT` | `11235` | Host port for crawl4ai (the `up` health-wait needs it) |
+
+Pass the same variables to every later verb — `status`, `logs`, `exec`, `stats`,
+`down` all resolve the container names through `OMNIFEED_PREFIX`. Exporting them once
+per shell is the easy way. Only SearXNG needs no host port: omnifeed reaches it by
+container IP, so two stacks never collide there.
+
+These are read by `scripts/container` itself, not by the omnifeed binary — they are
+absent from [configuration.md](configuration.md) for that reason.
+
 ## Brave API key (optional)
 
 SearXNG can't read engine keys from the environment, so the key has to be inside its
