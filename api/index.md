@@ -1,0 +1,25 @@
+# API reference
+
+Generated from the Go source by [gomarkdoc](https://github.com/princjef/gomarkdoc).
+
+- [cmd/omnifeed](cmd/omnifeed.md)
+- [internal/antibot](internal/antibot.md)
+- [internal/auth](internal/auth.md)
+- [internal/browser](internal/browser.md)
+- [internal/browser/crawl4ai](internal/browser/crawl4ai.md)
+- [internal/config](internal/config.md)
+- [internal/domain](internal/domain.md)
+- [internal/engine](internal/engine.md)
+- [internal/engine/crawl4ai](internal/engine/crawl4ai.md)
+- [internal/engine/discourse](internal/engine/discourse.md)
+- [internal/engine/github](internal/engine/github.md)
+- [internal/engine/hackernews](internal/engine/hackernews.md)
+- [internal/engine/reddit](internal/engine/reddit.md)
+- [internal/httpx](internal/httpx.md)
+- [internal/observability](internal/observability.md)
+- [internal/search/searxng](internal/search/searxng.md)
+- [internal/transport/mcp](internal/transport/mcp.md)
+- [internal/transport/mcp/tools](internal/transport/mcp/tools.md)
+- [internal/transport/openwebui](internal/transport/openwebui.md)
+- [internal/transport/searchapi](internal/transport/searchapi.md)
+- [internal/version](internal/version.md)
