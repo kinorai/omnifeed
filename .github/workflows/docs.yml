@@ -33,6 +33,17 @@ jobs:
         run: |
           mkdir -p docs/api
           gomarkdoc --output 'docs/api/{{.Dir}}.md' ./...
+      - name: Generate API index
+        run: |
+          {
+            echo '# API reference'
+            echo
+            echo 'Generated from the Go source by [gomarkdoc](https://github.com/princjef/gomarkdoc).'
+            echo
+            find docs/api -name '*.md' ! -name index.md | sort | sed 's|^docs/api/||' | while read -r f; do
+              echo "- [${f%.md}]($f)"
+            done
+          } > docs/api/index.md
       - name: Deploy to GitHub Pages
         uses: JamesIves/github-pages-deploy-action@d92aa235d04922e8f08b40ce78cc5442fcfbfa2f # v4.8.0
         with:
