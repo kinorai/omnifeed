@@ -279,9 +279,14 @@ func run(cfg config.Config, logger *slog.Logger) error {
 
 	// --- Run all three servers ---
 
+	// Every request-serving mux sits behind the Origin guard (DNS-rebinding
+	// protection, a Streamable HTTP transport MUST). It wraps at this level —
+	// not inside one transport — so the loader and search APIs get the same
+	// guard, and so a future transport mounted here inherits it for free.
+	originGuard := auth.OriginGuard(cfg.AllowedOrigins)
 	servers := []serverSpec{
-		{name: "loader", addr: cfg.ListenAddr, handler: mainMux, writeTimeout: 300 * time.Second},
-		{name: "mcp", addr: cfg.MCPListenAddr, handler: mcpMux, writeTimeout: 300 * time.Second},
+		{name: "loader", addr: cfg.ListenAddr, handler: originGuard(mainMux), writeTimeout: 300 * time.Second},
+		{name: "mcp", addr: cfg.MCPListenAddr, handler: originGuard(mcpMux), writeTimeout: 300 * time.Second},
 		{name: "observability", addr: cfg.MetricsAddr, handler: obsMux, writeTimeout: 30 * time.Second},
 	}
 

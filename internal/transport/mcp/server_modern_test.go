@@ -384,30 +384,95 @@ func TestStdio_ModernEra(t *testing.T) {
 	}
 }
 
-// Origin validation (transport spec MUST, DNS-rebinding guard): no Origin and
-// localhost origins pass, anything else is 403 before auth even runs.
-func TestCheckOrigin(t *testing.T) {
-	cases := []struct {
-		name   string
-		origin string
-		want   int
-	}{
-		{"no origin passes", "", http.StatusOK},
-		{"localhost passes", "http://localhost:6274", http.StatusOK},
-		{"loopback ip passes", "http://127.0.0.1:8081", http.StatusOK},
-		{"external origin rejected", "https://evil.example.com", http.StatusForbidden},
-		{"null origin rejected", "null", http.StatusForbidden},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			headers := map[string]string{}
-			if tc.origin != "" {
-				headers["Origin"] = tc.origin
+// Every initialize-era header version must keep a request on the legacy
+// path. This pins the era decision itself: if a version is ever dropped or
+// mistyped in legacyVersions, deployed clients that send it (Claude Code,
+// Cursor, Codex all send their negotiated version on each request) would
+// silently land on the modern path and 400 on every call.
+func TestLegacyHeaderVersions_StayLegacy(t *testing.T) {
+	for _, v := range legacyVersions {
+		t.Run(v, func(t *testing.T) {
+			srv := New(Config{Tools: []Tool{echoTool()}})
+			body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"fetch_url","arguments":{}}}`
+			rec := postRec(t, srv, body, map[string]string{"MCP-Protocol-Version": v})
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status: got %d, want 200 (body: %s)", rec.Code, rec.Body.String())
 			}
-			rec := postRec(t, New(Config{}), `{"jsonrpc":"2.0","id":1,"method":"ping"}`, headers)
-			if rec.Code != tc.want {
-				t.Fatalf("status: got %d, want %d (body: %s)", rec.Code, tc.want, rec.Body.String())
+			var resp struct {
+				Result map[string]any `json:"result"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			if _, exists := resp.Result["resultType"]; exists {
+				t.Errorf("legacy request got a modern-shaped result: %v", resp.Result)
+			}
+			if resp.Result["content"] == nil {
+				t.Errorf("tool did not execute: %v", resp.Result)
 			}
 		})
+	}
+}
+
+// A legacy version inside `_meta` must not flip the request modern: `_meta`
+// is an open bag in every era, and rejecting a version we support — with an
+// error listing that same version as supported — would tell the client to
+// retry with what it just sent.
+func TestLegacyMetaVersion_StaysLegacy(t *testing.T) {
+	srv := New(Config{Tools: []Tool{echoTool()}})
+	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"fetch_url","arguments":{},"_meta":{"io.modelcontextprotocol/protocolVersion":"2025-06-18"}}}`
+	rec := postRec(t, srv, body, map[string]string{"MCP-Protocol-Version": "2025-06-18"})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200 (body: %s)", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), `"resultType"`) {
+		t.Errorf("legacy request got a modern-shaped result: %s", rec.Body.String())
+	}
+}
+
+// Notifications (no id) cannot dodge the header/body agreement check by
+// dropping the id: headers they DO send must still match the body, or the
+// split-brain a routing gateway would suffer goes undetected. Only header
+// *presence* is optional for notifications — the spec leaves their header
+// requirements undefined, so a bare notification must still pass.
+func TestModernNotification_Validation(t *testing.T) {
+	notif := `{"jsonrpc":"2.0","method":"tools/call","params":{"name":"fetch_url","arguments":{},` + modernMeta + `}}`
+
+	t.Run("mismatched Mcp-Name is rejected", func(t *testing.T) {
+		srv := New(Config{Tools: []Tool{echoTool()}})
+		rec := postRec(t, srv, notif, modernHeaders("tools/call", "web_search"))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("status: got %d, want 400 (body: %s)", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("unsupported version is rejected", func(t *testing.T) {
+		body := `{"jsonrpc":"2.0","method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2099-01-01"}}}`
+		rec := postRec(t, New(Config{}), body, nil)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("status: got %d, want 400 (body: %s)", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("bare notification still passes", func(t *testing.T) {
+		srv := New(Config{Tools: []Tool{echoTool()}})
+		rec := postRec(t, srv, notif, nil)
+		if rec.Code != http.StatusAccepted {
+			t.Fatalf("status: got %d, want 202 (body: %s)", rec.Code, rec.Body.String())
+		}
+	})
+}
+
+// A modern request whose body lacks the required `_meta` protocol version
+// must fail with a message naming the missing field — not a baffling
+// comparison against an empty string.
+func TestModernValidation_MissingMetaVersion(t *testing.T) {
+	body := `{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}`
+	rec := postRec(t, New(Config{}), body, modernHeaders("tools/list", ""))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status: got %d, want 400 (body: %s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), metaProtocolVersion) {
+		t.Errorf("error must name the missing _meta field, got: %s", rec.Body.String())
 	}
 }

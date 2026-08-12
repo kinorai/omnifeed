@@ -31,6 +31,11 @@ type Config struct {
 	// Auth.
 	APIKey      string
 	AllowNoAuth bool
+	// AllowedOrigins lists browser Origin values (scheme://host[:port])
+	// allowed to call the HTTP APIs cross-origin, on top of the always-allowed
+	// loopback origins. Requests without an Origin header (native clients)
+	// are never affected. Empty = loopback-only.
+	AllowedOrigins []string
 
 	// Upstream crawl4ai.
 	Crawl4AIURL            string
@@ -141,6 +146,10 @@ func Load() (Config, error) {
 		hosts = *v
 	}
 	c.DiscourseHosts = splitHosts(hosts)
+
+	// Origins are scheme://host[:port]; splitHosts' trim+lowercase is safe
+	// on them because scheme and host are case-insensitive by RFC 3986.
+	c.AllowedOrigins = splitHosts(env("OMNIFEED_ALLOWED_ORIGINS", ""))
 
 	var err error
 	if c.MCPStdio, err = envBool("OMNIFEED_MCP_STDIO", false); err != nil {

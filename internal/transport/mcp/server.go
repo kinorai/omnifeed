@@ -41,7 +41,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"slices"
 	"sync"
 	"time"
@@ -185,10 +184,11 @@ const (
 	codeUnsupportedVersion = -32022
 )
 
-// paramsProbe is the era detector: the request fields shared by every method
-// that the transport itself must see. Name feeds Mcp-Name header validation;
-// the `_meta` protocol version marks a request as modern-era — the key exists
-// only in MCP 2026-07-28 and later, so legacy requests never trip it.
+// paramsProbe is the transport's single parse of the request fields it must
+// see itself, for every method: Name feeds both Mcp-Name header validation
+// and tools/call dispatch (one parse, so the value checked is the value
+// executed), and the `_meta` protocol version feeds era detection. The tag
+// duplicates metaProtocolVersion because struct tags must be literals.
 type paramsProbe struct {
 	Name string `json:"name"`
 	Meta struct {
@@ -202,6 +202,35 @@ func probeParams(req rpcRequest) paramsProbe {
 		_ = json.Unmarshal(req.Params, &p)
 	}
 	return p
+}
+
+// eraOf decides which protocol era a message belongs to. A message is modern
+// when it claims a non-initialize-era version — in `_meta` (any transport) or
+// in the MCP-Protocol-Version header (HTTP; empty on stdio). A legacy version
+// in either spot keeps the message legacy: `_meta` has been an open bag since
+// 2024-11-05, and rejecting a version we do support — just because it arrived
+// in modern framing — would tell the client to retry with the version it
+// already used.
+func eraOf(headerVersion, metaVersion string) bool {
+	if metaVersion != "" {
+		return !slices.Contains(legacyVersions, metaVersion)
+	}
+	return headerVersion != "" && !slices.Contains(legacyVersions, headerVersion)
+}
+
+// checkModernVersion validates the effective version a modern-era message
+// requested (the `_meta` value, or the header when `_meta` is absent). Both
+// transports share it so they can never disagree on which versions exist;
+// ok=false means resp carries the -32022 rejection with the supported list.
+func checkModernVersion(id json.RawMessage, headerVersion, metaVersion string) (resp rpcResponse, ok bool) {
+	requested := metaVersion
+	if requested == "" {
+		requested = headerVersion
+	}
+	if requested != modernProtocolVersion {
+		return unsupportedVersionResp(id, requested), false
+	}
+	return rpcResponse{}, true
 }
 
 // unsupportedVersionResp is the modern-era rejection for a protocol version
@@ -256,14 +285,17 @@ func (s *Server) ServeStdio(ctx context.Context, in io.Reader, out io.Writer) er
 
 		// Era detection on stdio: no HTTP headers exist, so the `_meta`
 		// protocol version alone decides. An unsupported modern version is
-		// rejected here, mirroring the HTTP transport's 400 path.
+		// rejected here, mirroring the HTTP transport's 400 path — except
+		// for notifications, which have no response channel on stdio.
 		probe := probeParams(req)
-		modern := probe.Meta.ProtocolVersion != ""
+		modern := eraOf("", probe.Meta.ProtocolVersion)
 		var resp rpcResponse
-		if modern && probe.Meta.ProtocolVersion != modernProtocolVersion {
-			resp = unsupportedVersionResp(req.ID, probe.Meta.ProtocolVersion)
-		} else {
-			resp = s.dispatch(ctx, req, modern)
+		verOK := true
+		if modern {
+			resp, verOK = checkModernVersion(req.ID, "", probe.Meta.ProtocolVersion)
+		}
+		if verOK {
+			resp = s.dispatch(ctx, req, modern, probe)
 		}
 		if !isNotification {
 			writeResp(resp)
@@ -280,7 +312,7 @@ func (s *Server) ServeStdio(ctx context.Context, in io.Reader, out io.Writer) er
 // request for them is method-not-found. The legacy era keeps the historical
 // behavior untouched, plus server/discover: the spec blesses it as the
 // backward-compatibility probe, so it must answer even without modern framing.
-func (s *Server) dispatch(ctx context.Context, req rpcRequest, modern bool) rpcResponse {
+func (s *Server) dispatch(ctx context.Context, req rpcRequest, modern bool, probe paramsProbe) rpcResponse {
 	if modern {
 		switch req.Method {
 		case "server/discover":
@@ -288,7 +320,7 @@ func (s *Server) dispatch(ctx context.Context, req rpcRequest, modern bool) rpcR
 		case "tools/list":
 			return s.handleToolsList(req, true)
 		case "tools/call":
-			return s.handleToolsCall(ctx, req, true)
+			return s.handleToolsCall(ctx, req, probe.Name, true)
 		default:
 			return errorResp(req.ID, codeMethodNotFound, "method not found: "+req.Method)
 		}
@@ -306,7 +338,7 @@ func (s *Server) dispatch(ctx context.Context, req rpcRequest, modern bool) rpcR
 	case "tools/list":
 		return s.handleToolsList(req, false)
 	case "tools/call":
-		return s.handleToolsCall(ctx, req, false)
+		return s.handleToolsCall(ctx, req, probe.Name, false)
 	default:
 		return errorResp(req.ID, codeMethodNotFound, "method not found: "+req.Method)
 	}
@@ -406,20 +438,21 @@ func (s *Server) handleToolsList(req rpcRequest, modern bool) rpcResponse {
 	return ok(req.ID, result)
 }
 
-type toolCallParams struct {
-	Name      string         `json:"name"`
-	Arguments map[string]any `json:"arguments"`
-}
-
-func (s *Server) handleToolsCall(ctx context.Context, req rpcRequest, modern bool) rpcResponse {
-	var p toolCallParams
+// handleToolsCall dispatches on the name from the transport's paramsProbe —
+// the same parse the Mcp-Name header was validated against. A second parse
+// of `name` here could diverge from the validated one and let the header
+// check authorize one tool while another runs.
+func (s *Server) handleToolsCall(ctx context.Context, req rpcRequest, name string, modern bool) rpcResponse {
+	var p struct {
+		Arguments map[string]any `json:"arguments"`
+	}
 	if err := json.Unmarshal(req.Params, &p); err != nil {
 		return errorResp(req.ID, codeInvalidParams, "invalid params: "+err.Error())
 	}
 
-	tool, found := s.byName[p.Name]
+	tool, found := s.byName[name]
 	if !found {
-		return errorResp(req.ID, codeInvalidParams, "unknown tool: "+p.Name)
+		return errorResp(req.ID, codeInvalidParams, "unknown tool: "+name)
 	}
 
 	start := time.Now()
@@ -429,15 +462,15 @@ func (s *Server) handleToolsCall(ctx context.Context, req rpcRequest, modern boo
 		if errors.As(err, &paramErr) {
 			return errorResp(req.ID, codeInvalidParams, paramErr.Error())
 		}
-		s.logger.Warn("mcp tool call failed", "tool", p.Name, "args", p.Arguments, "err", err)
-		return errorResp(req.ID, codeInternalError, toolFailureMessage(p.Name, err))
+		s.logger.Warn("mcp tool call failed", "tool", name, "args", p.Arguments, "err", err)
+		return errorResp(req.ID, codeInternalError, toolFailureMessage(name, err))
 	}
 	// Success exemplar for latency triage: metrics carry the duration
 	// distributions but can never carry the URL/query (label cardinality) —
 	// this line is how a slow histogram bucket is traced back to the exact
 	// call in VictoriaLogs.
 	s.logger.Info("mcp tool call completed",
-		"tool", p.Name, "args", p.Arguments,
+		"tool", name, "args", p.Arguments,
 		"duration_ms", time.Since(start).Milliseconds(),
 		"chars", utf8.RuneCountInString(res.Text))
 
@@ -500,28 +533,30 @@ func (s *Server) serveHTTPPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Era detection: a request is modern when it carries the 2026-07-28
-	// per-request version in `_meta`, or an MCP-Protocol-Version header that
-	// isn't an initialize-era version (legacy clients since 2025-06-18 send
-	// their negotiated version there; pre-2025-06-18 clients send nothing).
-	// Anything else takes the legacy path exactly as before.
+	// Era detection: a request is modern when it carries a non-legacy
+	// per-request version in `_meta` or in the MCP-Protocol-Version header
+	// (legacy clients since 2025-06-18 send their negotiated version there;
+	// older clients send nothing). Anything legacy takes the old path
+	// exactly as before.
 	probe := probeParams(req)
 	headerVersion := r.Header.Get("MCP-Protocol-Version")
-	modern := probe.Meta.ProtocolVersion != "" ||
-		(headerVersion != "" && !slices.Contains(legacyVersions, headerVersion))
+	modern := eraOf(headerVersion, probe.Meta.ProtocolVersion)
 
-	// Modern requests must pass header validation (SEP-2243): version and
-	// routing headers must match the body, or the request is rejected with
-	// 400. The spec leaves notification header rules undefined, so only
-	// requests (ID present) are validated.
-	if modern && len(req.ID) > 0 {
-		if resp, bad := validateModernRequest(r, req, probe, headerVersion); bad {
+	// Modern messages must pass validation (SEP-2243): version and routing
+	// headers must match the body, or the message is rejected with 400. The
+	// spec leaves notification header rules undefined, so notifications
+	// (ID absent) are held only to consistency of the headers they DO send —
+	// required-presence applies to requests alone. Never lax on mismatches:
+	// executing the body's tool while a gateway routed on a different
+	// Mcp-Name is the split-brain this check exists to prevent.
+	if modern {
+		if resp, bad := validateModernRequest(r, req, probe, headerVersion, len(req.ID) > 0); bad {
 			httpJSON(w, http.StatusBadRequest, resp)
 			return
 		}
 	}
 
-	resp := s.dispatch(r.Context(), req, modern)
+	resp := s.dispatch(r.Context(), req, modern, probe)
 	if len(req.ID) == 0 {
 		// Notification — return 202 Accepted with no body.
 		w.WriteHeader(http.StatusAccepted)
@@ -531,65 +566,63 @@ func (s *Server) serveHTTPPost(w http.ResponseWriter, r *http.Request) {
 }
 
 // httpStatusFor maps a dispatched response to its HTTP status. The modern era
-// requires 404 for unknown methods (distinguishing a modern server from a
-// legacy endpoint) and 400 for protocol errors; everything else — including
-// every legacy response — stays 200 with the error in the JSON-RPC body.
+// requires 404 for unknown methods — that status is how clients tell a modern
+// server from a legacy endpoint. Everything else — including every legacy
+// response — stays 200 with any error in the JSON-RPC body. The 400-class
+// protocol errors (-32020/-32022) never reach here: validateModernRequest
+// writes them with 400 at the call site.
 func httpStatusFor(modern bool, resp rpcResponse) int {
-	if !modern || resp.Error == nil {
-		return http.StatusOK
-	}
-	switch resp.Error.Code {
-	case codeMethodNotFound:
+	if modern && resp.Error != nil && resp.Error.Code == codeMethodNotFound {
 		return http.StatusNotFound
-	case codeHeaderMismatch, codeUnsupportedVersion:
-		return http.StatusBadRequest
-	default:
-		return http.StatusOK
 	}
+	return http.StatusOK
 }
 
-// validateModernRequest enforces the 2026-07-28 Streamable HTTP request
-// rules: the protocol version must be one we speak, the MCP-Protocol-Version
-// header must match `_meta`, and the Mcp-Method/Mcp-Name routing headers must
-// match the body (they exist so gateways can route on headers — a mismatch
-// means two components would disagree about what is being called, which the
-// spec treats as a security problem, not a nit).
-func validateModernRequest(r *http.Request, req rpcRequest, probe paramsProbe, headerVersion string) (rpcResponse, bool) {
-	requested := probe.Meta.ProtocolVersion
-	if requested == "" {
-		requested = headerVersion
+// validateModernRequest enforces the 2026-07-28 Streamable HTTP rules: the
+// protocol version must be one we speak, the MCP-Protocol-Version header must
+// match `_meta`, and the Mcp-Method/Mcp-Name routing headers must match the
+// body (they exist so gateways can route on headers — a mismatch means two
+// components would disagree about what is being called, which the spec treats
+// as a security problem, not a nit). strict is true for requests, where the
+// headers and the `_meta` version are also required to be present.
+func validateModernRequest(r *http.Request, req rpcRequest, probe paramsProbe, headerVersion string, strict bool) (rpcResponse, bool) {
+	if resp, ok := checkModernVersion(req.ID, headerVersion, probe.Meta.ProtocolVersion); !ok {
+		return resp, true
 	}
-	if requested != modernProtocolVersion {
-		return unsupportedVersionResp(req.ID, requested), true
+	if strict && probe.Meta.ProtocolVersion == "" {
+		return errorResp(req.ID, codeHeaderMismatch,
+			"body _meta is missing the required "+metaProtocolVersion+" field"), true
 	}
-	if headerVersion == "" {
+	if strict && headerVersion == "" {
 		return errorResp(req.ID, codeHeaderMismatch, "missing required MCP-Protocol-Version header"), true
 	}
-	if headerVersion != probe.Meta.ProtocolVersion {
+	if headerVersion != "" && probe.Meta.ProtocolVersion != "" && headerVersion != probe.Meta.ProtocolVersion {
 		return errorResp(req.ID, codeHeaderMismatch, fmt.Sprintf(
 			"MCP-Protocol-Version header %q does not match body _meta value %q",
 			headerVersion, probe.Meta.ProtocolVersion)), true
 	}
 	mcpMethod := r.Header.Get("Mcp-Method")
-	if mcpMethod == "" {
+	if strict && mcpMethod == "" {
 		return errorResp(req.ID, codeHeaderMismatch, "missing required Mcp-Method header"), true
 	}
-	if mcpMethod != req.Method {
+	if mcpMethod != "" && mcpMethod != req.Method {
 		return errorResp(req.ID, codeHeaderMismatch, fmt.Sprintf(
 			"Mcp-Method header %q does not match body method %q", mcpMethod, req.Method)), true
 	}
 	if req.Method == "tools/call" {
 		raw := r.Header.Get("Mcp-Name")
-		if raw == "" {
+		if strict && raw == "" {
 			return errorResp(req.ID, codeHeaderMismatch, "missing required Mcp-Name header"), true
 		}
-		name, err := decodeHeaderValue(raw)
-		if err != nil {
-			return errorResp(req.ID, codeHeaderMismatch, "Mcp-Name header has invalid base64 encoding"), true
-		}
-		if name != probe.Name {
-			return errorResp(req.ID, codeHeaderMismatch, fmt.Sprintf(
-				"Mcp-Name header %q does not match body value %q", name, probe.Name)), true
+		if raw != "" {
+			name, err := decodeHeaderValue(raw)
+			if err != nil {
+				return errorResp(req.ID, codeHeaderMismatch, "Mcp-Name header has invalid base64 encoding"), true
+			}
+			if name != probe.Name {
+				return errorResp(req.ID, codeHeaderMismatch, fmt.Sprintf(
+					"Mcp-Name header %q does not match body value %q", name, probe.Name)), true
+			}
 		}
 	}
 	return rpcResponse{}, false
@@ -665,37 +698,13 @@ func httpJSON(w http.ResponseWriter, code int, body any) {
 //     that only speak the deprecated dual-endpoint SSE shape.
 //     Same handler as GET /mcp.
 //
-// Both routes share the same Origin check and bearer-token check.
+// Both routes share the same bearer-token check. Origin validation (the
+// DNS-rebinding guard the transport spec requires) is applied one level up:
+// main wraps every HTTP mux in auth.OriginGuard, so the loader and search
+// transports in the same binary are covered by the same guard.
 func (s *Server) Register(mux *http.ServeMux) {
-	mux.Handle("/mcp", checkOrigin(s.requireAuth(s.ServeHTTP)))
-	mux.Handle("/mcp/sse", checkOrigin(s.requireAuth(s.serveHTTPSSE)))
-}
-
-// checkOrigin guards against DNS rebinding, per the Streamable HTTP transport
-// spec (a MUST since 2025-03-26): an Origin header means a browser made the
-// request cross-origin, which no native MCP client ever does. Absent Origin
-// passes; a localhost origin passes (browser-based tools like the MCP
-// inspector run there); anything else is 403.
-func checkOrigin(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if o := r.Header.Get("Origin"); o != "" && !isLocalOrigin(o) {
-			http.Error(w, "forbidden origin", http.StatusForbidden)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
-}
-
-func isLocalOrigin(origin string) bool {
-	u, err := url.Parse(origin)
-	if err != nil {
-		return false
-	}
-	switch u.Hostname() {
-	case "localhost", "127.0.0.1", "::1":
-		return true
-	}
-	return false
+	mux.Handle("/mcp", s.requireAuth(s.ServeHTTP))
+	mux.Handle("/mcp/sse", s.requireAuth(s.serveHTTPSSE))
 }
 
 // requireAuth wraps a handler with the configured authenticator. On failure
