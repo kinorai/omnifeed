@@ -54,7 +54,9 @@ func TestInitialize_AdvertisesInstructions(t *testing.T) {
 }
 
 // initialize must negotiate the protocol version: echo the client's requested
-// version when we support it, otherwise return our latest.
+// version when we support it, otherwise return our latest initialize-era
+// version. Never the modern one — initialize belongs to the legacy era, and
+// answering it with a handshake-free version would wedge the client.
 func TestInitialize_NegotiatesProtocolVersion(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -62,9 +64,10 @@ func TestInitialize_NegotiatesProtocolVersion(t *testing.T) {
 		want      string
 	}{
 		{"supported version is echoed", "2024-11-05", "2024-11-05"},
-		{"latest is echoed", ProtocolVersion, ProtocolVersion},
-		{"unknown/newer falls back to latest", "2099-01-01", ProtocolVersion},
-		{"absent falls back to latest", "", ProtocolVersion},
+		{"latest legacy is echoed", latestLegacyProtocolVersion, latestLegacyProtocolVersion},
+		{"modern falls back to latest legacy", modernProtocolVersion, latestLegacyProtocolVersion},
+		{"unknown/newer falls back to latest legacy", "2099-01-01", latestLegacyProtocolVersion},
+		{"absent falls back to latest legacy", "", latestLegacyProtocolVersion},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -9,6 +9,16 @@
 //     initiated SSE event stream). This is the canonical HTTP transport for
 //     remote MCP clients (Claude Code, OpenCode, Cursor remote, hosted MCP).
 //
+// The server is dual-era. MCP 2026-07-28 removed the initialize handshake:
+// every request carries its protocol version itself (the MCP-Protocol-Version
+// header plus `_meta`), capabilities are fetched via server/discover, and the
+// required Mcp-Method/Mcp-Name routing headers must match the body. Requests
+// in that shape get the modern treatment (resultType, cache hints, serverInfo
+// in `_meta`, HTTP 404 for unknown methods). Everything else — including all
+// initialize-era clients back to 2024-11-05 — gets the exact legacy behavior,
+// byte-compatible with what this server always returned. The era is decided
+// per request, so old and new clients coexist on the same endpoint.
+//
 // For backwards compatibility with older clients that only speak the
 // deprecated dual-endpoint SSE shape, the server also exposes /mcp/sse as
 // a legacy alias — same handler as the GET path of /mcp. New clients
@@ -24,12 +34,14 @@ package mcp
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"slices"
 	"sync"
 	"time"
@@ -39,33 +51,61 @@ import (
 	"github.com/kinorai/omnifeed/internal/version"
 )
 
-// ProtocolVersion is the latest MCP revision this server speaks. It's the
-// version returned when the client requests one we don't recognize.
-const ProtocolVersion = "2025-06-18"
+// modernProtocolVersion is the newest MCP revision this server speaks: the
+// stateless, handshake-free era. Requests claim it per call (header + _meta)
+// instead of negotiating it via initialize.
+const modernProtocolVersion = "2026-07-28"
 
-// supportedVersions lists the MCP revisions this server speaks, newest first.
-// On initialize we echo the client's requested version when it's one of these
-// (the MCP lifecycle negotiation rule) and otherwise fall back to the latest,
-// ProtocolVersion.
-var supportedVersions = []string{ProtocolVersion, "2025-03-26", "2024-11-05"}
+// latestLegacyProtocolVersion is the newest initialize-era revision. It is
+// what initialize falls back to when the client requests a version we don't
+// recognize — never modernProtocolVersion, because a server must not steer an
+// initialize-era client onto the handshake-free protocol it isn't speaking.
+const latestLegacyProtocolVersion = "2025-11-25"
+
+// legacyVersions lists the initialize-era MCP revisions this server speaks,
+// newest first. On initialize we echo the client's requested version when
+// it's one of these (the MCP lifecycle negotiation rule) and otherwise fall
+// back to latestLegacyProtocolVersion.
+var legacyVersions = []string{latestLegacyProtocolVersion, "2025-06-18", "2025-03-26", "2024-11-05"}
+
+// supportedVersions is every revision this server speaks, newest first —
+// advertised by server/discover and by UnsupportedProtocolVersion errors so
+// callers know what to retry with.
+var supportedVersions = append([]string{modernProtocolVersion}, legacyVersions...)
 
 // negotiateProtocolVersion implements the initialize version handshake: return
-// the client's requested version if we support it, otherwise our latest.
+// the client's requested version if we support it, otherwise our latest
+// initialize-era version.
 func negotiateProtocolVersion(requested string) string {
-	if slices.Contains(supportedVersions, requested) {
+	if slices.Contains(legacyVersions, requested) {
 		return requested
 	}
-	return ProtocolVersion
+	return latestLegacyProtocolVersion
 }
 
+// Reserved `_meta` keys defined by MCP 2026-07-28.
+const (
+	metaProtocolVersion = "io.modelcontextprotocol/protocolVersion"
+	metaServerInfo      = "io.modelcontextprotocol/serverInfo"
+)
+
+// listTTLMs and listCacheScope are the required cache hints on modern
+// tools/list (and server/discover) results. The tool catalog is wired once in
+// main and identical for every caller, so it is public and safe to cache for
+// an hour — a restart that changes it also drops the connection.
+const (
+	listTTLMs      = 3600000
+	listCacheScope = "public"
+)
+
 // serverInstructions is returned in the initialize response's optional
-// `instructions` field (MCP spec, InitializeResult). It matters because some
-// clients — notably Claude Code — defer-load per-tool descriptions and only
-// surface tool *names* up-front, so a description never reaches the model
-// until it explicitly searches for the tool. This string, by contrast, is
-// loaded into the model's context as soon as the server connects, making it
-// the one reliable place to steer tool selection. Keep it short and
-// behavioral; avoid implementation details that can drift.
+// `instructions` field (and the server/discover result in the modern era).
+// It matters because some clients — notably Claude Code — defer-load per-tool
+// descriptions and only surface tool *names* up-front, so a description never
+// reaches the model until it explicitly searches for the tool. This string,
+// by contrast, is loaded into the model's context as soon as the server
+// connects, making it the one reliable place to steer tool selection. Keep it
+// short and behavioral; avoid implementation details that can drift.
 const serverInstructions = "omnifeed is a global web search and fetch gateway: " +
 	"`web_search` searches the whole web and returns result URLs; " +
 	"`fetch_url` fetches any URL as LLM-friendly content. " +
@@ -140,7 +180,40 @@ const (
 	codeMethodNotFound = -32601
 	codeInvalidParams  = -32602
 	codeInternalError  = -32603
+	// MCP 2026-07-28 protocol errors (spec-reserved -32020..-32099 range).
+	codeHeaderMismatch     = -32020
+	codeUnsupportedVersion = -32022
 )
+
+// paramsProbe is the era detector: the request fields shared by every method
+// that the transport itself must see. Name feeds Mcp-Name header validation;
+// the `_meta` protocol version marks a request as modern-era — the key exists
+// only in MCP 2026-07-28 and later, so legacy requests never trip it.
+type paramsProbe struct {
+	Name string `json:"name"`
+	Meta struct {
+		ProtocolVersion string `json:"io.modelcontextprotocol/protocolVersion"`
+	} `json:"_meta"`
+}
+
+func probeParams(req rpcRequest) paramsProbe {
+	var p paramsProbe
+	if len(req.Params) > 0 {
+		_ = json.Unmarshal(req.Params, &p)
+	}
+	return p
+}
+
+// unsupportedVersionResp is the modern-era rejection for a protocol version
+// we don't speak: error data carries our supported list so the caller can
+// pick one and retry (or fall back to initialize).
+func unsupportedVersionResp(id json.RawMessage, requested string) rpcResponse {
+	return rpcResponse{JSONRPC: "2.0", ID: id, Error: &rpcError{
+		Code:    codeUnsupportedVersion,
+		Message: fmt.Sprintf("unsupported protocol version: %q", requested),
+		Data:    map[string]any{"supported": supportedVersions, "requested": requested},
+	}}
+}
 
 // ServeStdio reads JSON-RPC messages from in, dispatches them, and writes
 // responses to out. Notifications (id absent) produce no response.
@@ -181,7 +254,17 @@ func (s *Server) ServeStdio(ctx context.Context, in io.Reader, out io.Writer) er
 		// Notifications (no ID) get no response.
 		isNotification := len(req.ID) == 0
 
-		resp := s.dispatch(ctx, req)
+		// Era detection on stdio: no HTTP headers exist, so the `_meta`
+		// protocol version alone decides. An unsupported modern version is
+		// rejected here, mirroring the HTTP transport's 400 path.
+		probe := probeParams(req)
+		modern := probe.Meta.ProtocolVersion != ""
+		var resp rpcResponse
+		if modern && probe.Meta.ProtocolVersion != modernProtocolVersion {
+			resp = unsupportedVersionResp(req.ID, probe.Meta.ProtocolVersion)
+		} else {
+			resp = s.dispatch(ctx, req, modern)
+		}
 		if !isNotification {
 			writeResp(resp)
 		}
@@ -192,7 +275,24 @@ func (s *Server) ServeStdio(ctx context.Context, in io.Reader, out io.Writer) er
 	return nil
 }
 
-func (s *Server) dispatch(ctx context.Context, req rpcRequest) rpcResponse {
+// dispatch routes one request. The modern era exposes exactly the 2026-07-28
+// method set — initialize and ping were removed from the spec, so a modern
+// request for them is method-not-found. The legacy era keeps the historical
+// behavior untouched, plus server/discover: the spec blesses it as the
+// backward-compatibility probe, so it must answer even without modern framing.
+func (s *Server) dispatch(ctx context.Context, req rpcRequest, modern bool) rpcResponse {
+	if modern {
+		switch req.Method {
+		case "server/discover":
+			return s.handleDiscover(req)
+		case "tools/list":
+			return s.handleToolsList(req, true)
+		case "tools/call":
+			return s.handleToolsCall(ctx, req, true)
+		default:
+			return errorResp(req.ID, codeMethodNotFound, "method not found: "+req.Method)
+		}
+	}
 	switch req.Method {
 	case "initialize":
 		return s.handleInitialize(req)
@@ -201,10 +301,12 @@ func (s *Server) dispatch(ctx context.Context, req rpcRequest) rpcResponse {
 		return rpcResponse{JSONRPC: "2.0", ID: req.ID}
 	case "ping":
 		return ok(req.ID, struct{}{})
+	case "server/discover":
+		return s.handleDiscover(req)
 	case "tools/list":
-		return s.handleToolsList(req)
+		return s.handleToolsList(req, false)
 	case "tools/call":
-		return s.handleToolsCall(ctx, req)
+		return s.handleToolsCall(ctx, req, false)
 	default:
 		return errorResp(req.ID, codeMethodNotFound, "method not found: "+req.Method)
 	}
@@ -224,17 +326,53 @@ func (s *Server) handleInitialize(req rpcRequest) rpcResponse {
 
 	return ok(req.ID, map[string]any{
 		"protocolVersion": negotiateProtocolVersion(params.ProtocolVersion),
-		"serverInfo": map[string]string{
-			"name":    "omnifeed",
-			"version": version.Version,
-		},
-		"capabilities": map[string]any{
-			"tools": map[string]any{
-				"listChanged": false,
-			},
-		},
-		"instructions": serverInstructions,
+		"serverInfo":      serverInfo(),
+		"capabilities":    serverCapabilities(),
+		"instructions":    serverInstructions,
 	})
+}
+
+// handleDiscover implements server/discover (MCP 2026-07-28): the stateless
+// replacement for initialize's capability advertisement. Always answered in
+// the modern shape — the method itself is modern regardless of framing.
+func (s *Server) handleDiscover(req rpcRequest) rpcResponse {
+	return ok(req.ID, modernize(map[string]any{
+		"supportedVersions": supportedVersions,
+		"capabilities":      serverCapabilities(),
+		"instructions":      serverInstructions,
+		"ttlMs":             listTTLMs,
+		"cacheScope":        listCacheScope,
+	}))
+}
+
+func serverInfo() map[string]string {
+	return map[string]string{
+		"name":    "omnifeed",
+		"version": version.Version,
+	}
+}
+
+func serverCapabilities() map[string]any {
+	return map[string]any{
+		"tools": map[string]any{
+			"listChanged": false,
+		},
+	}
+}
+
+// modernize decorates a result with the fields MCP 2026-07-28 requires on
+// every response: resultType (always "complete" — this server never needs
+// multi round-trip input) and serverInfo in `_meta`. Legacy responses never
+// pass through here, so their wire shape stays byte-identical.
+func modernize(result map[string]any) map[string]any {
+	result["resultType"] = "complete"
+	meta, _ := result["_meta"].(map[string]any)
+	if meta == nil {
+		meta = map[string]any{}
+	}
+	meta[metaServerInfo] = serverInfo()
+	result["_meta"] = meta
+	return result
 }
 
 type toolSchema struct {
@@ -245,7 +383,7 @@ type toolSchema struct {
 	Meta        map[string]any `json:"_meta,omitempty"`
 }
 
-func (s *Server) handleToolsList(req rpcRequest) rpcResponse {
+func (s *Server) handleToolsList(req rpcRequest, modern bool) rpcResponse {
 	tools := make([]toolSchema, 0, len(s.tools))
 	for _, t := range s.tools {
 		tools = append(tools, toolSchema{
@@ -256,7 +394,16 @@ func (s *Server) handleToolsList(req rpcRequest) rpcResponse {
 			Meta:        t.Meta,
 		})
 	}
-	return ok(req.ID, map[string]any{"tools": tools})
+	result := map[string]any{"tools": tools}
+	if modern {
+		// Required cache hints (SEP-2549). The slice order is fixed at wiring
+		// time, which also satisfies the deterministic-order requirement that
+		// keeps client prompt caches stable.
+		result["ttlMs"] = listTTLMs
+		result["cacheScope"] = listCacheScope
+		result = modernize(result)
+	}
+	return ok(req.ID, result)
 }
 
 type toolCallParams struct {
@@ -264,7 +411,7 @@ type toolCallParams struct {
 	Arguments map[string]any `json:"arguments"`
 }
 
-func (s *Server) handleToolsCall(ctx context.Context, req rpcRequest) rpcResponse {
+func (s *Server) handleToolsCall(ctx context.Context, req rpcRequest, modern bool) rpcResponse {
 	var p toolCallParams
 	if err := json.Unmarshal(req.Params, &p); err != nil {
 		return errorResp(req.ID, codeInvalidParams, "invalid params: "+err.Error())
@@ -294,11 +441,22 @@ func (s *Server) handleToolsCall(ctx context.Context, req rpcRequest) rpcRespons
 		"duration_ms", time.Since(start).Milliseconds(),
 		"chars", utf8.RuneCountInString(res.Text))
 
+	content := []map[string]any{
+		{"type": "text", "text": res.Text},
+	}
+	if modern {
+		meta := map[string]any{}
+		for k, v := range res.Meta {
+			meta[k] = v
+		}
+		return ok(req.ID, modernize(map[string]any{
+			"content": content,
+			"_meta":   meta,
+		}))
+	}
 	return ok(req.ID, map[string]any{
-		"content": []map[string]any{
-			{"type": "text", "text": res.Text},
-		},
-		"_meta": res.Meta,
+		"content": content,
+		"_meta":   res.Meta,
 	})
 }
 
@@ -342,20 +500,121 @@ func (s *Server) serveHTTPPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp := s.dispatch(r.Context(), req)
+	// Era detection: a request is modern when it carries the 2026-07-28
+	// per-request version in `_meta`, or an MCP-Protocol-Version header that
+	// isn't an initialize-era version (legacy clients since 2025-06-18 send
+	// their negotiated version there; pre-2025-06-18 clients send nothing).
+	// Anything else takes the legacy path exactly as before.
+	probe := probeParams(req)
+	headerVersion := r.Header.Get("MCP-Protocol-Version")
+	modern := probe.Meta.ProtocolVersion != "" ||
+		(headerVersion != "" && !slices.Contains(legacyVersions, headerVersion))
+
+	// Modern requests must pass header validation (SEP-2243): version and
+	// routing headers must match the body, or the request is rejected with
+	// 400. The spec leaves notification header rules undefined, so only
+	// requests (ID present) are validated.
+	if modern && len(req.ID) > 0 {
+		if resp, bad := validateModernRequest(r, req, probe, headerVersion); bad {
+			httpJSON(w, http.StatusBadRequest, resp)
+			return
+		}
+	}
+
+	resp := s.dispatch(r.Context(), req, modern)
 	if len(req.ID) == 0 {
 		// Notification — return 202 Accepted with no body.
 		w.WriteHeader(http.StatusAccepted)
 		return
 	}
-	httpJSON(w, http.StatusOK, resp)
+	httpJSON(w, httpStatusFor(modern, resp), resp)
+}
+
+// httpStatusFor maps a dispatched response to its HTTP status. The modern era
+// requires 404 for unknown methods (distinguishing a modern server from a
+// legacy endpoint) and 400 for protocol errors; everything else — including
+// every legacy response — stays 200 with the error in the JSON-RPC body.
+func httpStatusFor(modern bool, resp rpcResponse) int {
+	if !modern || resp.Error == nil {
+		return http.StatusOK
+	}
+	switch resp.Error.Code {
+	case codeMethodNotFound:
+		return http.StatusNotFound
+	case codeHeaderMismatch, codeUnsupportedVersion:
+		return http.StatusBadRequest
+	default:
+		return http.StatusOK
+	}
+}
+
+// validateModernRequest enforces the 2026-07-28 Streamable HTTP request
+// rules: the protocol version must be one we speak, the MCP-Protocol-Version
+// header must match `_meta`, and the Mcp-Method/Mcp-Name routing headers must
+// match the body (they exist so gateways can route on headers — a mismatch
+// means two components would disagree about what is being called, which the
+// spec treats as a security problem, not a nit).
+func validateModernRequest(r *http.Request, req rpcRequest, probe paramsProbe, headerVersion string) (rpcResponse, bool) {
+	requested := probe.Meta.ProtocolVersion
+	if requested == "" {
+		requested = headerVersion
+	}
+	if requested != modernProtocolVersion {
+		return unsupportedVersionResp(req.ID, requested), true
+	}
+	if headerVersion == "" {
+		return errorResp(req.ID, codeHeaderMismatch, "missing required MCP-Protocol-Version header"), true
+	}
+	if headerVersion != probe.Meta.ProtocolVersion {
+		return errorResp(req.ID, codeHeaderMismatch, fmt.Sprintf(
+			"MCP-Protocol-Version header %q does not match body _meta value %q",
+			headerVersion, probe.Meta.ProtocolVersion)), true
+	}
+	mcpMethod := r.Header.Get("Mcp-Method")
+	if mcpMethod == "" {
+		return errorResp(req.ID, codeHeaderMismatch, "missing required Mcp-Method header"), true
+	}
+	if mcpMethod != req.Method {
+		return errorResp(req.ID, codeHeaderMismatch, fmt.Sprintf(
+			"Mcp-Method header %q does not match body method %q", mcpMethod, req.Method)), true
+	}
+	if req.Method == "tools/call" {
+		raw := r.Header.Get("Mcp-Name")
+		if raw == "" {
+			return errorResp(req.ID, codeHeaderMismatch, "missing required Mcp-Name header"), true
+		}
+		name, err := decodeHeaderValue(raw)
+		if err != nil {
+			return errorResp(req.ID, codeHeaderMismatch, "Mcp-Name header has invalid base64 encoding"), true
+		}
+		if name != probe.Name {
+			return errorResp(req.ID, codeHeaderMismatch, fmt.Sprintf(
+				"Mcp-Name header %q does not match body value %q", name, probe.Name)), true
+		}
+	}
+	return rpcResponse{}, false
+}
+
+// decodeHeaderValue undoes the spec's Base64 sentinel encoding
+// (`=?base64?...?=`) used when a header value isn't plain ASCII. Values
+// without the sentinel pass through unchanged; the sentinel markers are
+// case-sensitive by spec.
+func decodeHeaderValue(v string) (string, error) {
+	const pre, suf = "=?base64?", "?="
+	if len(v) >= len(pre)+len(suf) && v[:len(pre)] == pre && v[len(v)-len(suf):] == suf {
+		b, err := base64.StdEncoding.DecodeString(v[len(pre) : len(v)-len(suf)])
+		return string(b), err
+	}
+	return v, nil
 }
 
 // serveHTTPSSE keeps the connection open and emits a keepalive comment every
 // 30s so intermediaries don't drop an otherwise-idle stream — Cloudflare cuts
 // proxied/tunnel connections that send no bytes for ~100s. We don't currently
 // push server-initiated notifications, but the endpoint is here so MCP clients
-// that try to open it don't fail.
+// that try to open it don't fail. It belongs to the legacy era — 2026-07-28
+// replaced the GET stream with subscriptions/listen — and is kept for those
+// older clients.
 func (s *Server) serveHTTPSSE(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -406,10 +665,37 @@ func httpJSON(w http.ResponseWriter, code int, body any) {
 //     that only speak the deprecated dual-endpoint SSE shape.
 //     Same handler as GET /mcp.
 //
-// Both routes share the same bearer-token check.
+// Both routes share the same Origin check and bearer-token check.
 func (s *Server) Register(mux *http.ServeMux) {
-	mux.Handle("/mcp", s.requireAuth(s.ServeHTTP))
-	mux.Handle("/mcp/sse", s.requireAuth(s.serveHTTPSSE))
+	mux.Handle("/mcp", checkOrigin(s.requireAuth(s.ServeHTTP)))
+	mux.Handle("/mcp/sse", checkOrigin(s.requireAuth(s.serveHTTPSSE)))
+}
+
+// checkOrigin guards against DNS rebinding, per the Streamable HTTP transport
+// spec (a MUST since 2025-03-26): an Origin header means a browser made the
+// request cross-origin, which no native MCP client ever does. Absent Origin
+// passes; a localhost origin passes (browser-based tools like the MCP
+// inspector run there); anything else is 403.
+func checkOrigin(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if o := r.Header.Get("Origin"); o != "" && !isLocalOrigin(o) {
+			http.Error(w, "forbidden origin", http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func isLocalOrigin(origin string) bool {
+	u, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	switch u.Hostname() {
+	case "localhost", "127.0.0.1", "::1":
+		return true
+	}
+	return false
 }
 
 // requireAuth wraps a handler with the configured authenticator. On failure
