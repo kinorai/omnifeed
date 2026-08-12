@@ -54,7 +54,7 @@ Starts omnifeed + SearXNG + crawl4ai — **tokenless out of the box** (the compo
 
 ### <img src="https://raw.githubusercontent.com/Tarikul-Islam-Anik/Animated-Fluent-Emojis/master/Emojis/Objects/Electric%20Plug.png" width="22" height="22" /> As an MCP server
 
-Works with any MCP client — **Claude Code, Cursor, Codex, Gemini CLI, OpenCode, Windsurf, Pi**, and more. Speaks both the current stateless MCP protocol and the older initialize-era revisions, so old and new clients share the same endpoint.
+Works with any MCP client — **Claude Code, Cursor, Codex, Gemini CLI, OpenCode, Windsurf, Pi**, and more. Speaks both the current stateless MCP protocol and the older initialize-era revisions, so old and new clients share the same endpoint. Stateless-protocol requests get the spec's HTTP statuses (400 for header/version violations, 404 for unknown methods); initialize-era responses stay 200, and cross-origin browser requests are rejected unless allowlisted via [`OMNIFEED_ALLOWED_ORIGINS`](docs/configuration.md).
 
 **HTTP — recommended.** `docker compose up` already runs the MCP server on `:8081` (tokenless in dev mode), so the simplest setup is no extra container at all — point your client at the URL:
 
