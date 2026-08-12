@@ -54,6 +54,7 @@ deployment that firewalls outbound traffic to crawl4ai alone breaks those three.
 | `OMNIFEED_PER_DOMAIN_CONCURRENCY` | `2` | Max concurrent requests to one domain |
 | `OMNIFEED_PER_DOMAIN_DELAY` | `1500ms` | Minimum delay between same-domain requests |
 | `OMNIFEED_BLOCK_PRIVATE_IPS` | `true` | SSRF protection (keep on in production) |
+| `OMNIFEED_ALLOWED_ORIGINS` | _(unset)_ | Comma-separated browser `Origin` values (e.g. `https://app.example.com`) allowed to call the HTTP APIs cross-origin. Requests without an `Origin` header — every native MCP client — always pass, and so do loopback origins (browser tools like the MCP inspector). Anything else gets **403** — the DNS-rebinding guard the MCP transport spec requires, applied to all HTTP endpoints. |
 | `OMNIFEED_LOG_LEVEL` | `info` | `debug`/`info`/`warn`/`error` |
 | `OMNIFEED_LOG_FORMAT` | `json` | `json` or `text` |
 | `OMNIFEED_ENABLE_PPROF` | `false` | Expose `/debug/pprof/*` (opt-in) |

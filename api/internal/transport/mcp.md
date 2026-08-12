@@ -13,13 +13,14 @@ The server speaks JSON\-RPC 2.0 over two transports:
 - stdio: one JSON message per line on stdin/stdout. Used by local MCP clients that spawn the proxy as a subprocess.
 - Streamable HTTP \(MCP spec 2025\-03\-26\): a single endpoint at /mcp that accepts POST \(one\-shot JSON\-RPC request/response\) and GET \(server\- initiated SSE event stream\). This is the canonical HTTP transport for remote MCP clients \(Claude Code, OpenCode, Cursor remote, hosted MCP\).
 
+The server is dual\-era. MCP 2026\-07\-28 removed the initialize handshake: every request carries its protocol version itself \(the MCP\-Protocol\-Version header plus \`\_meta\`\), capabilities are fetched via server/discover, and the required Mcp\-Method/Mcp\-Name routing headers must match the body. Requests in that shape get the modern treatment \(resultType, cache hints, serverInfo in \`\_meta\`, HTTP 404 for unknown methods\). Everything else — including all initialize\-era clients back to 2024\-11\-05 — gets the exact legacy behavior, byte\-compatible with what this server always returned. The era is decided per request, so old and new clients coexist on the same endpoint.
+
 For backwards compatibility with older clients that only speak the deprecated dual\-endpoint SSE shape, the server also exposes /mcp/sse as a legacy alias — same handler as the GET path of /mcp. New clients should target /mcp; /mcp/sse is preserved for compat and may eventually be removed.
 
 The server is a pure transport: it owns JSON\-RPC framing, auth, and SSE keepalive, and dispatches tools/list and tools/call against the Tool slice it was configured with. The tools themselves \(fetch\_url, web\_search\) live in the tools subpackage and are wired in by main.
 
 ## Index
 
-- [Constants](<#constants>)
 - [func InvalidParams\(msg string\) error](<#InvalidParams>)
 - [type Config](<#Config>)
 - [type ParamError](<#ParamError>)
@@ -32,14 +33,6 @@ The server is a pure transport: it owns JSON\-RPC framing, auth, and SSE keepali
 - [type Tool](<#Tool>)
 - [type ToolResult](<#ToolResult>)
 
-
-## Constants
-
-<a name="ProtocolVersion"></a>ProtocolVersion is the latest MCP revision this server speaks. It's the version returned when the client requests one we don't recognize.
-
-```go
-const ProtocolVersion = "2025-06-18"
-```
 
 <a name="InvalidParams"></a>
 ## func InvalidParams
@@ -117,7 +110,7 @@ Register attaches the MCP HTTP routes behind the configured authenticator.
 - /mcp — canonical Streamable HTTP endpoint \(POST = JSON\-RPC, GET = SSE event stream\). This is what new clients use.
 - /mcp/sse — legacy alias kept for compatibility with older clients that only speak the deprecated dual\-endpoint SSE shape. Same handler as GET /mcp.
 
-Both routes share the same bearer\-token check.
+Both routes share the same bearer\-token check. Origin validation \(the DNS\-rebinding guard the transport spec requires\) is applied one level up: main wraps every HTTP mux in auth.OriginGuard, so the loader and search transports in the same binary are covered by the same guard.
 
 <a name="Server.ServeHTTP"></a>
 ### func \(\*Server\) ServeHTTP

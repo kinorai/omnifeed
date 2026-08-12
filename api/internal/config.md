@@ -37,6 +37,11 @@ type Config struct {
     // Auth.
     APIKey      string
     AllowNoAuth bool
+    // AllowedOrigins lists browser Origin values (scheme://host[:port])
+    // allowed to call the HTTP APIs cross-origin, on top of the always-allowed
+    // loopback origins. Requests without an Origin header (native clients)
+    // are never affected. Empty = loopback-only.
+    AllowedOrigins []string
 
     // Upstream crawl4ai.
     Crawl4AIURL            string
