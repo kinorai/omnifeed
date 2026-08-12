@@ -11,6 +11,7 @@ Package auth defines an Authenticator interface for inbound transports. v0.1 shi
 ## Index
 
 - [Variables](<#variables>)
+- [func OriginGuard\(allowed \[\]string\) func\(http.Handler\) http.Handler](<#OriginGuard>)
 - [type AlwaysAllow](<#AlwaysAllow>)
   - [func \(AlwaysAllow\) Authenticate\(\*http.Request\) \(TenantID, error\)](<#AlwaysAllow.Authenticate>)
 - [type Authenticator](<#Authenticator>)
@@ -30,6 +31,17 @@ var (
     ErrUnauthenticated = errors.New("unauthenticated")
 )
 ```
+
+<a name="OriginGuard"></a>
+## func OriginGuard
+
+```go
+func OriginGuard(allowed []string) func(http.Handler) http.Handler
+```
+
+OriginGuard returns middleware that blocks cross\-origin browser requests — the DNS\-rebinding guard the MCP Streamable HTTP transport spec requires. It wraps every HTTP mux in main \(not just the MCP one\) because the loader and search transports are reachable by the same rebinding trick.
+
+Native clients send no Origin header and always pass. Browsers do send one: loopback origins pass \(browser\-based tools like the MCP inspector run there\), origins in allowed pass \(exact value match, expected lowercase — config.Load lowercases them\), everything else is 403 before auth runs.
 
 <a name="AlwaysAllow"></a>
 ## type AlwaysAllow
