@@ -15,7 +15,6 @@ Package reddit implements the Reddit\-specific engine: fetches threads via the p
 - [func IsShareURL\(rawURL string\) bool](<#IsShareURL>)
 - [func MergeExpanded\(thread \*Thread, newC \[\]Comment, newG \[\]Gap, requestedIDs \[\]string, usedGapIdx \[\]int\)](<#MergeExpanded>)
 - [func NormalizePermalink\(rawURL string\) \(string, error\)](<#NormalizePermalink>)
-- [func ParseListingURL\(rawURL string\) \(sub, sort string, ok bool\)](<#ParseListingURL>)
 - [func ParseMoreChildren\(raw \[\]byte, opts Options\) \(\[\]Comment, \[\]Gap, error\)](<#ParseMoreChildren>)
 - [type Comment](<#Comment>)
 - [type Config](<#Config>)
@@ -29,12 +28,14 @@ Package reddit implements the Reddit\-specific engine: fetches threads via the p
   - [func \(f \*Fetcher\) Open\(ctx context.Context\) \(\*Session, error\)](<#Fetcher.Open>)
 - [type FetcherConfig](<#FetcherConfig>)
 - [type Gap](<#Gap>)
+- [type ListingRequest](<#ListingRequest>)
+  - [func ParseListingURL\(rawURL string\) \(ListingRequest, bool\)](<#ParseListingURL>)
 - [type Options](<#Options>)
 - [type Post](<#Post>)
   - [func ParseSubredditListing\(raw \[\]byte\) \(\[\]Post, error\)](<#ParseSubredditListing>)
 - [type Session](<#Session>)
   - [func \(s \*Session\) Close\(ctx context.Context\) error](<#Session.Close>)
-  - [func \(s \*Session\) FetchListing\(ctx context.Context, sub, sort string, limit int\) \(\[\]byte, error\)](<#Session.FetchListing>)
+  - [func \(s \*Session\) FetchListing\(ctx context.Context, sub, sort string, limit int, t string\) \(\[\]byte, error\)](<#Session.FetchListing>)
   - [func \(s \*Session\) FetchMoreChildren\(ctx context.Context, linkID string, childIDs \[\]string, sort string\) \(\[\]byte, error\)](<#Session.FetchMoreChildren>)
   - [func \(s \*Session\) FetchThread\(ctx context.Context, permalink string, limit, depth int, sort string\) \(\[\]byte, error\)](<#Session.FetchThread>)
   - [func \(s \*Session\) ResolveShareURL\(ctx context.Context, shareURL string\) \(string, error\)](<#Session.ResolveShareURL>)
@@ -86,15 +87,6 @@ func NormalizePermalink(rawURL string) (string, error)
 ```
 
 NormalizePermalink converts any reddit.com URL into the canonical /r/\{sub\}/comments/\{id\}\[/\{slug\}\] permalink fragment \(no trailing slash, no .json suffix\).
-
-<a name="ParseListingURL"></a>
-## func ParseListingURL
-
-```go
-func ParseListingURL(rawURL string) (sub, sort string, ok bool)
-```
-
-ParseListingURL extracts the subreddit and sort from a subreddit listing URL. Sort defaults to "hot" \(Reddit's default view\) when the path omits it. ok is false for any reddit.com URL that isn't a bare subreddit listing.
 
 <a name="ParseMoreChildren"></a>
 ## func ParseMoreChildren
@@ -242,6 +234,34 @@ type Gap struct {
 }
 ```
 
+<a name="ListingRequest"></a>
+## type ListingRequest
+
+ListingRequest is a parsed subreddit listing URL: which subreddit and sort the path names, plus the two query params Reddit honors on listings.
+
+```go
+type ListingRequest struct {
+    Sub  string
+    Sort string
+    // T is Reddit's time window (hour|day|week|month|year|all), set only for the
+    // sorts Reddit applies it to (top, controversial). Empty when the URL omits
+    // it, names a bogus value, or pairs it with a sort that ignores it.
+    T   string
+    // Limit is the number of posts to fetch, always within [1,maxListingLimit]:
+    // listingLimit when the URL asks for none, otherwise its clamped value.
+    Limit int
+}
+```
+
+<a name="ParseListingURL"></a>
+### func ParseListingURL
+
+```go
+func ParseListingURL(rawURL string) (ListingRequest, bool)
+```
+
+ParseListingURL extracts the subreddit, sort, and listing query params from a subreddit listing URL. Sort defaults to "hot" \(Reddit's default view\) when the path omits it. ok is false for any reddit.com URL that isn't a bare subreddit listing.
+
 <a name="Options"></a>
 ## type Options
 
@@ -320,10 +340,10 @@ Close releases the browser session.
 ### func \(\*Session\) FetchListing
 
 ```go
-func (s *Session) FetchListing(ctx context.Context, sub, sort string, limit int) ([]byte, error)
+func (s *Session) FetchListing(ctx context.Context, sub, sort string, limit int, t string) ([]byte, error)
 ```
 
-FetchListing retrieves a subreddit listing \(hot/new/top/…\) via its .json endpoint, fetched same\-origin from inside a real browser on reddit.com — the same bot\-wall evasion FetchThread uses. limit caps the number of posts.
+FetchListing retrieves a subreddit listing \(hot/new/top/…\) via its .json endpoint, fetched same\-origin from inside a real browser on reddit.com — the same bot\-wall evasion FetchThread uses. limit caps the number of posts, and t is Reddit's time window \(hour|day|week|month|year|all\), appended only when set. Whether a window is meaningful for the sort is ParseListingURL's call — it only sets t for top/controversial — so this appends whatever it is handed.
 
 <a name="Session.FetchMoreChildren"></a>
 ### func \(\*Session\) FetchMoreChildren
@@ -361,7 +381,10 @@ SubredditListing is a subreddit page \(hot/new/top/…\) reduced to its posts, w
 type SubredditListing struct {
     Subreddit string `json:"subreddit" toon:"subreddit"`
     Sort      string `json:"sort" toon:"sort"`
-    Posts     []Post `json:"posts" toon:"posts"`
+    // T is the time window the listing was fetched with (Reddit's `t` param);
+    // omitted for sorts that ignore it or when the URL didn't ask for one.
+    T     string `json:"t,omitempty" toon:"t,omitempty"`
+    Posts []Post `json:"posts" toon:"posts"`
 }
 ```
 
