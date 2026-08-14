@@ -21,11 +21,6 @@ import (
 // total latency and rate-limit exposure.
 const MaxExpansionRounds = 40
 
-// listingLimit caps posts fetched for a subreddit listing. Reddit's own default
-// page is 25; a listing carries no comment trees, so this stays small and bounded
-// regardless of the (comment-oriented) FetchLimit knob.
-const listingLimit = 25
-
 // hostMatcher matches reddit.com and its subdomains (old, new, np, m, amp, ...).
 var hostMatcher = httpx.HostMatcher("reddit.com")
 
@@ -84,7 +79,7 @@ func (*Engine) Matches(rawURL string) bool {
 	if _, err := NormalizePermalink(rawURL); err == nil {
 		return true
 	}
-	_, _, ok := ParseListingURL(rawURL)
+	_, ok := ParseListingURL(rawURL)
 	return ok
 }
 
@@ -110,8 +105,8 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, eo domain.EngineOptio
 	// A bare subreddit listing (/r/{sub}/, /r/{sub}/top, …) has no comment tree —
 	// fetch the post list instead. Checked before the comments path because
 	// ParseListingURL only claims listing-shaped paths (never /comments/).
-	if sub, sort, ok := ParseListingURL(rawURL); ok {
-		return e.crawlListing(ctx, rawURL, sub, sort, opts)
+	if req, ok := ParseListingURL(rawURL); ok {
+		return e.crawlListing(ctx, rawURL, req, opts)
 	}
 
 	// The per-domain limiter spans the whole crawl including the share-link
@@ -321,9 +316,11 @@ func encode[T any](v T, format string) ([]byte, error) {
 
 // crawlListing renders a bare subreddit page (/r/{sub}/{sort}) as its post list.
 // It reuses the same browser-fetch path as threads (so it clears Reddit's wall),
-// but parses the flat Listing shape instead of a comment tree.
-func (e *Engine) crawlListing(ctx context.Context, rawURL, sub, sort string, opts Options) (domain.Document, error) {
-	release, lerr := e.limiter.Acquire(ctx, e.Name(), redditOrigin+"/r/"+sub+"/"+sort)
+// but parses the flat Listing shape instead of a comment tree. req carries the
+// URL's own `t` (time window) and `limit` query params, which Reddit honors on
+// listings; ParseListingURL has already defaulted and bounded both.
+func (e *Engine) crawlListing(ctx context.Context, rawURL string, req ListingRequest, opts Options) (domain.Document, error) {
+	release, lerr := e.limiter.Acquire(ctx, e.Name(), redditOrigin+"/r/"+req.Sub+"/"+req.Sort)
 	if lerr != nil {
 		return domain.Document{}, lerr
 	}
@@ -335,7 +332,7 @@ func (e *Engine) crawlListing(ctx context.Context, rawURL, sub, sort string, opt
 	}
 	defer func() { _ = sess.Close(ctx) }()
 
-	raw, err := sess.FetchListing(ctx, sub, sort, listingLimit)
+	raw, err := sess.FetchListing(ctx, req.Sub, req.Sort, req.Limit, req.T)
 	if err != nil {
 		return domain.Document{}, fmt.Errorf("fetch listing: %w", err)
 	}
@@ -344,15 +341,16 @@ func (e *Engine) crawlListing(ctx context.Context, rawURL, sub, sort string, opt
 		return domain.Document{}, fmt.Errorf("parse listing: %w", err)
 	}
 
-	listing := SubredditListing{Subreddit: sub, Sort: sort, Posts: posts}
+	listing := SubredditListing{Subreddit: req.Sub, Sort: req.Sort, T: req.T, Posts: posts}
 	encoded, err := encode(&listing, opts.Format)
 	if err != nil {
 		return domain.Document{}, fmt.Errorf("encode: %w", err)
 	}
 
 	e.logger.Info("reddit listing complete",
-		"subreddit", sub,
-		"sort", sort,
+		"subreddit", req.Sub,
+		"sort", req.Sort,
+		"t", req.T,
 		"posts", len(posts),
 		"format", opts.Format,
 		"bytes", len(encoded),

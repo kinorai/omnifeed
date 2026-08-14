@@ -56,8 +56,9 @@ func FetchURL(reg *engine.Registry, defaults reddit.Options, metrics *observabil
 			"required": []string{"url"},
 			"properties": map[string]any{
 				"url": map[string]any{
-					"type":        "string",
-					"description": "Absolute http(s) URL to crawl.",
+					"type": "string",
+					"description": "Absolute http(s) URL to crawl. Reddit subreddit listing URLs honor their own query params: " +
+						"`?t=` (hour|day|week|month|year|all — the time window for top/controversial) and `?limit=` (posts to return, 1-100).",
 				},
 				"format": map[string]any{
 					"type":        "string",
@@ -69,8 +70,9 @@ func FetchURL(reg *engine.Registry, defaults reddit.Options, metrics *observabil
 					"description": "Reddit-only: number of /api/morechildren expansion rounds (0-40).",
 				},
 				"limit": map[string]any{
-					"type":        "integer",
-					"description": "Reddit-only: max comments to fetch in the initial tree (Reddit `limit`).",
+					"type": "integer",
+					"description": "Reddit threads only: max comments to fetch in the initial tree (Reddit `limit`). " +
+						"It does not apply to subreddit listings — those take their post count from the URL's own `?limit=`.",
 				},
 				"depth": map[string]any{
 					"type":        "integer",

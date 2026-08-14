@@ -142,7 +142,7 @@ func TestFetchListingShape(t *testing.T) {
 	sess := alwaysBody(`{"kind":"Listing","data":{"children":[]}}`)
 	s := openSession(t, &fakeBrowser{name: "primary", session: sess})
 
-	if _, err := s.FetchListing(context.Background(), "golang", "hot", 25); err != nil {
+	if _, err := s.FetchListing(context.Background(), "golang", "hot", 25, ""); err != nil {
 		t.Fatal(err)
 	}
 	if len(sess.navs) != 1 || !strings.Contains(sess.navs[0], "/r/golang/hot/") {
@@ -150,6 +150,31 @@ func TestFetchListingShape(t *testing.T) {
 	}
 	if !strings.Contains(sess.evals[0], "/r/golang/hot.json") {
 		t.Errorf("listing JS missing the .json URL; js = %s", sess.evals[0])
+	}
+	if !strings.Contains(sess.evals[0], "limit=25") {
+		t.Errorf("listing JS missing limit=25; js = %s", sess.evals[0])
+	}
+	// An empty time window must not leak a bare `&t=` into the URL: the query
+	// ends right after raw_json=1. (The separators are JSON-escaped inside the
+	// JS, so match on the query terminating rather than on a literal "&t=".)
+	if !strings.Contains(sess.evals[0], `raw_json=1"`) {
+		t.Errorf("listing JS should end at raw_json=1 with no t param; js = %s", sess.evals[0])
+	}
+}
+
+// A listing URL's `?t=` / `?limit=` must reach Reddit's .json endpoint — without
+// them, /r/selfhosted/top/?t=week silently returns top-of-day.
+func TestFetchListingTimeWindow(t *testing.T) {
+	sess := alwaysBody(`{"kind":"Listing","data":{"children":[]}}`)
+	s := openSession(t, &fakeBrowser{name: "primary", session: sess})
+
+	if _, err := s.FetchListing(context.Background(), "selfhosted", "top", 50, "week"); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"/r/selfhosted/top.json", "limit=50", "t=week"} {
+		if !strings.Contains(sess.evals[0], want) {
+			t.Errorf("listing JS missing %q; js = %s", want, sess.evals[0])
+		}
 	}
 }
 

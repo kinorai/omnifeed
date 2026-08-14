@@ -337,28 +337,58 @@ func TestResolveOptions(t *testing.T) {
 
 func TestParseListingURL(t *testing.T) {
 	cases := []struct {
-		url      string
-		wantSub  string
-		wantSort string
-		wantOK   bool
+		url    string
+		want   ListingRequest
+		wantOK bool
 	}{
-		{"https://www.reddit.com/r/devops/", "devops", "hot", true},
-		{"https://www.reddit.com/r/golang", "golang", "hot", true},
-		{"https://old.reddit.com/r/golang/top", "golang", "top", true},
-		{"https://www.reddit.com/r/golang/new/", "golang", "new", true},
-		{"https://www.reddit.com/r/golang.json", "golang", "hot", true},     // .json suffix stripped
-		{"https://www.reddit.com/r/golang/top.json", "golang", "top", true}, // sort + .json
-		{"https://www.reddit.com/r/news/comments/1t056xf", "", "", false},   // a thread
-		{"https://www.reddit.com/r/golang/wiki/index", "", "", false},       // wiki page
-		{"https://www.reddit.com/r/golang/best", "", "", false},             // 'best' is not a subreddit sort
-		{"https://www.reddit.com/user/spez", "", "", false},                 // profile
+		// A listing with no `?limit=` carries the default post count, never a bare 0.
+		{"https://www.reddit.com/r/devops/", ListingRequest{Sub: "devops", Sort: "hot", Limit: listingLimit}, true},
+		{"https://www.reddit.com/r/golang", ListingRequest{Sub: "golang", Sort: "hot", Limit: listingLimit}, true},
+		{"https://old.reddit.com/r/golang/top", ListingRequest{Sub: "golang", Sort: "top", Limit: listingLimit}, true},
+		{"https://www.reddit.com/r/golang/new/", ListingRequest{Sub: "golang", Sort: "new", Limit: listingLimit}, true},
+		{"https://www.reddit.com/r/golang.json", ListingRequest{Sub: "golang", Sort: "hot", Limit: listingLimit}, true},     // .json suffix stripped
+		{"https://www.reddit.com/r/golang/top.json", ListingRequest{Sub: "golang", Sort: "top", Limit: listingLimit}, true}, // sort + .json
+
+		// `t` — the time window, honored on the sorts Reddit applies it to.
+		{"https://www.reddit.com/r/selfhosted/top/?t=week", ListingRequest{Sub: "selfhosted", Sort: "top", T: "week", Limit: listingLimit}, true},
+		{"https://www.reddit.com/r/selfhosted/top?t=week", ListingRequest{Sub: "selfhosted", Sort: "top", T: "week", Limit: listingLimit}, true}, // no trailing slash
+		{"https://www.reddit.com/r/selfhosted/top.json?t=week", ListingRequest{Sub: "selfhosted", Sort: "top", T: "week", Limit: listingLimit}, true},
+		{"https://www.reddit.com/r/golang/top/?t=WEEK", ListingRequest{Sub: "golang", Sort: "top", T: "week", Limit: listingLimit}, true}, // lowercased
+		{"https://www.reddit.com/r/golang/top/?t=bogus", ListingRequest{Sub: "golang", Sort: "top", Limit: listingLimit}, true},           // dropped, not fatal
+		{"https://www.reddit.com/r/golang/controversial?t=month", ListingRequest{Sub: "golang", Sort: "controversial", T: "month", Limit: listingLimit}, true},
+
+		// …and dropped on the sorts Reddit ignores it for, so the output never
+		// reports a window that never shaped the results.
+		{"https://www.reddit.com/r/golang/new/?t=week", ListingRequest{Sub: "golang", Sort: "new", Limit: listingLimit}, true},
+		{"https://www.reddit.com/r/golang/?t=week", ListingRequest{Sub: "golang", Sort: "hot", Limit: listingLimit}, true},
+		{"https://www.reddit.com/r/golang/rising/?t=all", ListingRequest{Sub: "golang", Sort: "rising", Limit: listingLimit}, true},
+
+		// `limit` — post count, clamped to [1,100]; 0/invalid falls back to the default.
+		{"https://www.reddit.com/r/golang/?limit=50", ListingRequest{Sub: "golang", Sort: "hot", Limit: 50}, true},
+		{"https://www.reddit.com/r/golang/?limit=999", ListingRequest{Sub: "golang", Sort: "hot", Limit: 100}, true},
+		{"https://www.reddit.com/r/golang/?limit=0", ListingRequest{Sub: "golang", Sort: "hot", Limit: listingLimit}, true},
+		{"https://www.reddit.com/r/golang/?limit=-5", ListingRequest{Sub: "golang", Sort: "hot", Limit: listingLimit}, true},
+		{"https://www.reddit.com/r/golang/?limit=abc", ListingRequest{Sub: "golang", Sort: "hot", Limit: listingLimit}, true},
+
+		// both at once
+		{"https://www.reddit.com/r/golang/top/?t=month&limit=100", ListingRequest{Sub: "golang", Sort: "top", T: "month", Limit: 100}, true},
+
+		{"https://www.reddit.com/r/news/comments/1t056xf", ListingRequest{}, false}, // a thread
+		{"https://www.reddit.com/r/golang/wiki/index", ListingRequest{}, false},     // wiki page
+		{"https://www.reddit.com/r/golang/best", ListingRequest{}, false},           // 'best' is not a subreddit sort
+		{"https://www.reddit.com/user/spez", ListingRequest{}, false},               // profile
 	}
 	for _, tc := range cases {
-		sub, sort, ok := ParseListingURL(tc.url)
-		if ok != tc.wantOK || sub != tc.wantSub || sort != tc.wantSort {
-			t.Errorf("ParseListingURL(%q) = (%q,%q,%v), want (%q,%q,%v)",
-				tc.url, sub, sort, ok, tc.wantSub, tc.wantSort, tc.wantOK)
+		got, ok := ParseListingURL(tc.url)
+		if ok != tc.wantOK || got != tc.want {
+			t.Errorf("ParseListingURL(%q) = (%+v,%v), want (%+v,%v)", tc.url, got, ok, tc.want, tc.wantOK)
 		}
+	}
+
+	// The table above states the default via listingLimit, so pin its value here:
+	// the parser — not the engine — is what hands the fetcher a usable post count.
+	if got, _ := ParseListingURL("https://www.reddit.com/r/golang/"); got.Limit != 25 {
+		t.Errorf("default listing limit = %d, want 25", got.Limit)
 	}
 }
 

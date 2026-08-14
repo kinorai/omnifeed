@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -342,13 +343,49 @@ func NormalizePermalink(rawURL string) (string, error) {
 // not a subreddit sort, so /r/sub/best falls through to the generic engine.
 var listingRE = regexp.MustCompile(`(?i)^/r/([^/?#]+)(?:/(hot|new|top|rising|controversial))?$`)
 
-// ParseListingURL extracts the subreddit and sort from a subreddit listing URL.
-// Sort defaults to "hot" (Reddit's default view) when the path omits it. ok is
-// false for any reddit.com URL that isn't a bare subreddit listing.
-func ParseListingURL(rawURL string) (sub, sort string, ok bool) {
+// listingTimeWindows is the set of values Reddit accepts for the `t` query
+// param on top/controversial listings. Anything else is dropped rather than
+// forwarded, so a junk `t` can't turn into a Reddit 400.
+var listingTimeWindows = map[string]bool{
+	"hour": true, "day": true, "week": true, "month": true, "year": true, "all": true,
+}
+
+// timeWindowSorts are the two sorts Reddit actually applies `t` to. On hot, new,
+// and rising the param is silently ignored upstream, so we drop it there rather
+// than echo a window that never shaped the results.
+var timeWindowSorts = map[string]bool{"top": true, "controversial": true}
+
+// Bounds for a listing's `limit`. listingLimit is the default when the URL asks
+// for none — Reddit's own page size; a listing carries no comment trees, so it
+// stays small and bounded regardless of the (comment-oriented) FetchLimit knob.
+// maxListingLimit is Reddit's ceiling for the param.
+const (
+	listingLimit    = 25
+	maxListingLimit = 100
+)
+
+// ListingRequest is a parsed subreddit listing URL: which subreddit and sort the
+// path names, plus the two query params Reddit honors on listings.
+type ListingRequest struct {
+	Sub  string
+	Sort string
+	// T is Reddit's time window (hour|day|week|month|year|all), set only for the
+	// sorts Reddit applies it to (top, controversial). Empty when the URL omits
+	// it, names a bogus value, or pairs it with a sort that ignores it.
+	T string
+	// Limit is the number of posts to fetch, always within [1,maxListingLimit]:
+	// listingLimit when the URL asks for none, otherwise its clamped value.
+	Limit int
+}
+
+// ParseListingURL extracts the subreddit, sort, and listing query params from a
+// subreddit listing URL. Sort defaults to "hot" (Reddit's default view) when the
+// path omits it. ok is false for any reddit.com URL that isn't a bare subreddit
+// listing.
+func ParseListingURL(rawURL string) (ListingRequest, bool) {
 	u, err := url.Parse(rawURL)
 	if err != nil {
-		return "", "", false
+		return ListingRequest{}, false
 	}
 	// Strip a trailing slash and an optional `.json` suffix — people paste both
 	// `/r/go` and `/r/go.json` — mirroring NormalizePermalink's handling so the
@@ -357,13 +394,24 @@ func ParseListingURL(rawURL string) (sub, sort string, ok bool) {
 	path = strings.TrimSuffix(path, ".json")
 	m := listingRE.FindStringSubmatch(path)
 	if m == nil {
-		return "", "", false
+		return ListingRequest{}, false
 	}
-	sort = strings.ToLower(m[2])
+	sort := strings.ToLower(m[2])
 	if sort == "" {
 		sort = "hot"
 	}
-	return m[1], sort, true
+
+	// Only the path decides whether this is a listing; the query merely refines
+	// the fetch, so an unparsable or bogus param is ignored, never fatal.
+	q := u.Query()
+	req := ListingRequest{Sub: m[1], Sort: sort, Limit: listingLimit}
+	if t := strings.ToLower(q.Get("t")); listingTimeWindows[t] && timeWindowSorts[sort] {
+		req.T = t
+	}
+	if n, cerr := strconv.Atoi(q.Get("limit")); cerr == nil && n > 0 {
+		req.Limit = min(n, maxListingLimit)
+	}
+	return req, true
 }
 
 // ParseSubredditListing decodes a subreddit listing (.json) — a single Listing

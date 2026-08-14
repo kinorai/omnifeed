@@ -60,7 +60,10 @@ type Thread struct {
 type SubredditListing struct {
 	Subreddit string `json:"subreddit" toon:"subreddit"`
 	Sort      string `json:"sort" toon:"sort"`
-	Posts     []Post `json:"posts" toon:"posts"`
+	// T is the time window the listing was fetched with (Reddit's `t` param);
+	// omitted for sorts that ignore it or when the URL didn't ask for one.
+	T     string `json:"t,omitempty" toon:"t,omitempty"`
+	Posts []Post `json:"posts" toon:"posts"`
 }
 
 // --- Raw Reddit wire shapes ---
