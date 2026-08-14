@@ -127,10 +127,16 @@ func (s *Session) FetchThread(ctx context.Context, permalink string, limit, dept
 
 // FetchListing retrieves a subreddit listing (hot/new/top/…) via its .json
 // endpoint, fetched same-origin from inside a real browser on reddit.com — the
-// same bot-wall evasion FetchThread uses. limit caps the number of posts.
-func (s *Session) FetchListing(ctx context.Context, sub, sort string, limit int) ([]byte, error) {
+// same bot-wall evasion FetchThread uses. limit caps the number of posts, and t
+// is Reddit's time window (hour|day|week|month|year|all), appended only when set.
+// Whether a window is meaningful for the sort is ParseListingURL's call — it
+// only sets t for top/controversial — so this appends whatever it is handed.
+func (s *Session) FetchListing(ctx context.Context, sub, sort string, limit int, t string) ([]byte, error) {
 	page := fmt.Sprintf("%s/r/%s/%s/", redditOrigin, sub, sort)
 	jsonURL := fmt.Sprintf("%s/r/%s/%s.json?limit=%d&raw_json=1", redditOrigin, sub, sort, limit)
+	if t != "" {
+		jsonURL += "&t=" + url.QueryEscape(t)
+	}
 	return s.fetchViaBrowser(ctx, page, getJS(jsonURL))
 }
 

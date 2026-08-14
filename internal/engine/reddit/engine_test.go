@@ -17,6 +17,8 @@ func TestMatches(t *testing.T) {
 		"https://www.reddit.com/r/OpenWebUI/s/ibnxYbmeOE", // share link → resolves to a permalink
 		"https://www.reddit.com/r/golang",                 // subreddit listing (default sort)
 		"https://www.reddit.com/r/golang/top",             // subreddit listing (explicit sort)
+		"https://www.reddit.com/r/selfhosted/top?t=week",  // listing + time window (query must not un-claim it)
+		"https://www.reddit.com/r/selfhosted/top/?t=week&limit=50",
 	}
 	for _, u := range claim {
 		if !e.Matches(u) {

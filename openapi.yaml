@@ -158,7 +158,11 @@ components:
       properties:
         urls:
           type: array
-          description: URLs to fetch. 1–`OMNIFEED_MAX_URLS_PER_REQUEST` items (default 30).
+          description: >-
+            URLs to fetch. 1–`OMNIFEED_MAX_URLS_PER_REQUEST` items (default 30).
+            Reddit subreddit listing URLs honor their own query params: `?t=`
+            (hour|day|week|month|year|all — the time window for top/controversial)
+            and `?limit=` (posts to return, 1–100).
           minItems: 1
           items:
             type: string
