@@ -2,6 +2,7 @@ package bluesky
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -207,5 +208,102 @@ func TestCrawlThreadTruncates(t *testing.T) {
 	}
 	if doc.Metadata["truncated_from"] != "510" {
 		t.Errorf("truncated_from = %q, want 510", doc.Metadata["truncated_from"])
+	}
+}
+
+// A post URL for a REPLY must carry its ancestor chain: bsky.app URLs look the
+// same for a root post and a reply, so without the parents the reader cannot
+// tell what the linked post is answering.
+func TestCrawlThreadIncludesAncestors(t *testing.T) {
+	const thread = `{"thread":{
+		"post":{"uri":"at://did:plc:ccc/app.bsky.feed.post/leaf","author":{"handle":"carol.bsky.social"},
+			"record":{"text":"the linked reply","createdAt":"2026-08-01T12:00:00Z"}},
+		"parent":{
+			"post":{"uri":"at://did:plc:bbb/app.bsky.feed.post/mid","author":{"handle":"bob.bsky.social"},
+				"record":{"text":"the middle post","createdAt":"2026-08-01T11:00:00Z"}},
+			"parent":{
+				"post":{},
+				"parent":{
+					"post":{"uri":"at://did:plc:aaa/app.bsky.feed.post/root","author":{"handle":"alice.bsky.social"},
+						"record":{"text":"the conversation root","createdAt":"2026-08-01T10:00:00Z"}}}}},
+		"replies":[]}}`
+
+	var gotParentHeight string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotParentHeight = r.URL.Query().Get("parentHeight")
+		_, _ = io.WriteString(w, thread)
+	}))
+	defer srv.Close()
+
+	e := New(Config{Client: httpx.New(nil), APIBase: srv.URL})
+	doc, err := e.Crawl(context.Background(),
+		"https://bsky.app/profile/carol.bsky.social/post/leaf", domain.EngineOptions{})
+	if err != nil {
+		t.Fatalf("Crawl: %v", err)
+	}
+	if gotParentHeight != "20" {
+		t.Errorf("parentHeight = %q, want 20", gotParentHeight)
+	}
+	// The blocked link in the middle is skipped, but the walk continues past it
+	// so the root survives.
+	if doc.Metadata["ancestors"] != "2" {
+		t.Fatalf("ancestors = %q, want 2\n%s", doc.Metadata["ancestors"], doc.PageContent)
+	}
+	for _, want := range []string{"the conversation root", "the middle post", "the linked reply"} {
+		if !strings.Contains(doc.PageContent, want) {
+			t.Errorf("output missing %q:\n%s", want, doc.PageContent)
+		}
+	}
+	// Root first: the ancestors must read oldest to newest.
+	if strings.Index(doc.PageContent, "the conversation root") > strings.Index(doc.PageContent, "the middle post") {
+		t.Errorf("ancestors are not root-first:\n%s", doc.PageContent)
+	}
+}
+
+// A root post has no parent chain, so no ancestors key is emitted.
+func TestCrawlThreadRootHasNoAncestors(t *testing.T) {
+	const thread = `{"thread":{
+		"post":{"uri":"at://did:plc:aaa/app.bsky.feed.post/root","author":{"handle":"alice.bsky.social"},
+			"record":{"text":"a root post"}},"replies":[]}}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, thread)
+	}))
+	defer srv.Close()
+
+	e := New(Config{Client: httpx.New(nil), APIBase: srv.URL})
+	doc, err := e.Crawl(context.Background(),
+		"https://bsky.app/profile/alice.bsky.social/post/root", domain.EngineOptions{})
+	if err != nil {
+		t.Fatalf("Crawl: %v", err)
+	}
+	if _, ok := doc.Metadata["ancestors"]; ok {
+		t.Errorf("ancestors = %q, want the key absent", doc.Metadata["ancestors"])
+	}
+}
+
+// A takendown / blocked post comes back as HTTP 200 carrying no post at all.
+// That must be an error, not a successful Document of empty fields — otherwise
+// the registry never tries the browser fallback and the caller gets silence.
+func TestCrawlThreadMissingPostIsError(t *testing.T) {
+	for _, body := range []string{
+		`{"thread":{"$type":"app.bsky.feed.defs#notFoundPost","uri":"at://x/app.bsky.feed.post/y","notFound":true}}`,
+		`{"thread":{"$type":"app.bsky.feed.defs#blockedPost","uri":"at://x/app.bsky.feed.post/y","blocked":true}}`,
+	} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = io.WriteString(w, body)
+		}))
+
+		e := New(Config{Client: httpx.New(nil), APIBase: srv.URL})
+		_, err := e.Crawl(context.Background(),
+			"https://bsky.app/profile/alice.bsky.social/post/gone", domain.EngineOptions{})
+		srv.Close()
+
+		if err == nil {
+			t.Fatalf("Crawl() = nil error for %s, want a failure", body)
+		}
+		var fe *domain.FetchError
+		if !errors.As(err, &fe) || fe.Kind != domain.KindThinContent {
+			t.Errorf("error = %v, want a thin_content FetchError", err)
+		}
 	}
 }

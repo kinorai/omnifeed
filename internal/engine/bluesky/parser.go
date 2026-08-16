@@ -40,15 +40,49 @@ func flattenReplies(nodes []threadViewPost, parentURI string, out *[]Post) {
 	}
 }
 
-// parseThread decodes getPostThread into a Thread with a flattened reply tree.
+// collectAncestors walks the parent chain up from node and returns the posts it
+// replies to, ROOT FIRST — the order they read in. Unreadable links (deleted or
+// blocked, so no URI) are skipped, and the walk continues past them: a broken
+// link partway up must not hide the rest of the conversation.
+func collectAncestors(node *threadViewPost) []Post {
+	var reversed []Post
+	for p := node.Parent; p != nil; p = p.Parent {
+		if p.Post.URI == "" {
+			continue
+		}
+		parentURI := ""
+		if p.Parent != nil {
+			parentURI = p.Parent.Post.URI
+		}
+		reversed = append(reversed, toPost(p.Post, parentURI))
+	}
+	// Walking up yields nearest-first; the reader wants oldest-first.
+	for i, j := 0, len(reversed)-1; i < j; i, j = i+1, j-1 {
+		reversed[i], reversed[j] = reversed[j], reversed[i]
+	}
+	return reversed
+}
+
+// parseThread decodes getPostThread into a Thread with its ancestor chain and a
+// flattened reply tree. An anchor post with no URI means the AppView answered
+// with notFoundPost or blockedPost — a 200 that carries no post — which the
+// caller must not render as an empty success.
 func parseThread(raw []byte) (Thread, error) {
 	var tr threadResponse
 	if err := json.Unmarshal(raw, &tr); err != nil {
 		return Thread{}, err
 	}
+	anchorParent := ""
+	if tr.Thread.Parent != nil {
+		anchorParent = tr.Thread.Parent.Post.URI
+	}
 	var replies []Post
 	flattenReplies(tr.Thread.Replies, tr.Thread.Post.URI, &replies)
-	return Thread{Post: toPost(tr.Thread.Post, ""), Replies: replies}, nil
+	return Thread{
+		Ancestors: collectAncestors(&tr.Thread),
+		Post:      toPost(tr.Thread.Post, anchorParent),
+		Replies:   replies,
+	}, nil
 }
 
 // parseFeed decodes getAuthorFeed into an account's recent posts. Reposts
