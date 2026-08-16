@@ -9,10 +9,11 @@ launcher reads a few `OMNIFEED_`-prefixed variables of its own — container nam
 prefix, host ports, images — which the binary never sees. Those live in
 [apple-container.md](apple-container.md).
 
-**Egress.** Reddit and the generic fallback reach the web through crawl4ai, but three
+**Egress.** Reddit and the generic fallback reach the web through crawl4ai, but four
 engines call their upstream themselves: Hacker News reads `hn.algolia.com`, GitHub reads
-`api.github.com`, and Discourse reads each host in `OMNIFEED_DISCOURSE_HOSTS`. A
-deployment that firewalls outbound traffic to crawl4ai alone breaks those three.
+`api.github.com`, Bluesky reads `public.api.bsky.app`, and Discourse reads each host in
+`OMNIFEED_DISCOURSE_HOSTS`. A deployment that firewalls outbound traffic to crawl4ai
+alone breaks those four.
 
 | Variable | Default | Purpose |
 |---|---|---|
