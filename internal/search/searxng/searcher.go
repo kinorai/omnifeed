@@ -85,7 +85,7 @@ func (s *Searcher) Search(ctx context.Context, query string, opts domain.SearchO
 	}
 
 	params := url.Values{}
-	params.Set("q", query)
+	params.Set("q", siteScoped(query, opts.Site))
 	params.Set("format", "json")
 	if opts.TimeRange != "" {
 		params.Set("time_range", opts.TimeRange)
@@ -145,6 +145,18 @@ func (s *Searcher) Search(ctx context.Context, query string, opts domain.SearchO
 		}
 	}
 	return results, nil
+}
+
+// siteScoped prefixes the query with a `site:` operator when the caller asked
+// for one. SearXNG passes the operator through to the engines rather than
+// filtering itself, so this is the same restriction a human types into Google
+// or Brave. An invalid site value is dropped rather than rejected: it is a
+// narrowing hint, and a failed search is worse for the caller than a wide one.
+func siteScoped(query, site string) string {
+	if site == "" || !domain.ValidSiteFilter(site) {
+		return query
+	}
+	return "site:" + site + " " + query
 }
 
 // countUnresponsive increments the unresponsive-engine counter for each

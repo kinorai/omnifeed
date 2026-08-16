@@ -4,6 +4,7 @@ package domain
 
 import (
 	"context"
+	"regexp"
 	"slices"
 )
 
@@ -65,6 +66,17 @@ var ValidTimeRanges = []string{"day", "week", "month", "year"}
 
 // ValidTimeRange reports whether s is an accepted search recency window.
 func ValidTimeRange(s string) bool { return slices.Contains(ValidTimeRanges, s) }
+
+// siteFilterPattern is the shape a `site` search filter must have: a bare
+// hostname, optionally with a leading dot-less subdomain chain. It exists to
+// keep the value a HOSTNAME — the filter is concatenated into the upstream
+// query string, so anything that could carry a space, a colon or a quote would
+// let a caller inject further search operators.
+var siteFilterPattern = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?)+$`)
+
+// ValidSiteFilter reports whether s is a bare hostname usable as a `site:`
+// search filter (e.g. "reddit.com", "forums.plex.tv").
+func ValidSiteFilter(s string) bool { return siteFilterPattern.MatchString(s) }
 
 // Engine renders a single URL into a Document. Implementations should respect
 // the caller-provided ctx for cancellation and deadlines.

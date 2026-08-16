@@ -243,6 +243,13 @@ func WebSearch(searcher domain.Searcher, maxResults int, metrics *observability.
 					"type":        "string",
 					"description": "Result language code, e.g. 'en' or 'fr'. Default: upstream setting.",
 				},
+				"site": map[string]any{
+					"type": "string",
+					"description": "Restrict results to one site, as a bare hostname ('reddit.com', 'news.ycombinator.com', " +
+						"'forums.plex.tv'). Use this instead of naming the site in the query text: 'reddit kubernetes plex' " +
+						"returns Reddit's homepage and its Wikipedia page, while site='reddit.com' with query 'kubernetes plex' " +
+						"returns threads.",
+				},
 			},
 		},
 		Handle: func(ctx context.Context, args map[string]any) (mcp.ToolResult, error) {
@@ -266,6 +273,12 @@ func WebSearch(searcher domain.Searcher, maxResults int, metrics *observability.
 			}
 			if lang, isString := args["language"].(string); isString {
 				opts.Language = lang
+			}
+			if site, isString := args["site"].(string); isString && site != "" {
+				if !domain.ValidSiteFilter(site) {
+					return mcp.ToolResult{}, mcp.InvalidParams("site must be a bare hostname, e.g. reddit.com")
+				}
+				opts.Site = site
 			}
 
 			start := time.Now()
