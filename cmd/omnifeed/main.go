@@ -21,6 +21,7 @@ import (
 	"github.com/kinorai/omnifeed/internal/config"
 	"github.com/kinorai/omnifeed/internal/domain"
 	"github.com/kinorai/omnifeed/internal/engine"
+	"github.com/kinorai/omnifeed/internal/engine/bluesky"
 	"github.com/kinorai/omnifeed/internal/engine/crawl4ai"
 	"github.com/kinorai/omnifeed/internal/engine/discourse"
 	"github.com/kinorai/omnifeed/internal/engine/github"
@@ -123,10 +124,11 @@ func run(cfg config.Config, logger *slog.Logger) error {
 		BlockPrivateIPs:  cfg.BlockPrivateIPs,
 	})
 
-	// The Hacker News, GitHub, and Discourse engines read their public JSON APIs
-	// directly (none is bot-walled, unlike Reddit), so — exceptionally — they do
-	// NOT go through crawl4ai. They need outbound access to hn.algolia.com,
-	// api.github.com, and the configured Discourse hosts respectively.
+	// The Hacker News, GitHub, Discourse and Bluesky engines read their public
+	// JSON APIs directly (none is bot-walled, unlike Reddit), so — exceptionally
+	// — they do NOT go through crawl4ai. They need outbound access to
+	// hn.algolia.com, api.github.com, the configured Discourse hosts, and
+	// public.api.bsky.app respectively.
 	hackerNewsEngine := hackernews.New(hackernews.Config{
 		Client:  httpClient,
 		Limiter: limiter,
@@ -150,11 +152,20 @@ func run(cfg config.Config, logger *slog.Logger) error {
 		Logger:  logger,
 	})
 
+	// bsky.app is a client-side SPA the browser path renders as an empty shell;
+	// the AT Protocol AppView behind it is public and keyless.
+	blueskyEngine := bluesky.New(bluesky.Config{
+		Client:  httpClient,
+		Limiter: limiter,
+		Logger:  logger,
+	})
+
 	registry := engine.New().
 		Register(redditEngine).
 		Register(hackerNewsEngine).
 		Register(gitHubEngine).
 		Register(discourseEngine).
+		Register(blueskyEngine).
 		Fallback(crawl4aiEngine).
 		BlockPrivateIPs(cfg.BlockPrivateIPs).
 		Logger(logger).
