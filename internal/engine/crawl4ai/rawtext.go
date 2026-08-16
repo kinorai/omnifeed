@@ -11,6 +11,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/kinorai/omnifeed/internal/antibot"
 	"github.com/kinorai/omnifeed/internal/domain"
 	"github.com/kinorai/omnifeed/internal/httpx"
 )
@@ -146,6 +147,16 @@ func (e *Engine) rawTextForce(ctx context.Context, rawURL string) (domain.Docume
 	content := string(body)
 	// Binary masquerading as text, or nothing at all: let the browser try.
 	if !utf8.ValidString(content) || strings.TrimSpace(content) == "" {
+		return domain.Document{}, false
+	}
+	// A wall can answer 200 with a non-HTML body (a JSON or text/plain
+	// challenge payload), which the status and Content-Type checks above both
+	// wave through. crawlOnce screens every body it returns this way; a body
+	// that skipped the browser must not skip the screening. Declining here is
+	// the right answer for both callers: the pre-crawl bypass falls through to
+	// the browser, and the post-failure rescue keeps the original error rather
+	// than reporting a wall as a successful crawl.
+	if _, blocked := antibot.Detect(content); blocked {
 		return domain.Document{}, false
 	}
 
