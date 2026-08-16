@@ -101,7 +101,21 @@ func rawContentType(resp *http.Response) string {
 // the browser path instead — never an error: the browser path is the fallback
 // for every uncertainty here.
 func (e *Engine) rawText(ctx context.Context, rawURL string) (domain.Document, bool) {
-	if e.direct == nil || !hasRawTextExt(rawURL) {
+	if !hasRawTextExt(rawURL) {
+		return domain.Document{}, false
+	}
+	return e.rawTextForce(ctx, rawURL)
+}
+
+// rawTextForce is rawText without the path-extension gate. The gate exists to
+// keep the bypass off the latency path of ordinary pages; it also excludes
+// every extensionless API endpoint (itunes.apple.com/search?term=…,
+// public.api.bsky.app/xrpc/…), which is exactly the shape crawl4ai's content
+// gate rejects — a browser has nothing to render in a JSON body. Callers use
+// this only AFTER the browser path has already failed, where there is no
+// latency left to protect and the response's Content-Type is still the judge.
+func (e *Engine) rawTextForce(ctx context.Context, rawURL string) (domain.Document, bool) {
+	if e.direct == nil {
 		return domain.Document{}, false
 	}
 	headers := map[string]string{"User-Agent": rawUserAgent}
