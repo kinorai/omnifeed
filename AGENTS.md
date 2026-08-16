@@ -43,6 +43,7 @@ internal/
     crawl4ai/    Backend: crawl4ai /execute_js (re-navigates per Eval)
   engine/        Registry + fallback ordering
     reddit/      Engine: drives a browser.Browser, TOON comment trees
+    bluesky/     Engine: public AT Protocol AppView, TOON reply trees
     crawl4ai/    Engine: generic markdown fallback (crawl4ai /crawl — not the browser port)
   search/searxng/  Searcher adapter (JSON API)
   transport/
@@ -77,7 +78,8 @@ cmd/omnifeed/    entry point + wiring
 
 ## Gotchas
 
-- **crawl4ai is mandatory.** `OMNIFEED_CRAWL4AI_URL` must be set or the binary exits at startup — the generic fallback fetches through `/crawl`, and crawl4ai is also the browser backend for Reddit. **Exceptions:** the Hacker News engine reads the public Algolia HN API (`hn.algolia.com`) and the GitHub engine reads the public GitHub REST API (`api.github.com`) directly — neither is bot-walled, so a headless browser would only add latency (and lose comments) — and they therefore need outbound access to those two hosts. The Discourse engine does the same against each host listed in `OMNIFEED_DISCOURSE_HOSTS` (public topic JSON), so those hosts need outbound access too.
+- **crawl4ai is mandatory.** `OMNIFEED_CRAWL4AI_URL` must be set or the binary exits at startup — the generic fallback fetches through `/crawl`, and crawl4ai is also the browser backend for Reddit. **Exceptions:** the Hacker News engine reads the public Algolia HN API (`hn.algolia.com`), the GitHub engine reads the public GitHub REST API (`api.github.com`), and the Bluesky engine reads the public AT Protocol AppView (`public.api.bsky.app`) directly — none is bot-walled, so a headless browser would only add latency (and lose comments) — and they therefore need outbound access to those three hosts. The Discourse engine does the same against each host listed in `OMNIFEED_DISCOURSE_HOSTS` (public topic JSON), so those hosts need outbound access too.
+- **Bluesky search is not available.** `app.bsky.feed.searchPosts` answers unauthenticated callers with HTTP 403, while `getPostThread` / `getAuthorFeed` on the same host stay open. The engine therefore claims post and profile URLs only, and `bsky.app/search` deliberately falls through to the browser fallback. Don't "fix" this by adding the endpoint back without auth.
 - **Never call Reddit directly.** Reddit 403-blocks non-browser clients; the Reddit engine fetches through a real browser via the `browser.Browser` port. See `internal/engine/reddit` and `internal/browser`.
 - **HTTP transports fail closed.** No `OMNIFEED_API_KEY` → the binary refuses to start, unless `OMNIFEED_DEV_NO_AUTH=true` (local only). Stdio MCP is unauthenticated by design.
 - **SSRF:** validate caller-supplied URLs with `httpx.ValidateURL`; `OMNIFEED_BLOCK_PRIVATE_IPS` defaults to on.
