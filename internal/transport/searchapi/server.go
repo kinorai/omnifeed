@@ -5,7 +5,7 @@
 //
 //	POST /search
 //	Headers: Authorization: Bearer <api_key>
-//	Body:    {"query": "...", "limit": 10, "time_range": "week", "language": "en"}
+//	Body:    {"query": "...", "limit": 10, "time_range": "week", "language": "en", "site": "reddit.com"}
 //	Resp:    [{"title","url","snippet","engine","published_date"}, ...]
 package searchapi
 
@@ -70,6 +70,8 @@ type searchRequest struct {
 	Limit     int    `json:"limit"`
 	TimeRange string `json:"time_range"`
 	Language  string `json:"language"`
+	// Site restricts results to one hostname (bare host, e.g. "reddit.com").
+	Site string `json:"site"`
 }
 
 func (s *Server) search(w http.ResponseWriter, r *http.Request) {
@@ -107,8 +109,13 @@ func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "time_range must be one of: day, week, month, year")
 		return
 	}
+	if req.Site != "" && !domain.ValidSiteFilter(req.Site) {
+		writeError(w, http.StatusBadRequest, "site must be a bare hostname, e.g. reddit.com")
+		return
+	}
 	opts.TimeRange = req.TimeRange
 	opts.Language = req.Language
+	opts.Site = req.Site
 
 	start := time.Now()
 	results, err := s.searcher.Search(r.Context(), req.Query, opts)
