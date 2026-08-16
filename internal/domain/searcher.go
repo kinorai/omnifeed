@@ -16,6 +16,11 @@ type SearchOptions struct {
 	Limit     int    // max results to return; <= 0 means no clamp
 	TimeRange string // "", "day", "week", "month", "year"
 	Language  string // e.g. "en", "fr"; empty = upstream default
+	// Site restricts results to one hostname. Naming the site inside the query
+	// text instead ("reddit kubernetes plex") does not work: the engines read
+	// the site name as a topic word and return the site's own homepage and its
+	// Wikipedia article. Must satisfy ValidSiteFilter; empty = no restriction.
+	Site string
 }
 
 // Searcher turns a query into ranked result URLs. It is the discovery
