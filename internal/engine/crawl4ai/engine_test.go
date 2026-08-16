@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -20,6 +21,20 @@ import (
 // content block — bot_block, which OmnifeedCrawlErrors excludes) from a genuine
 // upstream 5xx (upstream_error, which still pages). Tested directly so it doesn't
 // pay the cost of driving real retries.
+// deadTargetURL is a local address with nothing listening. Tests crawl it so
+// the engine's post-failure direct-GET rescue (rawtext.go) fails instantly and
+// locally rather than reaching the real internet — every assertion in this file
+// is decided by the crawl4ai fake, never by the crawled URL itself.
+var deadTargetURL = func() string {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		panic(err)
+	}
+	addr := l.Addr().String()
+	_ = l.Close()
+	return "http://" + addr
+}()
+
 func TestClassifyCrawlError(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -104,7 +119,7 @@ func TestCrawlClassifiesUnsuccessfulResponse(t *testing.T) {
 				Client:   httpx.New(nil),
 				Limiter:  httpx.NewDomainLimiter(2, 0),
 			})
-			doc, err := e.Crawl(context.Background(), "https://example.com/page", domain.EngineOptions{})
+			doc, err := e.Crawl(context.Background(), deadTargetURL+"/page", domain.EngineOptions{})
 
 			if !tc.wantErr {
 				if err != nil {
@@ -172,7 +187,7 @@ func TestCrawlRequestLinkOptions(t *testing.T) {
 				Limiter:   httpx.NewDomainLimiter(2, 0),
 				KeepLinks: tc.keepLinks,
 			})
-			if _, err := e.Crawl(context.Background(), "https://example.com/page", domain.EngineOptions{}); err != nil {
+			if _, err := e.Crawl(context.Background(), deadTargetURL+"/page", domain.EngineOptions{}); err != nil {
 				t.Fatalf("Crawl() error = %v", err)
 			}
 			if gotIgnore != tc.wantIgnore {
@@ -214,7 +229,7 @@ func TestCrawlRequestPruneThreshold(t *testing.T) {
 		Limiter:        httpx.NewDomainLimiter(2, 0),
 		PruneThreshold: 0.72,
 	})
-	if _, err := e.Crawl(context.Background(), "https://example.com/page", domain.EngineOptions{}); err != nil {
+	if _, err := e.Crawl(context.Background(), deadTargetURL+"/page", domain.EngineOptions{}); err != nil {
 		t.Fatalf("Crawl() error = %v", err)
 	}
 	if got != 0.72 {
@@ -250,7 +265,7 @@ func TestCrawlSendsBearerToken(t *testing.T) {
 				Client:   httpx.New(nil),
 				Limiter:  httpx.NewDomainLimiter(2, 0),
 			})
-			if _, err := e.Crawl(context.Background(), "https://example.com/page", domain.EngineOptions{}); err != nil {
+			if _, err := e.Crawl(context.Background(), deadTargetURL+"/page", domain.EngineOptions{}); err != nil {
 				t.Fatalf("Crawl() error = %v", err)
 			}
 			if gotAuth != tc.want {
@@ -288,7 +303,7 @@ func TestCrawlRequestWaitUntil(t *testing.T) {
 		Limiter:   httpx.NewDomainLimiter(2, 0),
 		WaitUntil: "networkidle",
 	})
-	if _, err := e.Crawl(context.Background(), "https://example.com/page", domain.EngineOptions{}); err != nil {
+	if _, err := e.Crawl(context.Background(), deadTargetURL+"/page", domain.EngineOptions{}); err != nil {
 		t.Fatalf("Crawl() error = %v", err)
 	}
 	if got != "networkidle" {
@@ -325,7 +340,7 @@ func TestCrawlRequestPreservesCodeAndClampsTimeout(t *testing.T) {
 		Client:   httpx.New(nil),
 		Limiter:  httpx.NewDomainLimiter(2, 0),
 	})
-	if _, err := e.Crawl(context.Background(), "https://example.com/page", domain.EngineOptions{}); err != nil {
+	if _, err := e.Crawl(context.Background(), deadTargetURL+"/page", domain.EngineOptions{}); err != nil {
 		t.Fatalf("Crawl() error = %v", err)
 	}
 
@@ -394,7 +409,7 @@ func crawlParamsOpts(t *testing.T, cfg Config, opts domain.EngineOptions) map[st
 	cfg.Endpoint = srv.URL
 	cfg.Client = httpx.New(nil)
 	cfg.Limiter = httpx.NewDomainLimiter(2, 0)
-	if _, err := New(cfg).Crawl(context.Background(), "https://example.com/page", opts); err != nil {
+	if _, err := New(cfg).Crawl(context.Background(), deadTargetURL+"/page", opts); err != nil {
 		t.Fatalf("Crawl() error = %v", err)
 	}
 	return params
@@ -481,7 +496,7 @@ func TestCrawlWhitespaceFitFallsBackToRaw(t *testing.T) {
 	defer srv.Close()
 
 	e := New(Config{Endpoint: srv.URL, Client: httpx.New(nil), Limiter: httpx.NewDomainLimiter(2, 0)})
-	doc, err := e.Crawl(context.Background(), "https://example.com/page", domain.EngineOptions{})
+	doc, err := e.Crawl(context.Background(), deadTargetURL+"/page", domain.EngineOptions{})
 	if err != nil {
 		t.Fatalf("Crawl() error = %v", err)
 	}
@@ -505,7 +520,7 @@ func TestCrawlScrubbed500RejectedNotRetried(t *testing.T) {
 	defer srv.Close()
 
 	e := New(Config{Endpoint: srv.URL, Client: httpx.New(nil), Limiter: httpx.NewDomainLimiter(2, 0)})
-	_, err := e.Crawl(context.Background(), "https://example.com/page", domain.EngineOptions{})
+	_, err := e.Crawl(context.Background(), deadTargetURL+"/page", domain.EngineOptions{})
 
 	var fe *domain.FetchError
 	if !errors.As(err, &fe) {
@@ -581,7 +596,7 @@ func TestCrawlContentSelection(t *testing.T) {
 				Client:   httpx.New(nil),
 				Limiter:  httpx.NewDomainLimiter(2, 0),
 			})
-			doc, err := e.Crawl(context.Background(), "https://example.com/page", domain.EngineOptions{})
+			doc, err := e.Crawl(context.Background(), deadTargetURL+"/page", domain.EngineOptions{})
 			if err != nil {
 				t.Fatalf("Crawl() error = %v", err)
 			}
@@ -622,7 +637,7 @@ func TestCrawlRetriesWithoutExcludedSelectorOnThinContent(t *testing.T) {
 		Client:   httpx.New(nil),
 		Limiter:  httpx.NewDomainLimiter(2, 0),
 	})
-	doc, err := e.Crawl(context.Background(), "https://example.com/toc-page", domain.EngineOptions{})
+	doc, err := e.Crawl(context.Background(), deadTargetURL+"/toc-page", domain.EngineOptions{})
 	if err != nil {
 		t.Fatalf("Crawl() error = %v", err)
 	}
@@ -666,7 +681,7 @@ func TestCrawlEmptyExtractionIsThinContent(t *testing.T) {
 				Client:   httpx.New(nil),
 				Limiter:  httpx.NewDomainLimiter(2, 0),
 			})
-			doc, err := e.Crawl(context.Background(), "https://example.com/page", domain.EngineOptions{})
+			doc, err := e.Crawl(context.Background(), deadTargetURL+"/page", domain.EngineOptions{})
 
 			if !tc.wantErr {
 				if err != nil {
@@ -751,7 +766,7 @@ func TestCrawlRequestLatencyKnobs(t *testing.T) {
 				Client:   httpx.New(nil),
 				Limiter:  httpx.NewDomainLimiter(2, 0),
 			}))
-			if _, err := e.Crawl(context.Background(), "https://example.com/page", domain.EngineOptions{}); err != nil {
+			if _, err := e.Crawl(context.Background(), deadTargetURL+"/page", domain.EngineOptions{}); err != nil {
 				t.Fatalf("Crawl() error = %v", err)
 			}
 
