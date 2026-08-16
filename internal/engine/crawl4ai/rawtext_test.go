@@ -2,6 +2,7 @@ package crawl4ai
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -163,5 +164,94 @@ func TestIsRawTextType(t *testing.T) {
 		if got := isRawTextType(mt); got != want {
 			t.Errorf("isRawTextType(%q) = %v, want %v", mt, got, want)
 		}
+	}
+}
+
+// newRejectingEngine returns an engine whose crawl4ai endpoint always answers
+// with the scrubbed 500 that means "I could not render this page" — the
+// verdict every JSON API response gets, since a browser has nothing to render.
+func newRejectingEngine(t *testing.T) (*Engine, *int) {
+	t.Helper()
+	browserHits := 0
+	c4a := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		browserHits++
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":"Internal server error","correlation_id":"be95648aa6d5"}`))
+	}))
+	t.Cleanup(c4a.Close)
+	e := New(Config{
+		Endpoint: c4a.URL,
+		Client:   httpx.New(nil),
+		Limiter:  httpx.NewDomainLimiter(2, 0),
+	})
+	return e, &browserHits
+}
+
+// An extensionless JSON API path is not claimed by the pre-crawl bypass, so it
+// takes the browser path and crawl4ai rejects it. The rescue must then fetch it
+// directly and return the body instead of the error.
+func TestRejectedJSONAPIIsRescued(t *testing.T) {
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"resultCount":1,"results":[{"trackName":"Octal"}]}`))
+	}))
+	defer api.Close()
+
+	e, browserHits := newRejectingEngine(t)
+	doc, err := e.Crawl(context.Background(), api.URL+"/search?term=hacker+news", domain.EngineOptions{})
+	if err != nil {
+		t.Fatalf("Crawl() error = %v, want the direct fetch to rescue it", err)
+	}
+	if *browserHits == 0 {
+		t.Error("browser path was skipped, want it tried first (the rescue is a fallback)")
+	}
+	if !strings.Contains(doc.PageContent, "Octal") {
+		t.Errorf("PageContent = %q, want the JSON body", doc.PageContent)
+	}
+}
+
+// The rescue must not turn a genuine page failure into a success: an HTML body
+// is what the browser path exists for, so the original error stands.
+func TestRejectedHTMLKeepsOriginalError(t *testing.T) {
+	page := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte(`<html><body>a real page</body></html>`))
+	}))
+	defer page.Close()
+
+	e, _ := newRejectingEngine(t)
+	_, err := e.Crawl(context.Background(), page.URL+"/article", domain.EngineOptions{})
+
+	var fe *domain.FetchError
+	if !errors.As(err, &fe) {
+		t.Fatalf("want *domain.FetchError, got %T: %v", err, err)
+	}
+	if fe.Kind != domain.KindUpstreamRejected {
+		t.Errorf("Kind = %q, want %q preserved", fe.Kind, domain.KindUpstreamRejected)
+	}
+}
+
+// A bot wall must NOT be retried directly: the same wall would answer a plain
+// GET, so the retry only spends latency.
+func TestBlockedPageIsNotRescued(t *testing.T) {
+	direct := 0
+	page := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		direct++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer page.Close()
+
+	c4a := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"success":true,"results":[{"success":true,"status_code":429,"markdown":{"raw_markdown":"rate limited"}}]}`))
+	}))
+	defer c4a.Close()
+
+	e := New(Config{Endpoint: c4a.URL, Client: httpx.New(nil), Limiter: httpx.NewDomainLimiter(2, 0)})
+	if _, err := e.Crawl(context.Background(), page.URL+"/api/thing", domain.EngineOptions{}); err == nil {
+		t.Fatal("Crawl() = nil error, want the 429 to stand")
+	}
+	if direct != 0 {
+		t.Errorf("direct fetches = %d, want 0 (a wall is not rescuable)", direct)
 	}
 }
