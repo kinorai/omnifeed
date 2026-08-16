@@ -23,6 +23,12 @@ const (
 	// and the maximum 1000; 20 covers the deep sub-threads that carry the real
 	// discussion without asking the AppView to walk a whole megathread.
 	threadDepth = 20
+	// threadParentHeight is how many ancestor levels to request. A bsky.app URL
+	// for a reply looks exactly like one for a root post, so the ancestors are
+	// what tells the reader which conversation the linked post is answering.
+	// Set explicitly rather than riding the lexicon default of 80: the AppView
+	// fetches that many either way, and 20 is the chain worth carrying.
+	threadParentHeight = 20
 	// feedLimit is how many posts an author-feed URL returns (lexicon maximum
 	// is 100).
 	feedLimit = 50
@@ -152,6 +158,7 @@ func (e *Engine) crawlThread(ctx context.Context, rawURL string, t target) (doma
 	q := url.Values{}
 	q.Set("uri", "at://"+t.actor+"/"+postCollection+"/"+t.rkey)
 	q.Set("depth", strconv.Itoa(threadDepth))
+	q.Set("parentHeight", strconv.Itoa(threadParentHeight))
 
 	raw, err := e.get(ctx, e.apiBase+"/app.bsky.feed.getPostThread?"+q.Encode())
 	if err != nil {
@@ -161,8 +168,22 @@ func (e *Engine) crawlThread(ctx context.Context, rawURL string, t target) (doma
 	if perr != nil {
 		return domain.Document{}, &domain.FetchError{Kind: domain.KindBadResponse, Err: fmt.Errorf("parse thread: %w", perr)}
 	}
+	// The AppView answers a takendown, detached or blocked post with HTTP 200
+	// and a union member that carries no post at all. Returning that as a
+	// successful Document of empty fields would hand the caller silence it
+	// cannot tell from an empty post — and, being err == nil, would stop the
+	// registry from trying the browser fallback.
+	if thread.Post.URI == "" {
+		return domain.Document{}, &domain.FetchError{
+			Kind: domain.KindThinContent,
+			Err:  fmt.Errorf("bluesky returned no post for %s (not found, blocked, or taken down)", rawURL),
+		}
+	}
 
 	meta := map[string]string{"actor": t.actor}
+	if n := len(thread.Ancestors); n > 0 {
+		meta["ancestors"] = strconv.Itoa(n)
+	}
 	if total := len(thread.Replies); total > maxThreadReplies {
 		thread.Replies = thread.Replies[:maxThreadReplies]
 		meta["truncated_from"] = strconv.Itoa(total)

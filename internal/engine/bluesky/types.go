@@ -43,10 +43,14 @@ type Post struct {
 	Link string `json:"link,omitempty" toon:"link,omitempty"`
 }
 
-// Thread groups a Bluesky post with its flattened reply tree.
+// Thread groups a Bluesky post with its ancestors and its flattened reply tree.
 type Thread struct {
-	Post    Post   `json:"post" toon:"post"`
-	Replies []Post `json:"replies" toon:"replies"`
+	// Ancestors are the posts this one replies to, root first. A bsky.app URL
+	// for a reply is indistinguishable from one for a root post, so without
+	// these a linked reply would arrive with no sight of what it answers.
+	Ancestors []Post `json:"ancestors,omitempty" toon:"ancestors,omitempty"`
+	Post      Post   `json:"post" toon:"post"`
+	Replies   []Post `json:"replies" toon:"replies"`
 }
 
 // Feed is an account's recent posts.
@@ -63,10 +67,14 @@ type threadResponse struct {
 }
 
 // threadViewPost is the recursive thread node. A notFoundPost or blockedPost
-// arrives as the same object with a null Post, which decodes to the zero value
-// and is skipped by URI emptiness.
+// arrives as the same object with no Post field, which decodes to the zero
+// value and is skipped by URI emptiness.
+//
+// Parent walks UP the reply chain (Replies walks down). It is a pointer
+// because the chain has to terminate: the root post has no parent.
 type threadViewPost struct {
 	Post    postView         `json:"post"`
+	Parent  *threadViewPost  `json:"parent"`
 	Replies []threadViewPost `json:"replies"`
 }
 
