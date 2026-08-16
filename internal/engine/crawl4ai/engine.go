@@ -259,7 +259,18 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, opts domain.EngineOpt
 
 	doc, err := e.crawlOnce(ctx, rawURL, e.excludedSelector, scan)
 	if err != nil && e.excludedSelector != "" && isThinContent(err) && ctx.Err() == nil {
-		return e.crawlOnce(ctx, rawURL, "", scan)
+		doc, err = e.crawlOnce(ctx, rawURL, "", scan)
+	}
+	// Last resort: crawl4ai's content gate rejects a body it cannot render as a
+	// page — which is every JSON/plain-text API response served from a path with
+	// no file extension, so the pre-crawl bypass above never claimed it. Those
+	// arrive as upstream_rejected (the scrubbed 500) or thin_content. Retry them
+	// as a direct GET; the Content-Type check still decides, so an HTML page
+	// that genuinely failed keeps its original error.
+	if err != nil && isRescuable(err) && ctx.Err() == nil {
+		if rescued, ok := e.rawTextForce(ctx, rawURL); ok {
+			return rescued, nil
+		}
 	}
 	return doc, err
 }
@@ -268,6 +279,18 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, opts domain.EngineOpt
 func isThinContent(err error) bool {
 	var fe *domain.FetchError
 	return errors.As(err, &fe) && fe.Kind == domain.KindThinContent
+}
+
+// isRescuable reports whether err is a crawl4ai verdict about the CONTENT
+// (it rendered nothing usable) rather than a transport fault or a bot wall.
+// Only those are worth a direct-GET retry: a 429 or a CAPTCHA would meet the
+// same wall without a browser, and a timeout would just spend the budget twice.
+func isRescuable(err error) bool {
+	var fe *domain.FetchError
+	if !errors.As(err, &fe) {
+		return false
+	}
+	return fe.Kind == domain.KindThinContent || fe.Kind == domain.KindUpstreamRejected
 }
 
 // crawlOnce performs one crawl4ai request with the given excluded selector
