@@ -11,7 +11,7 @@ Package searchapi exposes the web\-search use case over plain HTTP/JSON, so non\
 ```
 POST /search
 Headers: Authorization: Bearer <api_key>
-Body:    {"query": "...", "limit": 10, "time_range": "week", "language": "en"}
+Body:    {"query": "...", "limit": 10, "time_range": "week", "language": "en", "site": "reddit.com"}
 Resp:    [{"title","url","snippet","engine","published_date"}, ...]
 ```
 

@@ -14,6 +14,7 @@ Package domain holds the core types exchanged between transports and engines. It
 - [Variables](<#variables>)
 - [func TruncatableContentType\(contentType string\) bool](<#TruncatableContentType>)
 - [func ValidRedditSort\(s string\) bool](<#ValidRedditSort>)
+- [func ValidSiteFilter\(s string\) bool](<#ValidSiteFilter>)
 - [func ValidTimeRange\(s string\) bool](<#ValidTimeRange>)
 - [type Document](<#Document>)
 - [type Engine](<#Engine>)
@@ -89,6 +90,15 @@ func ValidRedditSort(s string) bool
 ```
 
 ValidRedditSort reports whether s is an accepted Reddit comment sort order.
+
+<a name="ValidSiteFilter"></a>
+## func ValidSiteFilter
+
+```go
+func ValidSiteFilter(s string) bool
+```
+
+ValidSiteFilter reports whether s is a bare hostname usable as a \`site:\` search filter \(e.g. "reddit.com", "forums.plex.tv"\).
 
 <a name="ValidTimeRange"></a>
 ## func ValidTimeRange
@@ -237,6 +247,11 @@ type SearchOptions struct {
     Limit     int    // max results to return; <= 0 means no clamp
     TimeRange string // "", "day", "week", "month", "year"
     Language  string // e.g. "en", "fr"; empty = upstream default
+    // Site restricts results to one hostname. Naming the site inside the query
+    // text instead ("reddit kubernetes plex") does not work: the engines read
+    // the site name as a topic word and return the site's own homepage and its
+    // Wikipedia article. Must satisfy ValidSiteFilter; empty = no restriction.
+    Site string
 }
 ```
 
