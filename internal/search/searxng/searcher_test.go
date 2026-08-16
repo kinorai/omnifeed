@@ -3,6 +3,7 @@ package searxng
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -234,6 +235,39 @@ func TestSearch_CountsUnresponsiveEngines(t *testing.T) {
 			close(ch)
 			if got := len(ch); got != len(tc.want) {
 				t.Fatalf("series count = %d, want %d", got, len(tc.want))
+			}
+		})
+	}
+}
+
+// A `site` option must reach the engines as a `site:` operator, because naming
+// the site inside the query text does not restrict anything.
+func TestSearchSiteFilter(t *testing.T) {
+	for _, tc := range []struct {
+		name, site, wantQ string
+	}{
+		{"scopes to the host", "reddit.com", "site:reddit.com kubernetes plex"},
+		{"empty site is untouched", "", "kubernetes plex"},
+		// A value that could carry another operator is dropped, not forwarded:
+		// the filter is a narrowing hint, so a bad one must not break the search.
+		{"injection attempt dropped", "evil.com foo:bar", "kubernetes plex"},
+		{"quote injection dropped", `x" OR "y`, "kubernetes plex"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var gotQ string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotQ = r.URL.Query().Get("q")
+				_, _ = io.WriteString(w, `{"results":[]}`)
+			}))
+			defer srv.Close()
+
+			s := New(Config{Endpoint: srv.URL, Client: httpx.New(nil)})
+			if _, err := s.Search(context.Background(), "kubernetes plex",
+				domain.SearchOptions{Site: tc.site}); err != nil {
+				t.Fatalf("Search: %v", err)
+			}
+			if gotQ != tc.wantQ {
+				t.Errorf("q = %q, want %q", gotQ, tc.wantQ)
 			}
 		})
 	}
