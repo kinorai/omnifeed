@@ -255,3 +255,46 @@ func TestBlockedPageIsNotRescued(t *testing.T) {
 		t.Errorf("direct fetches = %d, want 0 (a wall is not rescuable)", direct)
 	}
 }
+
+// A wall that answers 200 with a NON-HTML body passes both the status and the
+// Content-Type check, so the rescue must screen the body for challenge markers
+// the way crawlOnce screens its own. Reporting a wall as a successful crawl
+// would also lose it from the bot_block metric.
+func TestRescuedWallIsNotReportedAsSuccess(t *testing.T) {
+	wall := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"title":"Just a moment...","cf":"/cdn-cgi/challenge-platform/h/b/orchestrate"}`))
+	}))
+	defer wall.Close()
+
+	e, _ := newRejectingEngine(t)
+	_, err := e.Crawl(context.Background(), wall.URL+"/api/thing", domain.EngineOptions{})
+
+	var fe *domain.FetchError
+	if !errors.As(err, &fe) {
+		t.Fatalf("want *domain.FetchError, got %T: %v", err, err)
+	}
+	if fe.Kind != domain.KindUpstreamRejected {
+		t.Errorf("Kind = %q, want %q — a challenge body must not become a success", fe.Kind, domain.KindUpstreamRejected)
+	}
+}
+
+// The wall screen must not fire on ordinary content: the markers are specific
+// phrases, and a JSON body that merely mentions bots or verification is real
+// content the caller asked for.
+func TestRescuedOrdinaryJSONIsNotFlagged(t *testing.T) {
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"topic":"bot detection","summary":"how to verify a human reader"}`))
+	}))
+	defer api.Close()
+
+	e, _ := newRejectingEngine(t)
+	doc, err := e.Crawl(context.Background(), api.URL+"/api/thing", domain.EngineOptions{})
+	if err != nil {
+		t.Fatalf("Crawl() error = %v, want the body returned", err)
+	}
+	if !strings.Contains(doc.PageContent, "bot detection") {
+		t.Errorf("PageContent = %q, want the JSON body", doc.PageContent)
+	}
+}
