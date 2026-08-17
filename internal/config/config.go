@@ -74,6 +74,34 @@ type Config struct {
 	SearXNGURL     string
 	SearXNGTimeout time.Duration
 
+	// SearXNGSiteEngines names the engines that run when the caller passes a
+	// `site` filter. SearXNG hands `site:` to the engines instead of applying it
+	// itself, and an engine that does not implement the operator either ignores
+	// it (answering with unrelated pages) or returns nothing at all — so on a
+	// mixed pool a site-scoped search comes back thin and noisy. Empty (the
+	// default) queries the whole pool; set it to the subset that honours
+	// `site:`, e.g. OMNIFEED_SEARXNG_SITE_ENGINES=privacywall,google cse
+	SearXNGSiteEngines []string
+
+	// SearXNGDelay and SearXNGQuota/SearXNGQuotaWindow pace queries to SearXNG.
+	// They protect the ENGINES behind it, not SearXNG itself: one query fans out
+	// to every enabled engine, so each engine sees exactly omnifeed's query
+	// rate, and an engine that judges that rate bot-like suspends itself or
+	// serves a CAPTCHA.
+	//
+	// Both controls are needed because engines enforce two different limits.
+	// Measured on this deployment's pool (2026-08-17): the strictest engine kept
+	// answering at a 3s spacing from a quiet start, but blocked after ~20
+	// requests in ~85s — it counts requests in a window. A delay alone run
+	// continuously would send 30 per 90s and trip it, so the delay shapes the
+	// gap and the quota bounds the burst.
+	//
+	// Both default to off, which keeps the previous unpaced behaviour. Set them
+	// to the values measured against your own pool.
+	SearXNGDelay       time.Duration
+	SearXNGQuota       int
+	SearXNGQuotaWindow time.Duration
+
 	// Search tool limits.
 	SearchMaxResults int
 
@@ -151,6 +179,10 @@ func Load() (Config, error) {
 	// on them because scheme and host are case-insensitive by RFC 3986.
 	c.AllowedOrigins = splitHosts(env("OMNIFEED_ALLOWED_ORIGINS", ""))
 
+	// SearXNG engine names are lowercase and may contain spaces ("google cse"),
+	// which splitHosts' trim+lowercase preserves.
+	c.SearXNGSiteEngines = splitHosts(env("OMNIFEED_SEARXNG_SITE_ENGINES", ""))
+
 	var err error
 	if c.MCPStdio, err = envBool("OMNIFEED_MCP_STDIO", false); err != nil {
 		return c, err
@@ -186,6 +218,15 @@ func Load() (Config, error) {
 		return c, err
 	}
 	if c.SearXNGTimeout, err = envDuration("OMNIFEED_SEARXNG_TIMEOUT", 15*time.Second); err != nil {
+		return c, err
+	}
+	if c.SearXNGDelay, err = envDuration("OMNIFEED_SEARXNG_DELAY", 0); err != nil {
+		return c, err
+	}
+	if c.SearXNGQuota, err = envInt("OMNIFEED_SEARXNG_QUOTA", 0); err != nil {
+		return c, err
+	}
+	if c.SearXNGQuotaWindow, err = envDuration("OMNIFEED_SEARXNG_QUOTA_WINDOW", 90*time.Second); err != nil {
 		return c, err
 	}
 	if c.SearchMaxResults, err = envInt("OMNIFEED_SEARCH_MAX_RESULTS", 25); err != nil {
@@ -236,6 +277,17 @@ func Load() (Config, error) {
 	c.RedditSort = strings.ToLower(c.RedditSort)
 	if !domain.ValidRedditSort(c.RedditSort) {
 		return c, fmt.Errorf("OMNIFEED_REDDIT_SORT must be one of %s, got %q", strings.Join(domain.ValidRedditSorts, ", "), c.RedditSort)
+	}
+	if c.SearXNGDelay < 0 {
+		return c, fmt.Errorf("OMNIFEED_SEARXNG_DELAY must be >= 0 (0 = no delay), got %s", c.SearXNGDelay)
+	}
+	if c.SearXNGQuota < 0 {
+		return c, fmt.Errorf("OMNIFEED_SEARXNG_QUOTA must be >= 0 (0 = no quota), got %d", c.SearXNGQuota)
+	}
+	// A quota without a window would divide by nothing: the pacing would silently
+	// do nothing, which is the failure mode this whole change exists to remove.
+	if c.SearXNGQuota > 0 && c.SearXNGQuotaWindow <= 0 {
+		return c, fmt.Errorf("OMNIFEED_SEARXNG_QUOTA_WINDOW must be > 0 when OMNIFEED_SEARXNG_QUOTA is set, got %s", c.SearXNGQuotaWindow)
 	}
 	if c.RedditFetchLimit < 1 {
 		return c, fmt.Errorf("OMNIFEED_REDDIT_FETCH_LIMIT must be >= 1, got %d", c.RedditFetchLimit)

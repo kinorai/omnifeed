@@ -180,10 +180,12 @@ func run(cfg config.Config, logger *slog.Logger) error {
 		searxngClient.OnAttempt = metrics.ObserveAttempt
 		searxngClient.OnUpstream = metrics.ObserveUpstream
 		searcher = searxng.New(searxng.Config{
-			Endpoint: cfg.SearXNGURL,
-			Client:   searxngClient,
-			Logger:   logger,
-			Metrics:  metrics,
+			Endpoint:    cfg.SearXNGURL,
+			Client:      searxngClient,
+			Logger:      logger,
+			Metrics:     metrics,
+			SiteEngines: cfg.SearXNGSiteEngines,
+			Limiter:     searxngLimiter(cfg, metrics, logger),
 		})
 	} else {
 		logger.Info("search tool disabled (OMNIFEED_SEARXNG_URL not set)")
@@ -369,6 +371,27 @@ func runServers(ctx context.Context, logger *slog.Logger, health *observability.
 	wg.Wait()
 	logger.Info("shutdown complete")
 	return nil
+}
+
+// searxngLimiter builds the pacing limiter for search queries, or returns nil
+// when neither control is configured — pacing is opt-in, so an unconfigured
+// deployment behaves exactly as before.
+//
+// Concurrency is fixed at 1 rather than exposed as a knob: the point is to
+// space requests, and a second query in flight would step straight over the
+// delay the first one is serving.
+func searxngLimiter(cfg config.Config, metrics *observability.Metrics, logger *slog.Logger) *httpx.DomainLimiter {
+	if cfg.SearXNGDelay <= 0 && cfg.SearXNGQuota <= 0 {
+		logger.Info("searxng pacing disabled (OMNIFEED_SEARXNG_DELAY and OMNIFEED_SEARXNG_QUOTA unset)")
+		return nil
+	}
+	logger.Info("searxng pacing enabled",
+		"delay", cfg.SearXNGDelay,
+		"quota", cfg.SearXNGQuota,
+		"window", cfg.SearXNGQuotaWindow)
+	l := httpx.NewDomainQuotaLimiter(1, cfg.SearXNGDelay, cfg.SearXNGQuota, cfg.SearXNGQuotaWindow)
+	l.OnWait = metrics.ObserveLimiterWait
+	return l
 }
 
 // upstreamReady is a readiness check: GET the endpoint and report failure if
