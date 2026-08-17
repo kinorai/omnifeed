@@ -13,7 +13,9 @@ prefix, host ports, images — which the binary never sees. Those live in
 engines call their upstream themselves: Hacker News reads `hn.algolia.com`, GitHub reads
 `api.github.com`, Bluesky reads `public.api.bsky.app`, and Discourse reads each host in
 `OMNIFEED_DISCOURSE_HOSTS`. A deployment that firewalls outbound traffic to crawl4ai
-alone breaks those four.
+alone breaks those four. `OMNIFEED_SEARCH_VERTICALS` adds one more host of its own:
+the Bluesky search vertical calls `api.bsky.app` (the HN vertical reuses
+`hn.algolia.com`, and the Reddit vertical goes through crawl4ai).
 
 | Variable | Default | Purpose |
 |---|---|---|
@@ -41,6 +43,7 @@ alone breaks those four.
 | `OMNIFEED_SEARXNG_DELAY` | `0` (off) | Minimum gap between queries sent to SearXNG. Paces the **engines behind** SearXNG, not SearXNG itself: one query fans out to every enabled engine, so each engine sees exactly omnifeed's query rate, and an engine that judges that rate bot-like suspends itself or serves a CAPTCHA. Pair with `OMNIFEED_SEARXNG_QUOTA` — a gap alone does not bound a burst. |
 | `OMNIFEED_SEARXNG_QUOTA` | `0` (off) | Maximum queries admitted within any rolling `OMNIFEED_SEARXNG_QUOTA_WINDOW`. Needed because engines enforce two different limits: one measured pool kept answering at a 3s gap from a quiet start yet blocked after ~20 queries in ~85s, because it counts requests in a window. The delay shapes the gap, the quota bounds the burst. Measure both against your own pool. |
 | `OMNIFEED_SEARXNG_QUOTA_WINDOW` | `90s` | Width of the rolling window for `OMNIFEED_SEARXNG_QUOTA`. Ignored when the quota is `0`; must be `> 0` when it is set. |
+| `OMNIFEED_SEARCH_VERTICALS` | _(unset — off)_ | Comma-separated native site searches put **in front of** SearXNG for site-scoped queries: `hackernews`, `reddit`, `bluesky`. A vertical answers with the site's own ranking signals (points, comments, score) that scraped engines never expose — `site=news.ycombinator.com` goes to the Algolia HN API, `site=bsky.app` to `app.bsky.feed.searchPosts` on `api.bsky.app`, `site=reddit.com` to a subreddit's in-site search through the browser (a query naming no `r/<sub>` is handed straight back to SearXNG, because sitewide in-site search measures worse than a web search). Anything a vertical declines, comes back empty on, or fails at falls back to SearXNG, so `OMNIFEED_SEARXNG_URL` is required when this is set. Unknown names are a startup error. Outcomes are counted in `omnifeed_search_routes_total`. |
 | `OMNIFEED_SEARCH_MAX_RESULTS` | `25` | Hard cap on the search `limit` argument (1–100) |
 | `OMNIFEED_FETCH_MAX_CHARS` | `120000` | Default character cap on **markdown** content returned by the `fetch_url` MCP tool (`0` = unlimited). Over the cap, the reply ends with a resumable truncation marker. TOON/JSON output (every dedicated engine: Reddit, Hacker News, GitHub, Discourse) is never cut — use the Reddit knobs below instead. Does not apply to `/crawl` (see [Controlling fetched content size](#controlling-fetched-content-size)). |
 | `OMNIFEED_GITHUB_TOKEN` | _(unset)_ | Personal access token for the GitHub engine (issue / pull-request pages read from `api.github.com`). Unset means anonymous, which works but is limited to 60 requests/hour/IP; a token raises it to 5000/hour. |
