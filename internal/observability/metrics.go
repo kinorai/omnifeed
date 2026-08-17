@@ -28,6 +28,7 @@ type Metrics struct {
 	RedditRounds        prometheus.Histogram
 	SearchesTotal       *prometheus.CounterVec   // searcher, status, reason
 	SearchSecs          *prometheus.HistogramVec // searcher, status
+	SearchRoutes        *prometheus.CounterVec   // vertical, outcome
 }
 
 // NewMetrics builds and registers all collectors.
@@ -98,11 +99,15 @@ func NewMetrics() *Metrics {
 			Help:    "Search latency by searcher and status.",
 			Buckets: prometheus.ExponentialBuckets(0.05, 2, 10),
 		}, []string{"searcher", "status"}),
+		SearchRoutes: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "omnifeed_search_routes_total",
+			Help: `Router dispatches to a native vertical searcher, by vertical and outcome. outcome="served" means the vertical's own results were returned; every other outcome — "empty" (it found nothing), "declined" (it does not serve this query shape) and "error" (it failed) — also produced a SearXNG fallback query, so those searches cost two upstream calls.`,
+		}, []string{"vertical", "outcome"}),
 	}
 	reg.MustRegister(m.RequestsTotal, m.RequestAttempts, m.RequestSecs, m.UpstreamSecs,
 		m.LimiterWaitSecs, m.ResponseChars, m.EngineFallbacks, m.SearxngUnresponsive,
 		m.SearxngEngineHits, m.SearxngEmpty,
-		m.RedditRounds, m.SearchesTotal, m.SearchSecs)
+		m.RedditRounds, m.SearchesTotal, m.SearchSecs, m.SearchRoutes)
 	reg.MustRegister(
 		collectors.NewGoCollector(),
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
@@ -186,6 +191,13 @@ func (m *Metrics) ObserveEmptySearch(scoped bool) {
 func (m *Metrics) ObserveSearch(searcher, status, reason string, duration time.Duration) {
 	m.SearchesTotal.WithLabelValues(searcher, status, reason).Inc()
 	m.SearchSecs.WithLabelValues(searcher, status).Observe(duration.Seconds())
+}
+
+// ObserveSearchRoute counts one router dispatch to a native vertical searcher.
+// outcome is "served", "empty", "declined" or "error"; everything but "served"
+// was followed by a SearXNG fallback query.
+func (m *Metrics) ObserveSearchRoute(vertical, outcome string) {
+	m.SearchRoutes.WithLabelValues(vertical, outcome).Inc()
 }
 
 // RegisterMetrics attaches /metrics to mux.
