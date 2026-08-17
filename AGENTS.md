@@ -45,7 +45,12 @@ internal/
     reddit/      Engine: drives a browser.Browser, TOON comment trees
     bluesky/     Engine: public AT Protocol AppView, TOON reply trees
     crawl4ai/    Engine: generic markdown fallback (crawl4ai /crawl — not the browser port)
-  search/searxng/  Searcher adapter (JSON API)
+  search/
+    searxng/     Searcher adapter (JSON API) — the fallback under the router
+    router/      Searcher: dispatches a site-scoped query to a vertical below
+    hackernews/  Searcher: Algolia HN search API
+    reddit/      Searcher: subreddit in-site search, through the browser port
+    bluesky/     Searcher: app.bsky.feed.searchPosts
   transport/
     mcp/         MCP server (stdio + Streamable HTTP) — pure JSON-RPC transport
       tools/     fetch_url + web_search tool constructors (bind ports → tools)
@@ -78,8 +83,8 @@ cmd/omnifeed/    entry point + wiring
 
 ## Gotchas
 
-- **crawl4ai is mandatory.** `OMNIFEED_CRAWL4AI_URL` must be set or the binary exits at startup — the generic fallback fetches through `/crawl`, and crawl4ai is also the browser backend for Reddit. **Exceptions:** the Hacker News engine reads the public Algolia HN API (`hn.algolia.com`), the GitHub engine reads the public GitHub REST API (`api.github.com`), and the Bluesky engine reads the public AT Protocol AppView (`public.api.bsky.app`) directly — none is bot-walled, so a headless browser would only add latency (and lose comments) — and they therefore need outbound access to those three hosts. The Discourse engine does the same against each host listed in `OMNIFEED_DISCOURSE_HOSTS` (public topic JSON), so those hosts need outbound access too.
-- **Bluesky search is not available.** `app.bsky.feed.searchPosts` answers unauthenticated callers with HTTP 403, while `getPostThread` / `getAuthorFeed` on the same host stay open. The engine therefore claims post and profile URLs only, and `bsky.app/search` deliberately falls through to the browser fallback. Don't "fix" this by adding the endpoint back without auth.
+- **crawl4ai is mandatory.** `OMNIFEED_CRAWL4AI_URL` must be set or the binary exits at startup — the generic fallback fetches through `/crawl`, and crawl4ai is also the browser backend for Reddit. **Exceptions:** the Hacker News engine reads the public Algolia HN API (`hn.algolia.com`), the GitHub engine reads the public GitHub REST API (`api.github.com`), and the Bluesky engine reads the public AT Protocol AppView (`public.api.bsky.app`) directly — none is bot-walled, so a headless browser would only add latency (and lose comments) — and they therefore need outbound access to those three hosts. The Discourse engine does the same against each host listed in `OMNIFEED_DISCOURSE_HOSTS` (public topic JSON), so those hosts need outbound access too. The search verticals (`OMNIFEED_SEARCH_VERTICALS`) add one host beyond those: `api.bsky.app` — the HN vertical reuses `hn.algolia.com`, and the Reddit vertical goes through crawl4ai like the engine.
+- **Bluesky search lives on a different host.** `app.bsky.feed.searchPosts` answers keyless callers with HTTP 200 on `api.bsky.app` but with HTTP 403 on `public.api.bsky.app` (verified 2026-08-17). The search vertical (`internal/search/bluesky`) therefore calls `api.bsky.app`, while the fetch ENGINE deliberately stays on the cached `public.api.bsky.app` for `getPostThread` / `getAuthorFeed` — Bluesky asks public-web use to stay on the cached host. Don't unify the two hosts in either direction. The engine still claims post and profile URLs only, so `bsky.app/search` falls through to the browser fallback.
 - **Never call Reddit directly.** Reddit 403-blocks non-browser clients; the Reddit engine fetches through a real browser via the `browser.Browser` port. See `internal/engine/reddit` and `internal/browser`.
 - **HTTP transports fail closed.** No `OMNIFEED_API_KEY` → the binary refuses to start, unless `OMNIFEED_DEV_NO_AUTH=true` (local only). Stdio MCP is unauthenticated by design.
 - **SSRF:** validate caller-supplied URLs with `httpx.ValidateURL`; `OMNIFEED_BLOCK_PRIVATE_IPS` defaults to on.

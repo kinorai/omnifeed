@@ -21,7 +21,7 @@ A dedicated <b>Reddit engine</b> returns full comment trees as <a href="https://
 the same treatment.
 </p>
 
-- **`web_search`** queries a SearXNG instance (Google/Bing/DDG, Reddit included) and returns ranked URLs with titles and snippets. A `site` argument scopes results to one hostname — use it instead of naming the site in the query text, which the engines read as a topic word.
+- **`web_search`** queries a SearXNG instance (Google/Bing/DDG, Reddit included) and returns ranked URLs with titles and snippets. A `site` argument scopes results to one hostname — use it instead of naming the site in the query text, which the engines read as a topic word. With `OMNIFEED_SEARCH_VERTICALS` set, a scoped search for Hacker News, Reddit or Bluesky is answered by that site's own search API instead — so hits carry points, comments and scores — and falls back to SearXNG whenever the native search declines, finds nothing, or fails.
 - **`fetch_url`** renders any URL through crawl4ai as clean markdown — and dedicated engines return TOON instead: Reddit (threads *and* `/r/{sub}` listings — which honor the URL's own `?t=` time window and `?limit=` post count) through a real browser, plus Hacker News, GitHub issues / pull requests, Bluesky posts and profiles, and Discourse topics read straight from their public APIs.
 
 <img src="https://user-images.githubusercontent.com/74038190/212284100-561aa473-3905-4a80-b561-0d28506553ee.gif" width="100%">
