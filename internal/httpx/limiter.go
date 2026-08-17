@@ -149,6 +149,12 @@ func (s *domainSlot) reserve(now time.Time, minDelay time.Duration) (time.Durati
 	wait += bookWait
 
 	if wait > 0 {
+		// Scheduling noise, not a secret: the jitter exists so goroutines that
+		// were released together do not re-synchronize on the next send. Nothing
+		// downstream is authenticated, keyed or made unguessable by it, and an
+		// attacker who could predict it would learn only when a politeness delay
+		// ends. crypto/rand would be slower, can fail, and would buy nothing.
+		// #nosec G404 -- non-cryptographic timing jitter
 		wait += time.Duration(rand.Intn(500)) * time.Millisecond
 	}
 	return wait, booked
