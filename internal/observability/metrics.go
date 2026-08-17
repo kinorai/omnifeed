@@ -3,6 +3,7 @@ package observability
 import (
 	"net/http"
 	"net/http/pprof"
+	"strconv"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -22,6 +23,8 @@ type Metrics struct {
 	ResponseChars       *prometheus.HistogramVec // engine
 	EngineFallbacks     *prometheus.CounterVec   // from_engine, reason
 	SearxngUnresponsive *prometheus.CounterVec   // engine, error
+	SearxngEngineHits   *prometheus.CounterVec   // engine
+	SearxngEmpty        *prometheus.CounterVec   // scoped
 	RedditRounds        prometheus.Histogram
 	SearchesTotal       *prometheus.CounterVec   // searcher, status, reason
 	SearchSecs          *prometheus.HistogramVec // searcher, status
@@ -73,6 +76,14 @@ func NewMetrics() *Metrics {
 			Name: "omnifeed_searxng_unresponsive_engines_total",
 			Help: "SearXNG engines reported unresponsive per search (the unresponsive_engines field), by engine and error type.",
 		}, []string{"engine", "error"}),
+		SearxngEngineHits: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "omnifeed_searxng_engine_results_total",
+			Help: "Result rows returned per SearXNG engine. The silent-block detector: an engine blocked by its upstream keeps answering HTTP 200 with an empty result set and no unresponsive_engines entry, so it goes flat here while the rest of the pool keeps moving. Alert on the divergence, not on the absolute rate. CAVEAT: a series exists only once that engine has been named in a response (a returned row, or an unresponsive_engines entry). An engine that is ALREADY blocked when the process starts, and blocked silently, mints no series at all — so an alert written as rate(...) == 0 matches nothing for it. Pair the rule with absent_over_time() over the engines you expect in the pool.",
+		}, []string{"engine"}),
+		SearxngEmpty: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "omnifeed_searxng_empty_searches_total",
+			Help: "Searches that returned zero results AND no unresponsive_engines report. SearXNG cannot distinguish these from an honest zero-hit query, so a rising rate — especially with scoped=\"true\" — is the signature of engines that block silently.",
+		}, []string{"scoped"}),
 		RedditRounds: prometheus.NewHistogram(prometheus.HistogramOpts{
 			Name:    "omnifeed_reddit_expansion_rounds",
 			Help:    "Number of /api/morechildren rounds per Reddit crawl.",
@@ -90,6 +101,7 @@ func NewMetrics() *Metrics {
 	}
 	reg.MustRegister(m.RequestsTotal, m.RequestAttempts, m.RequestSecs, m.UpstreamSecs,
 		m.LimiterWaitSecs, m.ResponseChars, m.EngineFallbacks, m.SearxngUnresponsive,
+		m.SearxngEngineHits, m.SearxngEmpty,
 		m.RedditRounds, m.SearchesTotal, m.SearchSecs)
 	reg.MustRegister(
 		collectors.NewGoCollector(),
@@ -150,6 +162,22 @@ func (m *Metrics) ObserveFallback(fromEngine, reason string) {
 // a search response, by engine name and error type.
 func (m *Metrics) ObserveUnresponsiveEngine(engine, errType string) {
 	m.SearxngUnresponsive.WithLabelValues(engine, errType).Inc()
+}
+
+// ObserveEngineResults counts the rows one SearXNG engine contributed to a
+// search response. Engines that block silently — HTTP 200, no error, empty
+// results — are invisible in every other metric, and this is what makes them
+// visible: their series stops advancing while the rest of the pool continues.
+func (m *Metrics) ObserveEngineResults(engine string, rows int) {
+	m.SearxngEngineHits.WithLabelValues(engine).Add(float64(rows))
+}
+
+// ObserveEmptySearch counts a search that came back with no results and no
+// failure report — the shape a silently blocked pool produces, and the shape an
+// honest zero-hit query produces. scoped says whether a `site:` filter was
+// applied, because the site-scoped path is where silent blocks concentrate.
+func (m *Metrics) ObserveEmptySearch(scoped bool) {
+	m.SearxngEmpty.WithLabelValues(strconv.FormatBool(scoped)).Inc()
 }
 
 // ObserveSearch records a single search query result. reason classifies WHY a

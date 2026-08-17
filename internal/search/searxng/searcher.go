@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/kinorai/omnifeed/internal/domain"
 	"github.com/kinorai/omnifeed/internal/httpx"
@@ -22,6 +23,12 @@ import (
 // result page is a few hundred KB at most, so 10MB is a generous safety net.
 const maxResponseBytes = 10 << 20
 
+// defaultMaxWait bounds time spent queued in the pacing limiter when the caller
+// does not set Config.MaxWait. Generous enough to absorb a few queries at a
+// realistic delay, short enough that a caller learns it is being throttled
+// instead of hanging.
+const defaultMaxWait = 15 * time.Second
+
 // Config configures the Searcher.
 type Config struct {
 	Endpoint string // base URL of the SearXNG instance, e.g. http://searxng:8080
@@ -30,15 +37,38 @@ type Config struct {
 	// Metrics, when non-nil, receives per-search unresponsive-engine counts
 	// (omnifeed_searxng_unresponsive_engines_total).
 	Metrics *observability.Metrics
+	// SiteEngines restricts which SearXNG engines run when the caller passes a
+	// Site filter. SearXNG forwards `site:` to the engines rather than applying
+	// it itself, and engines differ wildly in what they do with it: some honour
+	// it, some ignore the operator and answer with unrelated pages, and some
+	// return nothing at all for any `site:` query. On a pool with the last kind
+	// in it, a site-scoped search is answered by whichever engines are left,
+	// with the ignorers' noise ranking high because nothing corroborates it.
+	// Listing the engines that implement the operator keeps the filter
+	// meaningful. Empty (the default) queries the whole pool, as before.
+	SiteEngines []string
+	// Limiter, when non-nil, paces queries to the SearXNG instance. It exists
+	// for the ENGINES behind SearXNG, not for SearXNG itself: SearXNG fans one
+	// query out to every enabled engine, so each engine sees exactly this
+	// searcher's query rate, and an engine that decides the rate is bot-like
+	// suspends itself (or gets CAPTCHA'd) for the whole pool's benefit. Nil
+	// keeps the previous unpaced behaviour.
+	Limiter *httpx.DomainLimiter
+	// MaxWait caps how long a query may sit in the Limiter before it gives up.
+	// Ignored when Limiter is nil. Defaults to defaultMaxWait.
+	MaxWait time.Duration
 }
 
 // Searcher queries a SearXNG instance and reshapes results into the canonical
 // domain.SearchResult.
 type Searcher struct {
-	searchURL string
-	client    *httpx.Client
-	logger    *slog.Logger
-	metrics   *observability.Metrics
+	searchURL   string
+	client      *httpx.Client
+	logger      *slog.Logger
+	metrics     *observability.Metrics
+	siteEngines string // pre-joined for the `engines` param; empty = all engines
+	limiter     *httpx.DomainLimiter
+	maxWait     time.Duration
 }
 
 // New returns a Searcher wired with the given config.
@@ -46,11 +76,17 @@ func New(cfg Config) *Searcher {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
+	if cfg.MaxWait <= 0 {
+		cfg.MaxWait = defaultMaxWait
+	}
 	return &Searcher{
-		searchURL: strings.TrimRight(cfg.Endpoint, "/") + "/search",
-		client:    cfg.Client.WithUpstream("searxng", "search"),
-		logger:    cfg.Logger,
-		metrics:   cfg.Metrics,
+		searchURL:   strings.TrimRight(cfg.Endpoint, "/") + "/search",
+		client:      cfg.Client.WithUpstream("searxng", "search"),
+		logger:      cfg.Logger,
+		metrics:     cfg.Metrics,
+		siteEngines: strings.Join(cfg.SiteEngines, ","),
+		limiter:     cfg.Limiter,
+		maxWait:     cfg.MaxWait,
 	}
 }
 
@@ -85,13 +121,38 @@ func (s *Searcher) Search(ctx context.Context, query string, opts domain.SearchO
 	}
 
 	params := url.Values{}
-	params.Set("q", siteScoped(query, opts.Site))
+	scoped := siteScoped(query, opts.Site)
+	params.Set("q", scoped)
 	params.Set("format", "json")
+	// Only when the operator actually made it into the query: an invalid Site is
+	// dropped by siteScoped, and narrowing the engine pool for a search that is
+	// no longer site-scoped would cost recall for nothing.
+	if s.siteEngines != "" && scoped != query {
+		params.Set("engines", s.siteEngines)
+	}
 	if opts.TimeRange != "" {
 		params.Set("time_range", opts.TimeRange)
 	}
 	if opts.Language != "" {
 		params.Set("language", opts.Language)
+	}
+
+	// Pacing is bounded by maxWait, not left to run to the caller's deadline. At
+	// a quota of 14/90s a fan-out of parallel searches serializes behind one
+	// slot, and an unbounded wait would let the last caller queue for minutes —
+	// past the HTTP server's write timeout, which drops the connection with no
+	// response body at all. Failing fast with a timeout tells the caller to back
+	// off, and the limiter's outcome="canceled" series makes the pressure
+	// visible. The error is classified rather than returned raw: a local pacing
+	// wait must not be reported to the caller as an upstream SearXNG failure.
+	if s.limiter != nil {
+		waitCtx, cancel := context.WithTimeout(ctx, s.maxWait)
+		release, lerr := s.limiter.Acquire(waitCtx, s.Name(), s.searchURL)
+		cancel()
+		if lerr != nil {
+			return nil, httpx.ClassifyClientError(lerr, domain.KindUpstreamError)
+		}
+		defer release()
 	}
 
 	resp, err := s.client.DoRetry(ctx, http.MethodGet, s.searchURL+"?"+params.Encode(),
@@ -129,6 +190,21 @@ func (s *Searcher) Search(ctx context.Context, query string, opts domain.SearchO
 			"unresponsive_engines", formatUnresponsive(sr.UnresponsiveEngines),
 			"results", len(sr.Results))
 		s.countUnresponsive(sr.UnresponsiveEngines)
+	}
+
+	// Zero results with NO failure report is the shape a silently blocked pool
+	// produces — several engines answer a block with HTTP 200 and an empty
+	// result set, which SearXNG cannot tell apart from an honest zero-hit
+	// query. Neither can this code, so it does not fail the search. It records
+	// the two signals that let the difference be seen over time: which engines
+	// are still contributing rows, and how often searches come back empty.
+	s.countEngineResults(sr.Results)
+	if len(sr.Results) == 0 && len(sr.UnresponsiveEngines) == 0 {
+		s.logger.Warn("searxng returned no results and no failure report",
+			"query", scoped, "site_scoped", scoped != query)
+		if s.metrics != nil {
+			s.metrics.ObserveEmptySearch(scoped != query)
+		}
 	}
 
 	results := make([]domain.SearchResult, 0, len(sr.Results))
@@ -180,6 +256,31 @@ func (s *Searcher) countUnresponsive(pairs [][]string) {
 			errType = normalizeEngineError(pair[1])
 		}
 		s.metrics.ObserveUnresponsiveEngine(pair[0], errType)
+		// Mint the engine's results series at zero. A counter that never
+		// existed cannot go flat, so an engine already failing when the process
+		// started would be invisible to a rate()-based alert; naming it here
+		// creates the series the moment SearXNG first mentions the engine.
+		s.metrics.ObserveEngineResults(pair[0], 0)
+	}
+}
+
+// countEngineResults tallies how many rows each engine contributed, counting
+// the full response rather than the caller's limited slice — the metric answers
+// "is this engine still returning anything", which a caller-side limit would
+// distort. Rows with no engine name are skipped: the label must stay bounded by
+// the instance's own engine list.
+func (s *Searcher) countEngineResults(hits []searchHit) {
+	if s.metrics == nil || len(hits) == 0 {
+		return
+	}
+	rows := make(map[string]int, len(hits))
+	for _, hit := range hits {
+		if hit.Engine != "" {
+			rows[hit.Engine]++
+		}
+	}
+	for engine, n := range rows {
+		s.metrics.ObserveEngineResults(engine, n)
 	}
 }
 
