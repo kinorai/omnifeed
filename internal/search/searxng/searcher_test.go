@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
@@ -270,5 +271,253 @@ func TestSearchSiteFilter(t *testing.T) {
 				t.Errorf("q = %q, want %q", gotQ, tc.wantQ)
 			}
 		})
+	}
+}
+
+// SiteEngines narrows the pool for site-scoped searches only. Engines that do
+// not implement `site:` answer such a query with unrelated pages or with
+// nothing at all, so they must not be asked; every other search still runs on
+// the whole pool.
+func TestSearchSiteEngines(t *testing.T) {
+	for _, tc := range []struct {
+		name, site  string
+		siteEngines []string
+		wantEngines string
+	}{
+		{"site-scoped narrows the pool", "reddit.com", []string{"privacywall", "google cse"}, "privacywall,google cse"},
+		{"unscoped search keeps every engine", "", []string{"privacywall"}, ""},
+		// siteScoped drops an invalid site, so the query is no longer scoped and
+		// narrowing it would lose recall for nothing.
+		{"dropped site filter does not narrow", "evil.com foo:bar", []string{"privacywall"}, ""},
+		{"unset config queries the whole pool", "reddit.com", nil, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var gotEngines string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotEngines = r.URL.Query().Get("engines")
+				_, _ = io.WriteString(w, `{"results":[]}`)
+			}))
+			defer srv.Close()
+
+			s := New(Config{Endpoint: srv.URL, Client: httpx.New(nil), SiteEngines: tc.siteEngines})
+			if _, err := s.Search(context.Background(), "kubernetes plex",
+				domain.SearchOptions{Site: tc.site}); err != nil {
+				t.Fatalf("Search: %v", err)
+			}
+			if gotEngines != tc.wantEngines {
+				t.Errorf("engines = %q, want %q", gotEngines, tc.wantEngines)
+			}
+		})
+	}
+}
+
+// A search that comes back with no results and no failure report is the shape a
+// silently blocked pool produces. It stays a success (it is indistinguishable
+// from an honest zero-hit query), but it must be counted, split by whether the
+// caller scoped the search — that is where silent blocks concentrate.
+func TestSearchCountsEmptySearches(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		body       string
+		site       string
+		wantScoped string // label value; "" means nothing must be counted
+	}{
+		{
+			name:       "unscoped empty, no failure report",
+			body:       `{"results":[]}`,
+			wantScoped: "false",
+		},
+		{
+			name:       "site-scoped empty, no failure report",
+			body:       `{"results":[]}`,
+			site:       "reddit.com",
+			wantScoped: "true",
+		},
+		{
+			// An engine said it failed, so the emptiness is explained. That path
+			// already has its own counter and must not double-count here.
+			name: "empty WITH a failure report is not a silent zero",
+			body: `{"results":[],"unresponsive_engines":[["brave","Suspended: too many requests"]]}`,
+		},
+		{
+			name: "results present",
+			body: `{"results":[{"title":"a","url":"https://example.com/a","engine":"privacywall"}]}`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := observability.NewMetrics()
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = io.WriteString(w, tc.body)
+			}))
+			defer srv.Close()
+
+			s := New(Config{Endpoint: srv.URL, Client: httpx.New(srv.Client()), Metrics: m})
+			if _, err := s.Search(context.Background(), "q", domain.SearchOptions{Site: tc.site}); err != nil {
+				t.Fatalf("Search: %v", err)
+			}
+
+			for _, label := range []string{"true", "false"} {
+				var dm dto.Metric
+				if err := m.SearxngEmpty.WithLabelValues(label).Write(&dm); err != nil {
+					t.Fatal(err)
+				}
+				want := 0.0
+				if label == tc.wantScoped {
+					want = 1
+				}
+				if got := dm.GetCounter().GetValue(); got != want {
+					t.Fatalf("empty_searches{scoped=%q} = %v, want %v", label, got, want)
+				}
+			}
+		})
+	}
+}
+
+// Per-engine row counts are what make a silent block visible: the blocked
+// engine's series stops advancing while the rest of the pool keeps moving.
+// The count must reflect the whole response, not the caller's limit.
+func TestSearchCountsResultsPerEngine(t *testing.T) {
+	body := `{"results":[
+		{"title":"a","url":"https://example.com/a","engine":"privacywall"},
+		{"title":"b","url":"https://example.com/b","engine":"privacywall"},
+		{"title":"c","url":"https://example.com/c","engine":"searchtoday"},
+		{"title":"d","url":"https://example.com/d","engine":""}
+	]}`
+	m := observability.NewMetrics()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, body)
+	}))
+	defer srv.Close()
+
+	s := New(Config{Endpoint: srv.URL, Client: httpx.New(srv.Client()), Metrics: m})
+	// Limit 1: the caller sees one result, but the metric must still see all
+	// four rows — it answers "is this engine alive", not "what did we return".
+	if _, err := s.Search(context.Background(), "q", domain.SearchOptions{Limit: 1}); err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+
+	for engine, want := range map[string]float64{"privacywall": 2, "searchtoday": 1} {
+		var dm dto.Metric
+		if err := m.SearxngEngineHits.WithLabelValues(engine).Write(&dm); err != nil {
+			t.Fatal(err)
+		}
+		if got := dm.GetCounter().GetValue(); got != want {
+			t.Fatalf("engine_results{engine=%q} = %v, want %v", engine, got, want)
+		}
+	}
+	// The unnamed engine must not mint a series: the label stays bounded by the
+	// instance's own engine list.
+	ch := make(chan prometheus.Metric, 8)
+	m.SearxngEngineHits.Collect(ch)
+	close(ch)
+	if got := len(ch); got != 2 {
+		t.Fatalf("engine series = %d, want 2 (blank engine skipped)", got)
+	}
+}
+
+// The limiter is opt-in and must gate the request. With the quota spent and a
+// deadline shorter than the window, Search must fail in the limiter rather than
+// reach the server.
+func TestSearchRespectsTheLimiter(t *testing.T) {
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		_, _ = io.WriteString(w, `{"results":[]}`)
+	}))
+	defer srv.Close()
+
+	s := New(Config{
+		Endpoint: srv.URL,
+		Client:   httpx.New(srv.Client()),
+		Limiter:  httpx.NewDomainQuotaLimiter(1, 0, 1, time.Hour),
+	})
+
+	if _, err := s.Search(context.Background(), "first", domain.SearchOptions{}); err != nil {
+		t.Fatalf("first Search: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if _, err := s.Search(ctx, "second", domain.SearchOptions{}); err == nil {
+		t.Fatal("second Search: want a limiter deadline error, got nil")
+	}
+	if calls != 1 {
+		t.Fatalf("server calls = %d, want 1 (the second query must not reach it)", calls)
+	}
+}
+
+// A query must not sit in the limiter indefinitely: with no caller deadline the
+// searcher's own MaxWait has to end the wait, or a fan-out queues past the HTTP
+// server's write timeout and the caller gets no response body at all.
+// The error must also be CLASSIFIED — a local pacing wait reported raw is
+// rendered by the REST transport as an upstream SearXNG failure (HTTP 502),
+// which sends triage at the wrong component.
+func TestSearchBoundsTheLimiterWait(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"results":[]}`)
+	}))
+	defer srv.Close()
+
+	s := New(Config{
+		Endpoint: srv.URL,
+		Client:   httpx.New(srv.Client()),
+		Limiter:  httpx.NewDomainQuotaLimiter(1, 0, 1, time.Hour),
+		MaxWait:  20 * time.Millisecond,
+	})
+
+	if _, err := s.Search(context.Background(), "first", domain.SearchOptions{}); err != nil {
+		t.Fatalf("first Search: %v", err)
+	}
+
+	// context.Background() never expires: only MaxWait can end this.
+	start := time.Now()
+	_, err := s.Search(context.Background(), "second", domain.SearchOptions{})
+	if err == nil {
+		t.Fatal("second Search: want a MaxWait timeout, got nil")
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("second Search blocked for %v, want ~MaxWait (20ms)", elapsed)
+	}
+
+	var fe *domain.FetchError
+	if !errors.As(err, &fe) {
+		t.Fatalf("want a classified *domain.FetchError, got %T: %v", err, err)
+	}
+	if fe.Kind != domain.KindTimeout {
+		t.Fatalf("Kind = %q, want %q (a pacing wait is our own budget, not an upstream fault)", fe.Kind, domain.KindTimeout)
+	}
+}
+
+// An engine that SearXNG reports as unresponsive must mint its results series
+// at zero. A counter that never existed cannot go flat, so without this an
+// engine already failing at process start is invisible to a rate()-based alert.
+func TestSearchMintsSeriesForUnresponsiveEngines(t *testing.T) {
+	m := observability.NewMetrics()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"results":[{"title":"a","url":"https://example.com/a","engine":"searchtoday"}],`+
+			`"unresponsive_engines":[["privacywall","Suspended: too many requests"]]}`)
+	}))
+	defer srv.Close()
+
+	s := New(Config{Endpoint: srv.URL, Client: httpx.New(srv.Client()), Metrics: m})
+	if _, err := s.Search(context.Background(), "q", domain.SearchOptions{}); err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+
+	for engine, want := range map[string]float64{"searchtoday": 1, "privacywall": 0} {
+		var dm dto.Metric
+		if err := m.SearxngEngineHits.WithLabelValues(engine).Write(&dm); err != nil {
+			t.Fatal(err)
+		}
+		if got := dm.GetCounter().GetValue(); got != want {
+			t.Fatalf("engine_results{engine=%q} = %v, want %v", engine, got, want)
+		}
+	}
+	// Both series must exist — the blocked engine's presence is the point.
+	ch := make(chan prometheus.Metric, 8)
+	m.SearxngEngineHits.Collect(ch)
+	close(ch)
+	if got := len(ch); got != 2 {
+		t.Fatalf("engine series = %d, want 2 (the unresponsive engine must be minted)", got)
 	}
 }
