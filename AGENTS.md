@@ -49,7 +49,7 @@ internal/
     searxng/     Searcher adapter (JSON API) — the fallback under the router
     router/      Searcher: dispatches a site-scoped query to a vertical below
     hackernews/  Searcher: Algolia HN search API
-    reddit/      Searcher: subreddit in-site search, through the browser port
+    reddit/      Searcher: Reddit in-site search, through the browser port
     bluesky/     Searcher: app.bsky.feed.searchPosts
   transport/
     mcp/         MCP server (stdio + Streamable HTTP) — pure JSON-RPC transport

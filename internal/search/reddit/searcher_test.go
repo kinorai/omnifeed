@@ -85,45 +85,40 @@ func newTestSearcher(body string) (*Searcher, *fakeSession) {
 	return New(Config{Browser: &fakeBrowser{session: session}}), session
 }
 
-// The subreddit is the whole point of this searcher: it scopes the in-site
-// search, and it must not stay in the query text (Reddit would match "r/x" as a
-// literal term).
+// The subreddit scopes the in-site search, and it must not stay in the query
+// text (Reddit would match "r/x" as a literal term). A query naming none runs
+// sitewide.
 func TestSearchExtractsTheSubreddit(t *testing.T) {
 	for _, tc := range []struct {
-		name, query   string
-		wantPath      string
-		wantQ         string
-		wantUnsupport bool
+		name, query    string
+		wantPath       string
+		wantQ          string
+		wantRestrictSR string
 	}{
 		{
 			name:     "subreddit token scopes the search and leaves the query",
 			query:    "r/kubernetes longhorn disk pressure",
 			wantPath: "/r/kubernetes/search.json", wantQ: "longhorn disk pressure",
+			wantRestrictSR: "1",
 		},
 		{
 			name:     "a mid-query token works too",
 			query:    "longhorn in r/selfhosted please",
 			wantPath: "/r/selfhosted/search.json", wantQ: "longhorn in please",
+			wantRestrictSR: "1",
 		},
 		{
-			// Sitewide in-site search measured worse than a web search, so a
-			// query with no subreddit is declined and the router uses SearXNG.
-			name: "no subreddit is declined", query: "longhorn disk pressure",
-			wantUnsupport: true,
+			// No subreddit runs sitewide: same in-site search, no restrict_sr,
+			// which Reddit ignores outside /r/<sub>/ anyway.
+			name:     "no subreddit searches all of reddit",
+			query:    "longhorn disk pressure",
+			wantPath: "/search.json", wantQ: "longhorn disk pressure",
+			wantRestrictSR: "",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s, session := newTestSearcher(listingFixture)
 			_, err := s.Search(context.Background(), tc.query, domain.SearchOptions{})
-			if tc.wantUnsupport {
-				if !errors.Is(err, domain.ErrSearchUnsupported) {
-					t.Fatalf("err = %v, want domain.ErrSearchUnsupported", err)
-				}
-				if len(session.evals) != 0 {
-					t.Fatalf("declined query still hit the browser: %v", session.navs)
-				}
-				return
-			}
 			if err != nil {
 				t.Fatalf("Search: %v", err)
 			}
@@ -134,8 +129,8 @@ func TestSearchExtractsTheSubreddit(t *testing.T) {
 			if got := u.Query().Get("q"); got != tc.wantQ {
 				t.Errorf("q = %q, want %q", got, tc.wantQ)
 			}
-			if got := u.Query().Get("restrict_sr"); got != "1" {
-				t.Errorf("restrict_sr = %q, want 1", got)
+			if got := u.Query().Get("restrict_sr"); got != tc.wantRestrictSR {
+				t.Errorf("restrict_sr = %q, want %q", got, tc.wantRestrictSR)
 			}
 		})
 	}
