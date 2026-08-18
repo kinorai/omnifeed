@@ -30,6 +30,26 @@ type Config struct {
     // Metrics, when non-nil, receives per-search unresponsive-engine counts
     // (omnifeed_searxng_unresponsive_engines_total).
     Metrics *observability.Metrics
+    // SiteEngines restricts which SearXNG engines run when the caller passes a
+    // Site filter. SearXNG forwards `site:` to the engines rather than applying
+    // it itself, and engines differ wildly in what they do with it: some honour
+    // it, some ignore the operator and answer with unrelated pages, and some
+    // return nothing at all for any `site:` query. On a pool with the last kind
+    // in it, a site-scoped search is answered by whichever engines are left,
+    // with the ignorers' noise ranking high because nothing corroborates it.
+    // Listing the engines that implement the operator keeps the filter
+    // meaningful. Empty (the default) queries the whole pool, as before.
+    SiteEngines []string
+    // Limiter, when non-nil, paces queries to the SearXNG instance. It exists
+    // for the ENGINES behind SearXNG, not for SearXNG itself: SearXNG fans one
+    // query out to every enabled engine, so each engine sees exactly this
+    // searcher's query rate, and an engine that decides the rate is bot-like
+    // suspends itself (or gets CAPTCHA'd) for the whole pool's benefit. Nil
+    // keeps the previous unpaced behaviour.
+    Limiter *httpx.DomainLimiter
+    // MaxWait caps how long a query may sit in the Limiter before it gives up.
+    // Ignored when Limiter is nil. Defaults to defaultMaxWait.
+    MaxWait time.Duration
 }
 ```
 
