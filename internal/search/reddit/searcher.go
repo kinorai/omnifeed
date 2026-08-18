@@ -3,12 +3,13 @@
 // non-browser HTTP clients (the same wall the Reddit engine clears — see
 // internal/engine/reddit).
 //
-// It serves subreddit-scoped queries only. Measured 2026-08-17 across a set of
-// test queries: subreddit-scoped in-site search beat a `site:reddit.com` web
-// search on every one of them, while UNscoped sitewide in-site search was the
-// weakest mode of all — Reddit's relevance ranking is good inside a community
-// and poor across all of them. So a query that names no subreddit is declined
-// with domain.ErrSearchUnsupported and the router hands it to SearXNG.
+// A query that names an `r/<sub>` is scoped to that community; any other query
+// runs against Reddit's sitewide search. Measured 2026-08-17: subreddit-scoped
+// in-site search beat a `site:reddit.com` web search on every test query, while
+// sitewide in-site search ranked worse than that web search — Reddit's
+// relevance ranking is good inside a community and weak across all of them. The
+// sitewide mode is served anyway, so `site=reddit.com` always reaches Reddit's
+// own index and returns its ranking signals (score, comments, community).
 package reddit
 
 import (
@@ -102,25 +103,27 @@ type listingPost struct {
 	Selftext    string  `json:"selftext"`
 }
 
-// Search runs the query against the subreddit named in the query text. It
-// returns domain.ErrSearchUnsupported when no subreddit is named.
+// Search runs the query against the subreddit named in the query text, or
+// against Reddit's sitewide search when the query names none.
 func (s *Searcher) Search(ctx context.Context, query string, opts domain.SearchOptions) ([]domain.SearchResult, error) {
 	sub, terms := splitSubreddit(query)
-	if sub == "" {
-		return nil, domain.ErrSearchUnsupported
-	}
 	if strings.TrimSpace(terms) == "" {
 		return nil, fmt.Errorf("query is empty apart from the subreddit")
 	}
 
 	params := url.Values{}
 	params.Set("q", terms)
-	params.Set("restrict_sr", "1")
 	params.Set("sort", "relevance")
 	params.Set("t", timeWindow(opts.TimeRange))
 	params.Set("limit", strconv.Itoa(clampLimit(opts.Limit)))
 
-	page := redditOrigin + "/r/" + sub + "/"
+	page := redditOrigin + "/"
+	if sub != "" {
+		// restrict_sr only means anything under /r/<sub>/, and Reddit ignores
+		// it sitewide, so the two travel together.
+		params.Set("restrict_sr", "1")
+		page = redditOrigin + "/r/" + sub + "/"
+	}
 	searchURL := page + "search.json?" + params.Encode()
 
 	if s.limiter != nil {
@@ -235,8 +238,9 @@ func mapPost(p listingPost) domain.SearchResult {
 }
 
 // splitSubreddit pulls the first `r/<name>` token out of the query and returns
-// it with the remaining query text. The token is removed because Reddit's
-// in-site search would otherwise match it as a literal term.
+// it with the remaining query text; an empty sub means the query named none and
+// the search runs sitewide. The token is removed because Reddit's in-site
+// search would otherwise match it as a literal term.
 func splitSubreddit(query string) (sub, terms string) {
 	m := subredditPattern.FindStringSubmatchIndex(query)
 	if m == nil {
