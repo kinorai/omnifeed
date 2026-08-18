@@ -10,9 +10,18 @@ Package config loads all runtime configuration from OMNIFEED\_\-prefixed environ
 
 ## Index
 
+- [Variables](<#variables>)
 - [type Config](<#Config>)
   - [func Load\(\) \(Config, error\)](<#Load>)
 
+
+## Variables
+
+<a name="ValidSearchVerticals"></a>ValidSearchVerticals is the complete set of native site searches OMNIFEED\_SEARCH\_VERTICALS may name. Each one is wired to one host in main.go.
+
+```go
+var ValidSearchVerticals = []string{"hackernews", "reddit", "bluesky"}
+```
 
 <a name="Config"></a>
 ## type Config
@@ -79,6 +88,42 @@ type Config struct {
     // Upstream SearXNG (optional). Empty disables the `search` MCP tool.
     SearXNGURL     string
     SearXNGTimeout time.Duration
+
+    // SearXNGSiteEngines names the engines that run when the caller passes a
+    // `site` filter. SearXNG hands `site:` to the engines instead of applying it
+    // itself, and an engine that does not implement the operator either ignores
+    // it (answering with unrelated pages) or returns nothing at all — so on a
+    // mixed pool a site-scoped search comes back thin and noisy. Empty (the
+    // default) queries the whole pool; set it to the subset that honours
+    // `site:`, e.g. OMNIFEED_SEARXNG_SITE_ENGINES=privacywall,google cse
+    SearXNGSiteEngines []string
+
+    // SearXNGDelay and SearXNGQuota/SearXNGQuotaWindow pace queries to SearXNG.
+    // They protect the ENGINES behind it, not SearXNG itself: one query fans out
+    // to every enabled engine, so each engine sees exactly omnifeed's query
+    // rate, and an engine that judges that rate bot-like suspends itself or
+    // serves a CAPTCHA.
+    //
+    // Both controls are needed because engines enforce two different limits.
+    // Measured on this deployment's pool (2026-08-17): the strictest engine kept
+    // answering at a 3s spacing from a quiet start, but blocked after ~20
+    // requests in ~85s — it counts requests in a window. A delay alone run
+    // continuously would send 30 per 90s and trip it, so the delay shapes the
+    // gap and the quota bounds the burst.
+    //
+    // Both default to off, which keeps the previous unpaced behaviour. Set them
+    // to the values measured against your own pool.
+    SearXNGDelay       time.Duration
+    SearXNGQuota       int
+    SearXNGQuotaWindow time.Duration
+
+    // SearchVerticals names the native site searches a site-scoped query is
+    // routed to instead of SearXNG: hackernews, reddit, bluesky. A vertical
+    // answers with the site's own ranking signals (points, comments, score),
+    // which scraped web engines never expose. Anything a vertical declines,
+    // comes back empty on, or fails at falls back to SearXNG — so the router
+    // needs OMNIFEED_SEARXNG_URL. Empty (the default) disables routing entirely.
+    SearchVerticals []string
 
     // Search tool limits.
     SearchMaxResults int

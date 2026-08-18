@@ -21,6 +21,7 @@ Package httpx provides HTTP utilities shared across engines: a retrying HTTP cli
   - [func \(c \*Client\) WithUpstream\(upstream, op string\) \*Client](<#Client.WithUpstream>)
 - [type DomainLimiter](<#DomainLimiter>)
   - [func NewDomainLimiter\(maxConcurrent int, minDelay time.Duration\) \*DomainLimiter](<#NewDomainLimiter>)
+  - [func NewDomainQuotaLimiter\(maxConcurrent int, minDelay time.Duration, quota int, window time.Duration\) \*DomainLimiter](<#NewDomainQuotaLimiter>)
   - [func \(d \*DomainLimiter\) Acquire\(ctx context.Context, engine, rawURL string\) \(func\(\), error\)](<#DomainLimiter.Acquire>)
 - [type RetryConfig](<#RetryConfig>)
 - [type StatusError](<#StatusError>)
@@ -137,7 +138,7 @@ WithUpstream returns a shallow copy of c whose attempts are labeled with the giv
 <a name="DomainLimiter"></a>
 ## type DomainLimiter
 
-DomainLimiter caps concurrency and enforces a minimum delay between successive requests to the same domain. The delay carries a small random jitter so bursts don't synchronize across goroutines.
+DomainLimiter caps concurrency and enforces a minimum delay between successive requests to the same domain. The delay carries a small random jitter so bursts don't synchronize across goroutines. It can additionally cap how many requests are admitted within a rolling window \(see NewDomainQuotaLimiter\).
 
 ```go
 type DomainLimiter struct {
@@ -159,7 +160,18 @@ type DomainLimiter struct {
 func NewDomainLimiter(maxConcurrent int, minDelay time.Duration) *DomainLimiter
 ```
 
-NewDomainLimiter returns a limiter with the given concurrency cap and per\-domain minimum delay.
+NewDomainLimiter returns a limiter with the given concurrency cap and per\-domain minimum delay, and no rolling\-window cap.
+
+<a name="NewDomainQuotaLimiter"></a>
+### func NewDomainQuotaLimiter
+
+```go
+func NewDomainQuotaLimiter(maxConcurrent int, minDelay time.Duration, quota int, window time.Duration) *DomainLimiter
+```
+
+NewDomainQuotaLimiter returns a limiter that also admits at most \`quota\` requests per domain within any rolling \`window\`. quota \<= 0 disables that cap, making this identical to NewDomainLimiter.
+
+A minimum delay alone cannot express the limit some upstreams actually enforce. Measured against this deployment's search pool on 2026\-08\-17: one engine kept answering at a 3s spacing from a quiet start, yet blocked after \~20 requests in \~85s — it counts requests in a window, not the gap between them. A 3s delay run continuously sends 30 requests per 90s and trips it, so the two controls are complementary: the delay shapes the gap, the quota bounds the burst.
 
 <a name="DomainLimiter.Acquire"></a>
 ### func \(\*DomainLimiter\) Acquire

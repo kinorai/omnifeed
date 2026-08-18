@@ -23,10 +23,13 @@ Package observability wires structured logging, Prometheus metrics, and Kubernet
   - [func NewMetrics\(\) \*Metrics](<#NewMetrics>)
   - [func \(m \*Metrics\) Observe\(engine, tenant, status, reason string, duration time.Duration\)](<#Metrics.Observe>)
   - [func \(m \*Metrics\) ObserveAttempt\(upstream string, retry bool\)](<#Metrics.ObserveAttempt>)
+  - [func \(m \*Metrics\) ObserveEmptySearch\(scoped bool\)](<#Metrics.ObserveEmptySearch>)
+  - [func \(m \*Metrics\) ObserveEngineResults\(engine string, rows int\)](<#Metrics.ObserveEngineResults>)
   - [func \(m \*Metrics\) ObserveFallback\(fromEngine, reason string\)](<#Metrics.ObserveFallback>)
   - [func \(m \*Metrics\) ObserveLimiterWait\(engine, outcome string, duration time.Duration\)](<#Metrics.ObserveLimiterWait>)
   - [func \(m \*Metrics\) ObserveResponseChars\(engine string, chars int\)](<#Metrics.ObserveResponseChars>)
   - [func \(m \*Metrics\) ObserveSearch\(searcher, status, reason string, duration time.Duration\)](<#Metrics.ObserveSearch>)
+  - [func \(m \*Metrics\) ObserveSearchRoute\(vertical, outcome string\)](<#Metrics.ObserveSearchRoute>)
   - [func \(m \*Metrics\) ObserveUnresponsiveEngine\(engine, errType string\)](<#Metrics.ObserveUnresponsiveEngine>)
   - [func \(m \*Metrics\) ObserveUpstream\(upstream, op, status string, duration time.Duration\)](<#Metrics.ObserveUpstream>)
   - [func \(m \*Metrics\) RegisterMetrics\(mux \*http.ServeMux\)](<#Metrics.RegisterMetrics>)
@@ -137,9 +140,12 @@ type Metrics struct {
     ResponseChars       *prometheus.HistogramVec // engine
     EngineFallbacks     *prometheus.CounterVec   // from_engine, reason
     SearxngUnresponsive *prometheus.CounterVec   // engine, error
+    SearxngEngineHits   *prometheus.CounterVec   // engine
+    SearxngEmpty        *prometheus.CounterVec   // scoped
     RedditRounds        prometheus.Histogram
     SearchesTotal       *prometheus.CounterVec   // searcher, status, reason
     SearchSecs          *prometheus.HistogramVec // searcher, status
+    SearchRoutes        *prometheus.CounterVec   // vertical, outcome
     // contains filtered or unexported fields
 }
 ```
@@ -170,6 +176,24 @@ func (m *Metrics) ObserveAttempt(upstream string, retry bool)
 ```
 
 ObserveAttempt records one HTTP attempt from the retrying client against the named upstream. retry is false for the first try and true for each retry, so attempt="retry" counts the re\-drives that \#2's RetryableStatus veto removes for non\-transient blocks.
+
+<a name="Metrics.ObserveEmptySearch"></a>
+### func \(\*Metrics\) ObserveEmptySearch
+
+```go
+func (m *Metrics) ObserveEmptySearch(scoped bool)
+```
+
+ObserveEmptySearch counts a search that came back with no results and no failure report — the shape a silently blocked pool produces, and the shape an honest zero\-hit query produces. scoped says whether a \`site:\` filter was applied, because the site\-scoped path is where silent blocks concentrate.
+
+<a name="Metrics.ObserveEngineResults"></a>
+### func \(\*Metrics\) ObserveEngineResults
+
+```go
+func (m *Metrics) ObserveEngineResults(engine string, rows int)
+```
+
+ObserveEngineResults counts the rows one SearXNG engine contributed to a search response. Engines that block silently — HTTP 200, no error, empty results — are invisible in every other metric, and this is what makes them visible: their series stops advancing while the rest of the pool continues.
 
 <a name="Metrics.ObserveFallback"></a>
 ### func \(\*Metrics\) ObserveFallback
@@ -206,6 +230,15 @@ func (m *Metrics) ObserveSearch(searcher, status, reason string, duration time.D
 ```
 
 ObserveSearch records a single search query result. reason classifies WHY a search failed \(see Reason\); it is "ok" on success. SearchSecs stays keyed on searcher\+status only — adding reason would just inflate histogram cardinality.
+
+<a name="Metrics.ObserveSearchRoute"></a>
+### func \(\*Metrics\) ObserveSearchRoute
+
+```go
+func (m *Metrics) ObserveSearchRoute(vertical, outcome string)
+```
+
+ObserveSearchRoute counts one router dispatch to a native vertical searcher. outcome is "served", "empty", "declined" or "error"; everything but "served" was followed by a SearXNG fallback query.
 
 <a name="Metrics.ObserveUnresponsiveEngine"></a>
 ### func \(\*Metrics\) ObserveUnresponsiveEngine
