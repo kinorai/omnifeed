@@ -103,14 +103,6 @@ type Config struct {
 	SearXNGQuota       int
 	SearXNGQuotaWindow time.Duration
 
-	// SearchVerticals names the native site searches a site-scoped query is
-	// routed to instead of SearXNG: hackernews, reddit, bluesky. A vertical
-	// answers with the site's own ranking signals (points, comments, score),
-	// which scraped web engines never expose. Anything a vertical declines,
-	// comes back empty on, or fails at falls back to SearXNG — so the router
-	// needs OMNIFEED_SEARXNG_URL. Empty (the default) disables routing entirely.
-	SearchVerticals []string
-
 	// SearchAudit controls the per-search audit log: "off", "summary" or
 	// "full". It is deliberately NOT a log level. A level answers "how bad is
 	// this?", while this stream answers "what did the pool return?" — putting it
@@ -175,10 +167,6 @@ type Config struct {
 // their own list via OMNIFEED_DISCOURSE_HOSTS.
 const defaultDiscourseHosts = "meta.discourse.org,discuss.python.org,users.rust-lang.org,internals.rust-lang.org,discuss.pytorch.org"
 
-// ValidSearchVerticals is the complete set of native site searches
-// OMNIFEED_SEARCH_VERTICALS may name. Each one is wired to one host in main.go.
-var ValidSearchVerticals = []string{"hackernews", "reddit", "bluesky"}
-
 // ValidSearchAudit is the complete set of OMNIFEED_SEARCH_AUDIT modes.
 var ValidSearchAudit = []string{"off", "summary", "full"}
 
@@ -221,9 +209,6 @@ func Load() (Config, error) {
 	// which splitHosts' trim+lowercase preserves.
 	c.SearXNGSiteEngines = splitHosts(env("OMNIFEED_SEARXNG_SITE_ENGINES", ""))
 
-	// Vertical names are lowercase identifiers; splitHosts' trim+lowercase and
-	// empty-entry dropping are exactly the parsing they need.
-	c.SearchVerticals = splitHosts(env("OMNIFEED_SEARCH_VERTICALS", ""))
 	c.SearchAudit = strings.ToLower(strings.TrimSpace(env("OMNIFEED_SEARCH_AUDIT", "off")))
 
 	var err error
@@ -343,19 +328,6 @@ func Load() (Config, error) {
 	}
 	if c.RedditMaxTopLevel < 0 {
 		return c, fmt.Errorf("OMNIFEED_REDDIT_MAX_TOP_LEVEL must be >= 0 (0 = unlimited), got %d", c.RedditMaxTopLevel)
-	}
-
-	for _, v := range c.SearchVerticals {
-		if !slices.Contains(ValidSearchVerticals, v) {
-			return c, fmt.Errorf("OMNIFEED_SEARCH_VERTICALS must list only %s, got %q",
-				strings.Join(ValidSearchVerticals, ", "), v)
-		}
-	}
-	// Every vertical can decline, come back empty, or fail, and each of those
-	// hands the query to SearXNG. Without a fallback those searches would return
-	// nothing at all, so refuse to start half-wired.
-	if len(c.SearchVerticals) > 0 && c.SearXNGURL == "" {
-		return c, fmt.Errorf("OMNIFEED_SEARCH_VERTICALS needs OMNIFEED_SEARXNG_URL: the vertical router falls back to SearXNG whenever a native site search declines, finds nothing, or fails")
 	}
 
 	if !slices.Contains(ValidSearchAudit, c.SearchAudit) {
