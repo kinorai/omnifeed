@@ -29,6 +29,8 @@ type Metrics struct {
 	SearchesTotal       *prometheus.CounterVec   // searcher, status, reason
 	SearchSecs          *prometheus.HistogramVec // searcher, status
 	SearchRoutes        *prometheus.CounterVec   // vertical, outcome
+	SearchEnginePos     *prometheus.HistogramVec // engine
+	SearchEngineUnique  *prometheus.CounterVec   // engine
 }
 
 // NewMetrics builds and registers all collectors.
@@ -99,6 +101,23 @@ func NewMetrics() *Metrics {
 			Help:    "Search latency by searcher and status.",
 			Buckets: prometheus.ExponentialBuckets(0.05, 2, 10),
 		}, []string{"searcher", "status"}),
+		// Where in its own ranking an engine placed the rows it contributed.
+		// Buckets are ranks, not seconds: 1-3 is a result a caller actually
+		// reads, 20+ is filler. An engine whose distribution sits deep is
+		// contributing volume, not answers.
+		SearchEnginePos: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name:    "omnifeed_search_engine_position_rank",
+			Help:    "Per-engine rank of each result an engine returned.",
+			Buckets: []float64{1, 2, 3, 5, 10, 20, 50},
+		}, []string{"engine"}),
+		// Results NO other engine in the pool returned. This is the metric that
+		// decides whether an engine earns its slot: an engine with high volume
+		// and near-zero unique contribution is duplicating the pool and can be
+		// dropped without losing anything.
+		SearchEngineUnique: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "omnifeed_search_engine_unique_results_total",
+			Help: "Results contributed by exactly one engine, by that engine.",
+		}, []string{"engine"}),
 		SearchRoutes: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "omnifeed_search_routes_total",
 			Help: `Router dispatches to a native vertical searcher, by vertical and outcome. outcome="served" means the vertical's own results were returned; every other outcome — "empty" (it found nothing), "declined" (it does not serve this query shape) and "error" (it failed) — also produced a SearXNG fallback query, so those searches cost two upstream calls.`,
@@ -107,7 +126,8 @@ func NewMetrics() *Metrics {
 	reg.MustRegister(m.RequestsTotal, m.RequestAttempts, m.RequestSecs, m.UpstreamSecs,
 		m.LimiterWaitSecs, m.ResponseChars, m.EngineFallbacks, m.SearxngUnresponsive,
 		m.SearxngEngineHits, m.SearxngEmpty,
-		m.RedditRounds, m.SearchesTotal, m.SearchSecs, m.SearchRoutes)
+		m.RedditRounds, m.SearchesTotal, m.SearchSecs, m.SearchRoutes,
+		m.SearchEnginePos, m.SearchEngineUnique)
 	reg.MustRegister(
 		collectors.NewGoCollector(),
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
@@ -191,6 +211,16 @@ func (m *Metrics) ObserveEmptySearch(scoped bool) {
 func (m *Metrics) ObserveSearch(searcher, status, reason string, duration time.Duration) {
 	m.SearchesTotal.WithLabelValues(searcher, status, reason).Inc()
 	m.SearchSecs.WithLabelValues(searcher, status).Observe(duration.Seconds())
+}
+
+// ObserveEngineRank records the rank an engine gave one of its own results,
+// and whether that result was unique to it. Both are aggregates only — the URL
+// and the query stay in the audit log, never in a label.
+func (m *Metrics) ObserveEngineRank(engine string, rank int, unique bool) {
+	m.SearchEnginePos.WithLabelValues(engine).Observe(float64(rank))
+	if unique {
+		m.SearchEngineUnique.WithLabelValues(engine).Inc()
+	}
 }
 
 // ObserveSearchRoute counts one router dispatch to a native vertical searcher.

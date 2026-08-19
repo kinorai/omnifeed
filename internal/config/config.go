@@ -111,6 +111,24 @@ type Config struct {
 	// needs OMNIFEED_SEARXNG_URL. Empty (the default) disables routing entirely.
 	SearchVerticals []string
 
+	// SearchAudit controls the per-search audit log: "off", "summary" or
+	// "full". It is deliberately NOT a log level. A level answers "how bad is
+	// this?", while this stream answers "what did the pool return?" — putting it
+	// behind DEBUG would mean enabling every other component's debug output to
+	// get it, and would invite sampling, which biases the per-engine statistics
+	// it exists to produce. Both modes emit at INFO.
+	//
+	// off     nothing beyond the existing warnings (the default).
+	// summary one line per search: query, filters, how many rows each engine
+	//         contributed, and which engines were unresponsive.
+	// full    adds one line per (engine, result) with that engine's own rank —
+	//         the position table. ~10 lines per search.
+	//
+	// full logs every query string and every result URL. That is the most
+	// revealing data the service holds, so it is opt-in and its retention is
+	// the operator's decision.
+	SearchAudit string
+
 	// Search tool limits.
 	SearchMaxResults int
 
@@ -157,6 +175,9 @@ const defaultDiscourseHosts = "meta.discourse.org,discuss.python.org,users.rust-
 // OMNIFEED_SEARCH_VERTICALS may name. Each one is wired to one host in main.go.
 var ValidSearchVerticals = []string{"hackernews", "reddit", "bluesky"}
 
+// ValidSearchAudit is the complete set of OMNIFEED_SEARCH_AUDIT modes.
+var ValidSearchAudit = []string{"off", "summary", "full"}
+
 // Load reads OMNIFEED_* env vars and returns a populated Config, or an error if a
 // required variable is malformed. Defaults are documented inline.
 func Load() (Config, error) {
@@ -199,6 +220,7 @@ func Load() (Config, error) {
 	// Vertical names are lowercase identifiers; splitHosts' trim+lowercase and
 	// empty-entry dropping are exactly the parsing they need.
 	c.SearchVerticals = splitHosts(env("OMNIFEED_SEARCH_VERTICALS", ""))
+	c.SearchAudit = strings.ToLower(strings.TrimSpace(env("OMNIFEED_SEARCH_AUDIT", "off")))
 
 	var err error
 	if c.MCPStdio, err = envBool("OMNIFEED_MCP_STDIO", false); err != nil {
@@ -330,6 +352,11 @@ func Load() (Config, error) {
 	// nothing at all, so refuse to start half-wired.
 	if len(c.SearchVerticals) > 0 && c.SearXNGURL == "" {
 		return c, fmt.Errorf("OMNIFEED_SEARCH_VERTICALS needs OMNIFEED_SEARXNG_URL: the vertical router falls back to SearXNG whenever a native site search declines, finds nothing, or fails")
+	}
+
+	if !slices.Contains(ValidSearchAudit, c.SearchAudit) {
+		return c, fmt.Errorf("OMNIFEED_SEARCH_AUDIT must be one of %s, got %q",
+			strings.Join(ValidSearchAudit, ", "), c.SearchAudit)
 	}
 
 	if c.SearchMaxResults < 1 || c.SearchMaxResults > 100 {

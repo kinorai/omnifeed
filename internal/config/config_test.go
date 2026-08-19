@@ -171,3 +171,39 @@ func TestLoad_SearchVerticals(t *testing.T) {
 		})
 	}
 }
+
+func TestSearchAuditMode(t *testing.T) {
+	for _, tc := range []struct {
+		name, value, want string
+		wantErr           bool
+	}{
+		{name: "defaults to off", value: "", want: "off"},
+		{name: "summary", value: "summary", want: "summary"},
+		{name: "full", value: "full", want: "full"},
+		{name: "case and space tolerant", value: "  FULL  ", want: "full"},
+		{name: "unknown mode is a startup error", value: "verbose", wantErr: true},
+		// A level name is exactly the mistake this setting exists to prevent:
+		// it is a data feed, not a severity.
+		{name: "a log level is not a mode", value: "debug", wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			key := "OMNIFEED_SEARCH_AUDIT"
+			if tc.value == "" {
+				key = ""
+			}
+			c, err := loadWith(t, key, tc.value)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("Load() = nil error, want one for %q", tc.value)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if c.SearchAudit != tc.want {
+				t.Errorf("SearchAudit = %q, want %q", c.SearchAudit, tc.want)
+			}
+		})
+	}
+}

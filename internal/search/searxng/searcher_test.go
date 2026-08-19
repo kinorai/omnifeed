@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -519,5 +520,221 @@ func TestSearchMintsSeriesForUnresponsiveEngines(t *testing.T) {
 	close(ch)
 	if got := len(ch); got != 2 {
 		t.Fatalf("engine series = %d, want 2 (the unresponsive engine must be minted)", got)
+	}
+}
+
+// auditFixture mirrors a real SearXNG response: `engines` and `positions` are
+// parallel arrays holding each engine's own rank for the same URL.
+const auditFixture = `{"results":[
+	{"title":"a","url":"https://example.com/a","engine":"privacywall","score":4.8,
+	 "engines":["privacywall","searchtoday"],"positions":[1,4]},
+	{"title":"b","url":"https://example.com/b","engine":"searchtoday","score":1.2,
+	 "engines":["searchtoday"],"positions":[2]}
+]}`
+
+// capture collects slog records so a test can assert on emitted fields.
+type capture struct {
+	records []map[string]any
+}
+
+func (c *capture) Enabled(context.Context, slog.Level) bool { return true }
+func (c *capture) WithAttrs([]slog.Attr) slog.Handler       { return c }
+func (c *capture) WithGroup(string) slog.Handler            { return c }
+func (c *capture) Handle(_ context.Context, r slog.Record) error {
+	rec := map[string]any{"_msg": r.Message, "_level": r.Level}
+	r.Attrs(func(a slog.Attr) bool {
+		v := a.Value.Any()
+		// slog widens every integer to int64; narrow it back so table-driven
+		// expectations can be written as plain ints.
+		if n, ok := v.(int64); ok {
+			v = int(n)
+		}
+		rec[a.Key] = v
+		return true
+	})
+	c.records = append(c.records, rec)
+	return nil
+}
+
+func (c *capture) withMsg(msg string) []map[string]any {
+	var out []map[string]any
+	for _, r := range c.records {
+		if r["_msg"] == msg {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+func auditSearcher(t *testing.T, mode, body string) (*Searcher, *capture, *observability.Metrics) {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, body)
+	}))
+	t.Cleanup(srv.Close)
+	cap := &capture{}
+	m := observability.NewMetrics()
+	return New(Config{
+		Endpoint: srv.URL, Client: httpx.New(srv.Client()),
+		Logger: slog.New(cap), Metrics: m, Audit: mode,
+	}), cap, m
+}
+
+// The audit log is opt-in. "off" (and the zero value) must emit nothing, so an
+// operator who never asked for it never has query text in their log store.
+func TestSearchAuditOffEmitsNothing(t *testing.T) {
+	for _, mode := range []string{"", "off"} {
+		s, cap, _ := auditSearcher(t, mode, auditFixture)
+		if _, err := s.Search(context.Background(), "q", domain.SearchOptions{}); err != nil {
+			t.Fatalf("Search: %v", err)
+		}
+		if n := len(cap.withMsg("search audit")) + len(cap.withMsg("search result")); n != 0 {
+			t.Errorf("mode %q emitted %d audit lines, want 0", mode, n)
+		}
+	}
+}
+
+// "summary" is one line per search and no position table — the mode for an
+// operator who wants engine coverage without logging every result URL.
+func TestSearchAuditSummary(t *testing.T) {
+	s, cap, _ := auditSearcher(t, "summary", auditFixture)
+	opts := domain.SearchOptions{Site: "example.com", TimeRange: "week", Limit: 1}
+	if _, err := s.Search(context.Background(), "golang", opts); err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if n := len(cap.withMsg("search result")); n != 0 {
+		t.Fatalf("summary emitted %d position lines, want 0", n)
+	}
+	lines := cap.withMsg("search audit")
+	if len(lines) != 1 {
+		t.Fatalf("audit lines = %d, want 1", len(lines))
+	}
+	got := lines[0]
+	// total counts the whole response, not the caller's Limit of 1: the audit
+	// answers what the pool returned.
+	for k, want := range map[string]any{
+		"query": "golang", "site": "example.com", "time_range": "week",
+		"total": 2, "site_scoped": true,
+		"engine_rows": "privacywall=1 searchtoday=2",
+	} {
+		if got[k] != want {
+			t.Errorf("%s = %v, want %v", k, got[k], want)
+		}
+	}
+	if got["query_id"] == "" || got["query_id"] == nil {
+		t.Error("query_id missing — the lines cannot be joined without it")
+	}
+}
+
+// "full" adds the position table: one line per (engine, result), each carrying
+// that engine's OWN rank. This is the shape that survives a log store which
+// flattens arrays into strings.
+func TestSearchAuditFullEmitsPositionTable(t *testing.T) {
+	s, cap, _ := auditSearcher(t, "full", auditFixture)
+	if _, err := s.Search(context.Background(), "q", domain.SearchOptions{}); err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	rows := cap.withMsg("search result")
+	if len(rows) != 3 {
+		t.Fatalf("position rows = %d, want 3 (2 engines on hit a, 1 on hit b)", len(rows))
+	}
+	// Every row shares the summary's query_id, which is what joins them.
+	summary := cap.withMsg("search audit")
+	if len(summary) != 1 {
+		t.Fatalf("audit lines = %d, want 1", len(summary))
+	}
+	for _, r := range rows {
+		if r["query_id"] != summary[0]["query_id"] {
+			t.Fatalf("query_id %v does not match the summary %v", r["query_id"], summary[0]["query_id"])
+		}
+	}
+	want := []struct {
+		engine   string
+		position int
+		merged   int
+		unique   bool
+	}{
+		{"privacywall", 1, 1, false},
+		{"searchtoday", 4, 1, false},
+		{"searchtoday", 2, 2, true},
+	}
+	for i, w := range want {
+		r := rows[i]
+		if r["engine"] != w.engine || r["position"] != w.position ||
+			r["merged_rank"] != w.merged || r["unique"] != w.unique {
+			t.Errorf("row %d = engine=%v position=%v merged=%v unique=%v, want %+v",
+				i, r["engine"], r["position"], r["merged_rank"], r["unique"], w)
+		}
+	}
+}
+
+// A short or missing positions array is upstream data. It must not panic and
+// must not invent a rank.
+func TestSearchAuditToleratesShortPositions(t *testing.T) {
+	body := `{"results":[{"title":"a","url":"https://example.com/a",
+		"engines":["privacywall","searchtoday"],"positions":[1]}]}`
+	s, cap, m := auditSearcher(t, "full", body)
+	if _, err := s.Search(context.Background(), "q", domain.SearchOptions{}); err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	rows := cap.withMsg("search result")
+	if len(rows) != 2 {
+		t.Fatalf("rows = %d, want 2", len(rows))
+	}
+	if rows[1]["position"] != 0 {
+		t.Errorf("missing position = %v, want 0 (unknown)", rows[1]["position"])
+	}
+	// An unknown rank must not enter the histogram, or it drags the mean down.
+	var dm dto.Metric
+	if err := m.SearchEnginePos.WithLabelValues("searchtoday").(prometheus.Metric).Write(&dm); err != nil {
+		t.Fatal(err)
+	}
+	if got := dm.GetHistogram().GetSampleCount(); got != 0 {
+		t.Errorf("searchtoday samples = %d, want 0 (rank was unknown)", got)
+	}
+}
+
+// The rank metrics carry no query text and no URLs, so they are NOT gated by
+// the audit setting — they must work with the audit log off.
+func TestSearchRankMetricsIgnoreTheAuditSetting(t *testing.T) {
+	s, _, m := auditSearcher(t, "off", auditFixture)
+	if _, err := s.Search(context.Background(), "q", domain.SearchOptions{}); err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	var dm dto.Metric
+	if err := m.SearchEnginePos.WithLabelValues("privacywall").(prometheus.Metric).Write(&dm); err != nil {
+		t.Fatal(err)
+	}
+	if got := dm.GetHistogram().GetSampleCount(); got != 1 {
+		t.Fatalf("privacywall rank samples = %d, want 1", got)
+	}
+	// Only hit b was returned by a single engine.
+	var unique dto.Metric
+	if err := m.SearchEngineUnique.WithLabelValues("searchtoday").Write(&unique); err != nil {
+		t.Fatal(err)
+	}
+	if got := unique.GetCounter().GetValue(); got != 1 {
+		t.Fatalf("unique{searchtoday} = %v, want 1", got)
+	}
+}
+
+// Unresponsive engines get one line each with engine and reason as separate
+// fields — the joined WARN string cannot be aggregated.
+func TestSearchAuditUnresponsiveIsOneLinePerEngine(t *testing.T) {
+	body := `{"results":[],"unresponsive_engines":[
+		["braveapi","Suspended: access denied"],["google cse","Suspended: too many requests"]]}`
+	s, cap, _ := auditSearcher(t, "summary", body)
+	if _, err := s.Search(context.Background(), "q", domain.SearchOptions{}); err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	rows := cap.withMsg("search engine unresponsive")
+	if len(rows) != 2 {
+		t.Fatalf("unresponsive lines = %d, want 2", len(rows))
+	}
+	if rows[0]["engine"] != "braveapi" || rows[0]["reason_class"] != "access_denied" {
+		t.Errorf("row 0 = %v", rows[0])
+	}
+	if rows[1]["engine"] != "google cse" || rows[1]["reason_class"] != "too_many_requests" {
+		t.Errorf("row 1 = %v", rows[1])
 	}
 }
