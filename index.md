@@ -17,3 +17,6 @@ Start at the [README](https://github.com/kinorai/omnifeed#readme) for install an
 ## Reference
 
 - [API reference](api/index.md) — Go package docs generated from source.
+- [Ideas and parked work](ideas.md) — features considered and not built, or built
+  and removed: the measurements behind each call, what would justify revisiting
+  it, and the git ref that still holds the code.

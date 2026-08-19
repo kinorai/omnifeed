@@ -61,12 +61,6 @@ const ContentTypeKey = "content_type"
 
 ## Variables
 
-<a name="ErrSearchUnsupported"></a>ErrSearchUnsupported is how a Searcher declines a query it cannot serve well, as opposed to failing at one it accepted. A router treats it as "not my job" and hands the same query to its fallback searcher, so declining costs the caller nothing but one extra hop.
-
-```go
-var ErrSearchUnsupported = errors.New("searcher does not support this query")
-```
-
 <a name="ValidRedditSorts"></a>ValidRedditSorts are the comment sort orders Reddit's comments endpoint accepts; "confidence" is what the Reddit UI labels "best". Kept here so config and the reddit engine validate against one list. https://www.reddit.com/dev/api/#GET_comments_{article}
 
 ```go
