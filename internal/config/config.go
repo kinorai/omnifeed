@@ -124,9 +124,13 @@ type Config struct {
 	// full    adds one line per (engine, result) with that engine's own rank —
 	//         the position table. ~10 lines per search.
 	//
-	// full logs every query string and every result URL. That is the most
-	// revealing data the service holds, so it is opt-in and its retention is
-	// the operator's decision.
+	// Both modes log the query text; only "full" adds the result URLs. That is
+	// the most revealing data the service holds, so this is opt-in and its
+	// retention is the operator's decision.
+	//
+	// Emitted at INFO through the shared logger, so anything other than "off"
+	// requires OMNIFEED_LOG_LEVEL=debug or info — Load rejects the combination
+	// rather than let a warn-level deployment discard the feed in silence.
 	SearchAudit string
 
 	// Search tool limits.
@@ -357,6 +361,15 @@ func Load() (Config, error) {
 	if !slices.Contains(ValidSearchAudit, c.SearchAudit) {
 		return c, fmt.Errorf("OMNIFEED_SEARCH_AUDIT must be one of %s, got %q",
 			strings.Join(ValidSearchAudit, ", "), c.SearchAudit)
+	}
+	// The audit log is a data feed, not diagnostics — but it still travels
+	// through the shared slog logger, which drops INFO records at warn/error.
+	// Silently emitting nothing would be the worst outcome: the operator asked
+	// for the feed, sees no error, and concludes the searcher is broken. Refuse
+	// the combination instead of honouring half of it.
+	if c.SearchAudit != "off" && !slices.Contains([]string{"debug", "info"}, strings.ToLower(c.LogLevel)) {
+		return c, fmt.Errorf("OMNIFEED_SEARCH_AUDIT=%q needs OMNIFEED_LOG_LEVEL=debug or info (got %q): the audit log is emitted at INFO and a higher level discards it silently",
+			c.SearchAudit, c.LogLevel)
 	}
 
 	if c.SearchMaxResults < 1 || c.SearchMaxResults > 100 {
