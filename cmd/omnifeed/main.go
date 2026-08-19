@@ -194,10 +194,13 @@ func run(cfg config.Config, logger *slog.Logger) error {
 			Audit:       cfg.SearchAudit,
 		})
 		if cfg.SearchAudit != "off" {
-			// Announced at startup because "full" logs every query string and
-			// every result URL. An operator who did not intend that should find
-			// out from the first log line, not from the log store.
-			logger.Info("search audit log enabled", "mode", cfg.SearchAudit)
+			// Announced at startup because both modes log every query string
+			// and "full" adds every result URL. An operator who did not intend
+			// that should find out from the first log line, not from the log
+			// store. Config.Load has already guaranteed the level lets INFO
+			// through, so this cannot be swallowed.
+			logger.Info("search audit log enabled", "mode", cfg.SearchAudit,
+				"logs_queries", true, "logs_result_urls", cfg.SearchAudit == "full")
 		}
 	} else {
 		logger.Info("search tool disabled (OMNIFEED_SEARXNG_URL not set)")

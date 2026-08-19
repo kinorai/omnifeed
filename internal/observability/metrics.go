@@ -217,7 +217,16 @@ func (m *Metrics) ObserveSearch(searcher, status, reason string, duration time.D
 // and whether that result was unique to it. Both are aggregates only — the URL
 // and the query stay in the audit log, never in a label.
 func (m *Metrics) ObserveEngineRank(engine string, rank int, unique bool) {
-	m.SearchEnginePos.WithLabelValues(engine).Observe(float64(rank))
+	// rank <= 0 means SearXNG did not report this engine's own position. The
+	// histogram must not see it (a zero drags every quantile down), but the
+	// unique counter still must fire: whether an engine was the SOLE source of
+	// a result does not depend on knowing where it ranked. Gating both on the
+	// rank under-counts precisely the engines whose positions SearXNG omits —
+	// and the unique counter is the number that decides whether an engine earns
+	// its slot.
+	if rank > 0 {
+		m.SearchEnginePos.WithLabelValues(engine).Observe(float64(rank))
+	}
 	if unique {
 		m.SearchEngineUnique.WithLabelValues(engine).Inc()
 	}

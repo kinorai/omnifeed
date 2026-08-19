@@ -207,3 +207,46 @@ func TestSearchAuditMode(t *testing.T) {
 		})
 	}
 }
+
+// Regression, code review of #35: the audit log is emitted at INFO through the
+// shared logger, which drops INFO at warn/error. Honouring the request while
+// discarding every line is the worst outcome — the operator sees no error and
+// concludes the searcher is broken. Startup must refuse instead.
+func TestSearchAuditRejectsALevelThatDiscardsIt(t *testing.T) {
+	for _, tc := range []struct {
+		level   string
+		wantErr bool
+	}{
+		{level: "info"},
+		{level: "debug"},
+		{level: "DEBUG"},
+		{level: "warn", wantErr: true},
+		{level: "warning", wantErr: true},
+		{level: "error", wantErr: true},
+	} {
+		t.Run(tc.level, func(t *testing.T) {
+			t.Setenv("OMNIFEED_SEARCH_AUDIT", "full")
+			c, err := loadWith(t, "OMNIFEED_LOG_LEVEL", tc.level)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("Load() = nil error at level %q, want a refusal", tc.level)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if c.SearchAudit != "full" {
+				t.Errorf("SearchAudit = %q, want full", c.SearchAudit)
+			}
+		})
+	}
+}
+
+// The refusal must not fire when the audit log is off — the default deployment
+// runs at whatever level it likes.
+func TestSearchAuditOffAllowsAnyLevel(t *testing.T) {
+	if _, err := loadWith(t, "OMNIFEED_LOG_LEVEL", "error"); err != nil {
+		t.Fatalf("Load with audit off at error level: %v", err)
+	}
+}

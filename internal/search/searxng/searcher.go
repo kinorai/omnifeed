@@ -137,7 +137,6 @@ func (s *Searcher) Search(ctx context.Context, query string, opts domain.SearchO
 		return nil, fmt.Errorf("query is empty")
 	}
 
-	started := time.Now()
 	queryID := newQueryID()
 	params := url.Values{}
 	scoped := siteScoped(query, opts.Site)
@@ -174,6 +173,12 @@ func (s *Searcher) Search(ctx context.Context, query string, opts domain.SearchO
 		defer release()
 	}
 
+	// Timed from here on purpose: the limiter above can hold a query for up to
+	// maxWait, and folding that into duration_ms would report local
+	// backpressure as upstream latency — the opposite of what an operator
+	// comparing engine pools needs. Queue time has its own metric
+	// (omnifeed_domain_limiter_wait_seconds).
+	started := time.Now()
 	resp, err := s.client.DoRetry(ctx, http.MethodGet, s.searchURL+"?"+params.Encode(),
 		nil, nil, httpx.RetryConfig{})
 	if err != nil {
@@ -385,7 +390,7 @@ func (s *Searcher) logAudit(queryID, query, scoped string, opts domain.SearchOpt
 	}
 	rows := make(map[string]int, len(sr.Results))
 	for _, hit := range sr.Results {
-		for _, engine := range hit.Engines {
+		for _, engine := range hitEngines(hit) {
 			rows[engine]++
 		}
 	}
@@ -408,15 +413,11 @@ func (s *Searcher) logAudit(queryID, query, scoped string, opts domain.SearchOpt
 		return
 	}
 	for mergedRank, hit := range sr.Results {
-		unique := len(hit.Engines) == 1
-		for i, engine := range hit.Engines {
-			// Positions is parallel to Engines, but it is upstream data: a
-			// short or missing array must not panic, and rank 0 records "the
-			// engine returned this, rank unknown".
-			rank := 0
-			if i < len(hit.Positions) {
-				rank = hit.Positions[i]
-			}
+		engines := hitEngines(hit)
+		unique := len(engines) == 1
+		for i, engine := range engines {
+			// rank 0 records "this engine returned it, position unknown".
+			rank := rankOf(hit, i)
 			s.logger.Info("search result",
 				"query_id", queryID,
 				"engine", engine,
@@ -453,32 +454,49 @@ func (s *Searcher) logUnresponsive(queryID string, pairs [][]string) {
 	}
 }
 
+// hitEngines returns the engines that produced a result. SearXNG sends the
+// `engines` array; a response carrying only the legacy `engine` field falls
+// back to it, so the audit log and the metrics agree with
+// omnifeed_searxng_engine_hits (which reads `engine`) instead of reporting an
+// empty pool for the same search.
+func hitEngines(hit searchHit) []string {
+	if len(hit.Engines) > 0 {
+		return hit.Engines
+	}
+	if hit.Engine != "" {
+		return []string{hit.Engine}
+	}
+	return nil
+}
+
+// rankOf returns the engine's own position for the i-th engine of a hit, or 0
+// when SearXNG did not report one. Positions is parallel to Engines, but it is
+// upstream data: a short or absent array must not panic.
+func rankOf(hit searchHit, i int) int {
+	if i < len(hit.Positions) {
+		return hit.Positions[i]
+	}
+	return 0
+}
+
 // observeRanks feeds the two aggregate metrics. It runs whatever the audit
 // setting is: these carry no query text and no URLs, so there is nothing to
-// gate. Rows with no engine list fall back to the primary `engine` field,
-// which older SearXNG responses are the only thing to provide.
+// gate.
 func (s *Searcher) observeRanks(hits []searchHit) {
 	if s.metrics == nil {
 		return
 	}
 	for _, hit := range hits {
-		engines := hit.Engines
-		if len(engines) == 0 && hit.Engine != "" {
-			engines = []string{hit.Engine}
-		}
+		engines := hitEngines(hit)
 		unique := len(engines) == 1
 		for i, engine := range engines {
 			if engine == "" {
 				continue
 			}
-			rank := 0
-			if i < len(hit.Positions) {
-				rank = hit.Positions[i]
-			}
-			if rank <= 0 {
-				continue // unknown rank would skew the histogram toward zero
-			}
-			s.metrics.ObserveEngineRank(engine, rank, unique)
+			// An unknown rank is passed through as 0 rather than skipped: the
+			// metric drops it from the histogram but still counts a unique
+			// contribution. Skipping here would lose that.
+			s.metrics.ObserveEngineRank(engine, rankOf(hit, i), unique)
 		}
 	}
 }
