@@ -24,6 +24,7 @@ Package observability wires structured logging, Prometheus metrics, and Kubernet
   - [func \(m \*Metrics\) Observe\(engine, tenant, status, reason string, duration time.Duration\)](<#Metrics.Observe>)
   - [func \(m \*Metrics\) ObserveAttempt\(upstream string, retry bool\)](<#Metrics.ObserveAttempt>)
   - [func \(m \*Metrics\) ObserveEmptySearch\(scoped bool\)](<#Metrics.ObserveEmptySearch>)
+  - [func \(m \*Metrics\) ObserveEngineRank\(engine string, rank int, unique bool\)](<#Metrics.ObserveEngineRank>)
   - [func \(m \*Metrics\) ObserveEngineResults\(engine string, rows int\)](<#Metrics.ObserveEngineResults>)
   - [func \(m \*Metrics\) ObserveFallback\(fromEngine, reason string\)](<#Metrics.ObserveFallback>)
   - [func \(m \*Metrics\) ObserveLimiterWait\(engine, outcome string, duration time.Duration\)](<#Metrics.ObserveLimiterWait>)
@@ -146,6 +147,8 @@ type Metrics struct {
     SearchesTotal       *prometheus.CounterVec   // searcher, status, reason
     SearchSecs          *prometheus.HistogramVec // searcher, status
     SearchRoutes        *prometheus.CounterVec   // vertical, outcome
+    SearchEnginePos     *prometheus.HistogramVec // engine
+    SearchEngineUnique  *prometheus.CounterVec   // engine
     // contains filtered or unexported fields
 }
 ```
@@ -185,6 +188,15 @@ func (m *Metrics) ObserveEmptySearch(scoped bool)
 ```
 
 ObserveEmptySearch counts a search that came back with no results and no failure report — the shape a silently blocked pool produces, and the shape an honest zero\-hit query produces. scoped says whether a \`site:\` filter was applied, because the site\-scoped path is where silent blocks concentrate.
+
+<a name="Metrics.ObserveEngineRank"></a>
+### func \(\*Metrics\) ObserveEngineRank
+
+```go
+func (m *Metrics) ObserveEngineRank(engine string, rank int, unique bool)
+```
+
+ObserveEngineRank records the rank an engine gave one of its own results, and whether that result was unique to it. Both are aggregates only — the URL and the query stay in the audit log, never in a label.
 
 <a name="Metrics.ObserveEngineResults"></a>
 ### func \(\*Metrics\) ObserveEngineResults
