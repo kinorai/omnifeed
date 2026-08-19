@@ -738,3 +738,86 @@ func TestSearchAuditUnresponsiveIsOneLinePerEngine(t *testing.T) {
 		t.Errorf("row 1 = %v", rows[1])
 	}
 }
+
+// Regression, code review of #35: an unknown rank must not swallow the unique
+// count. Gating both on the rank under-counts exactly the engines whose
+// positions SearXNG omits, and unique contribution is the number that decides
+// whether an engine earns its slot.
+func TestSearchUniqueCountedWithoutAKnownRank(t *testing.T) {
+	body := `{"results":[{"title":"a","url":"https://example.com/a","engines":["privacywall"]}]}`
+	s, _, m := auditSearcher(t, "off", body)
+	if _, err := s.Search(context.Background(), "q", domain.SearchOptions{}); err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	var unique dto.Metric
+	if err := m.SearchEngineUnique.WithLabelValues("privacywall").Write(&unique); err != nil {
+		t.Fatal(err)
+	}
+	if got := unique.GetCounter().GetValue(); got != 1 {
+		t.Errorf("unique{privacywall} = %v, want 1 even with no positions array", got)
+	}
+	// ...but the histogram must still reject the unknown rank.
+	var dm dto.Metric
+	if err := m.SearchEnginePos.WithLabelValues("privacywall").(prometheus.Metric).Write(&dm); err != nil {
+		t.Fatal(err)
+	}
+	if got := dm.GetHistogram().GetSampleCount(); got != 0 {
+		t.Errorf("rank samples = %d, want 0 (rank unknown)", got)
+	}
+}
+
+// Regression, code review of #35: a response carrying only the legacy `engine`
+// field must still produce audit rows and metrics, or the audit contradicts
+// omnifeed_searxng_engine_hits for the same search.
+func TestSearchAuditFallsBackToLegacyEngineField(t *testing.T) {
+	body := `{"results":[{"title":"a","url":"https://example.com/a","engine":"privacywall"}]}`
+	s, cap, m := auditSearcher(t, "full", body)
+	if _, err := s.Search(context.Background(), "q", domain.SearchOptions{}); err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	lines := cap.withMsg("search audit")
+	if len(lines) != 1 || lines[0]["engine_rows"] != "privacywall=1" {
+		t.Fatalf("engine_rows = %v, want privacywall=1", lines[0]["engine_rows"])
+	}
+	rows := cap.withMsg("search result")
+	if len(rows) != 1 || rows[0]["engine"] != "privacywall" || rows[0]["unique"] != true {
+		t.Fatalf("position rows = %+v, want one unique privacywall row", rows)
+	}
+	var unique dto.Metric
+	if err := m.SearchEngineUnique.WithLabelValues("privacywall").Write(&unique); err != nil {
+		t.Fatal(err)
+	}
+	if got := unique.GetCounter().GetValue(); got != 1 {
+		t.Errorf("unique{privacywall} = %v, want 1", got)
+	}
+}
+
+// Regression, code review of #35: duration_ms must measure the upstream call,
+// not time spent queued in the local pacing limiter. Otherwise an operator
+// comparing pool latency is reading their own backpressure.
+func TestSearchAuditDurationExcludesLimiterWait(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"results":[]}`)
+	}))
+	defer srv.Close()
+	cap := &capture{}
+	// A delay far larger than the (empty) upstream call, so a duration that
+	// included the queue would be unmistakable.
+	limiter := httpx.NewDomainLimiter(1, 300*time.Millisecond)
+	s := New(Config{
+		Endpoint: srv.URL, Client: httpx.New(srv.Client()),
+		Logger: slog.New(cap), Audit: "summary", Limiter: limiter,
+	})
+	for i := 0; i < 2; i++ { // the second query pays the pacing delay
+		if _, err := s.Search(context.Background(), "q", domain.SearchOptions{}); err != nil {
+			t.Fatalf("Search: %v", err)
+		}
+	}
+	lines := cap.withMsg("search audit")
+	if len(lines) != 2 {
+		t.Fatalf("audit lines = %d, want 2", len(lines))
+	}
+	if got := lines[1]["duration_ms"].(int); got >= 300 {
+		t.Errorf("duration_ms = %d, want well under the 300ms pacing delay", got)
+	}
+}
