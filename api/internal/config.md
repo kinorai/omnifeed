@@ -23,12 +23,6 @@ Package config loads all runtime configuration from OMNIFEED\_\-prefixed environ
 var ValidSearchAudit = []string{"off", "summary", "full"}
 ```
 
-<a name="ValidSearchVerticals"></a>ValidSearchVerticals is the complete set of native site searches OMNIFEED\_SEARCH\_VERTICALS may name. Each one is wired to one host in main.go.
-
-```go
-var ValidSearchVerticals = []string{"hackernews", "reddit", "bluesky"}
-```
-
 <a name="Config"></a>
 ## type Config
 
@@ -122,14 +116,6 @@ type Config struct {
     SearXNGDelay       time.Duration
     SearXNGQuota       int
     SearXNGQuotaWindow time.Duration
-
-    // SearchVerticals names the native site searches a site-scoped query is
-    // routed to instead of SearXNG: hackernews, reddit, bluesky. A vertical
-    // answers with the site's own ranking signals (points, comments, score),
-    // which scraped web engines never expose. Anything a vertical declines,
-    // comes back empty on, or fails at falls back to SearXNG — so the router
-    // needs OMNIFEED_SEARXNG_URL. Empty (the default) disables routing entirely.
-    SearchVerticals []string
 
     // SearchAudit controls the per-search audit log: "off", "summary" or
     // "full". It is deliberately NOT a log level. A level answers "how bad is

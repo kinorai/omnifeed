@@ -30,7 +30,6 @@ Package observability wires structured logging, Prometheus metrics, and Kubernet
   - [func \(m \*Metrics\) ObserveLimiterWait\(engine, outcome string, duration time.Duration\)](<#Metrics.ObserveLimiterWait>)
   - [func \(m \*Metrics\) ObserveResponseChars\(engine string, chars int\)](<#Metrics.ObserveResponseChars>)
   - [func \(m \*Metrics\) ObserveSearch\(searcher, status, reason string, duration time.Duration\)](<#Metrics.ObserveSearch>)
-  - [func \(m \*Metrics\) ObserveSearchRoute\(vertical, outcome string\)](<#Metrics.ObserveSearchRoute>)
   - [func \(m \*Metrics\) ObserveUnresponsiveEngine\(engine, errType string\)](<#Metrics.ObserveUnresponsiveEngine>)
   - [func \(m \*Metrics\) ObserveUpstream\(upstream, op, status string, duration time.Duration\)](<#Metrics.ObserveUpstream>)
   - [func \(m \*Metrics\) RegisterMetrics\(mux \*http.ServeMux\)](<#Metrics.RegisterMetrics>)
@@ -146,7 +145,6 @@ type Metrics struct {
     RedditRounds        prometheus.Histogram
     SearchesTotal       *prometheus.CounterVec   // searcher, status, reason
     SearchSecs          *prometheus.HistogramVec // searcher, status
-    SearchRoutes        *prometheus.CounterVec   // vertical, outcome
     SearchEnginePos     *prometheus.HistogramVec // engine
     SearchEngineUnique  *prometheus.CounterVec   // engine
     // contains filtered or unexported fields
@@ -242,15 +240,6 @@ func (m *Metrics) ObserveSearch(searcher, status, reason string, duration time.D
 ```
 
 ObserveSearch records a single search query result. reason classifies WHY a search failed \(see Reason\); it is "ok" on success. SearchSecs stays keyed on searcher\+status only — adding reason would just inflate histogram cardinality.
-
-<a name="Metrics.ObserveSearchRoute"></a>
-### func \(\*Metrics\) ObserveSearchRoute
-
-```go
-func (m *Metrics) ObserveSearchRoute(vertical, outcome string)
-```
-
-ObserveSearchRoute counts one router dispatch to a native vertical searcher. outcome is "served", "empty", "declined" or "error"; everything but "served" was followed by a SearXNG fallback query.
 
 <a name="Metrics.ObserveUnresponsiveEngine"></a>
 ### func \(\*Metrics\) ObserveUnresponsiveEngine
