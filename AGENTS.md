@@ -46,11 +46,7 @@ internal/
     bluesky/     Engine: public AT Protocol AppView, TOON reply trees
     crawl4ai/    Engine: generic markdown fallback (crawl4ai /crawl — not the browser port)
   search/
-    searxng/     Searcher adapter (JSON API) — the fallback under the router
-    router/      Searcher: dispatches a site-scoped query to a vertical below
-    hackernews/  Searcher: Algolia HN search API
-    reddit/      Searcher: subreddit in-site search, through the browser port
-    bluesky/     Searcher: app.bsky.feed.searchPosts
+    searxng/     Searcher adapter (JSON API) — the only Searcher
   transport/
     mcp/         MCP server (stdio + Streamable HTTP) — pure JSON-RPC transport
       tools/     fetch_url + web_search tool constructors (bind ports → tools)
@@ -78,14 +74,15 @@ cmd/omnifeed/    entry point + wiring
 - **Commits:** [Conventional Commits](https://www.conventionalcommits.org/). `feat:` → minor release, `fix:`/`perf:`/`chore(deps):` → patch, others don't release (git-cliff + goreleaser read history).
 - **Tests:** new behavior ships with a test. Prefer table tests and `httptest` fakes over live calls.
 - **Config:** every knob is an `OMNIFEED_`-prefixed env var declared in `internal/config/config.go` — add new ones there, with a default, and document them in the `docs/configuration.md` table.
+- **Removing a feature:** write it up in `docs/ideas.md` before deleting it — what it was, the evidence that retired it, what would justify bringing it back, and the git ref that still holds the code. A deletion whose reasoning is lost gets rebuilt by the next person who has the same good idea.
 - **Errors/metrics:** classify with `observability.Reason`; record search via `metrics.ObserveSearch`, crawl via `metrics.Observe`.
 - **Search audit log** (`OMNIFEED_SEARCH_AUDIT`, off by default): one FLAT log line per fact, never a nested table — log stores that flatten JSON turn arrays into opaque strings, so `positions: [1,4]` becomes untouchable text. Lines join on `query_id`. It is a data feed, not a severity: never move it behind a log level.
 - Match the surrounding style; don't refactor unrelated code in a feature change.
 
 ## Gotchas
 
-- **crawl4ai is mandatory.** `OMNIFEED_CRAWL4AI_URL` must be set or the binary exits at startup — the generic fallback fetches through `/crawl`, and crawl4ai is also the browser backend for Reddit. **Exceptions:** the Hacker News engine reads the public Algolia HN API (`hn.algolia.com`), the GitHub engine reads the public GitHub REST API (`api.github.com`), and the Bluesky engine reads the public AT Protocol AppView (`public.api.bsky.app`) directly — none is bot-walled, so a headless browser would only add latency (and lose comments) — and they therefore need outbound access to those three hosts. The Discourse engine does the same against each host listed in `OMNIFEED_DISCOURSE_HOSTS` (public topic JSON), so those hosts need outbound access too. The search verticals (`OMNIFEED_SEARCH_VERTICALS`) add one host beyond those: `api.bsky.app` — the HN vertical reuses `hn.algolia.com`, and the Reddit vertical goes through crawl4ai like the engine.
-- **Bluesky search lives on a different host.** `app.bsky.feed.searchPosts` answers keyless callers with HTTP 200 on `api.bsky.app` but with HTTP 403 on `public.api.bsky.app` (verified 2026-08-17). The search vertical (`internal/search/bluesky`) therefore calls `api.bsky.app`, while the fetch ENGINE deliberately stays on the cached `public.api.bsky.app` for `getPostThread` / `getAuthorFeed` — Bluesky asks public-web use to stay on the cached host. Don't unify the two hosts in either direction. The engine still claims post and profile URLs only, so `bsky.app/search` falls through to the browser fallback.
+- **crawl4ai is mandatory.** `OMNIFEED_CRAWL4AI_URL` must be set or the binary exits at startup — the generic fallback fetches through `/crawl`, and crawl4ai is also the browser backend for Reddit. **Exceptions:** the Hacker News engine reads the public Algolia HN API (`hn.algolia.com`), the GitHub engine reads the public GitHub REST API (`api.github.com`), and the Bluesky engine reads the public AT Protocol AppView (`public.api.bsky.app`) directly — none is bot-walled, so a headless browser would only add latency (and lose comments) — and they therefore need outbound access to those three hosts. The Discourse engine does the same against each host listed in `OMNIFEED_DISCOURSE_HOSTS` (public topic JSON), so those hosts need outbound access too.
+- **Bluesky reads the cached AppView.** The engine calls `public.api.bsky.app` for `getPostThread` / `getAuthorFeed`, because Bluesky asks public-web use to stay on the cached host. It claims post and profile URLs only, so `bsky.app/search` falls through to the browser fallback. (Keyword search needs `app.bsky.feed.searchPosts`, which is 403 on that host and 200 on `api.bsky.app` — see `docs/ideas.md`, the search-vertical entry.)
 - **Never call Reddit directly.** Reddit 403-blocks non-browser clients; the Reddit engine fetches through a real browser via the `browser.Browser` port. See `internal/engine/reddit` and `internal/browser`.
 - **HTTP transports fail closed.** No `OMNIFEED_API_KEY` → the binary refuses to start, unless `OMNIFEED_DEV_NO_AUTH=true` (local only). Stdio MCP is unauthenticated by design.
 - **SSRF:** validate caller-supplied URLs with `httpx.ValidateURL`; `OMNIFEED_BLOCK_PRIVATE_IPS` defaults to on.

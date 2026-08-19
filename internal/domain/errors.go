@@ -1,16 +1,9 @@
 package domain
 
 import (
-	"errors"
 	"fmt"
 	"net/http"
 )
-
-// ErrSearchUnsupported is how a Searcher declines a query it cannot serve well,
-// as opposed to failing at one it accepted. A router treats it as "not my job"
-// and hands the same query to its fallback searcher, so declining costs the
-// caller nothing but one extra hop.
-var ErrSearchUnsupported = errors.New("searcher does not support this query")
 
 // FailureKind is a bounded classification of why a crawl/fetch failed. It is
 // the single source of truth for the taxonomy that observability renders as the

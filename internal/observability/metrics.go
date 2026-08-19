@@ -28,7 +28,6 @@ type Metrics struct {
 	RedditRounds        prometheus.Histogram
 	SearchesTotal       *prometheus.CounterVec   // searcher, status, reason
 	SearchSecs          *prometheus.HistogramVec // searcher, status
-	SearchRoutes        *prometheus.CounterVec   // vertical, outcome
 	SearchEnginePos     *prometheus.HistogramVec // engine
 	SearchEngineUnique  *prometheus.CounterVec   // engine
 }
@@ -118,15 +117,11 @@ func NewMetrics() *Metrics {
 			Name: "omnifeed_search_engine_unique_results_total",
 			Help: "Results contributed by exactly one engine, by that engine.",
 		}, []string{"engine"}),
-		SearchRoutes: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "omnifeed_search_routes_total",
-			Help: `Router dispatches to a native vertical searcher, by vertical and outcome. outcome="served" means the vertical's own results were returned; every other outcome — "empty" (it found nothing), "declined" (it does not serve this query shape) and "error" (it failed) — also produced a SearXNG fallback query, so those searches cost two upstream calls.`,
-		}, []string{"vertical", "outcome"}),
 	}
 	reg.MustRegister(m.RequestsTotal, m.RequestAttempts, m.RequestSecs, m.UpstreamSecs,
 		m.LimiterWaitSecs, m.ResponseChars, m.EngineFallbacks, m.SearxngUnresponsive,
 		m.SearxngEngineHits, m.SearxngEmpty,
-		m.RedditRounds, m.SearchesTotal, m.SearchSecs, m.SearchRoutes,
+		m.RedditRounds, m.SearchesTotal, m.SearchSecs,
 		m.SearchEnginePos, m.SearchEngineUnique)
 	reg.MustRegister(
 		collectors.NewGoCollector(),
@@ -230,13 +225,6 @@ func (m *Metrics) ObserveEngineRank(engine string, rank int, unique bool) {
 	if unique {
 		m.SearchEngineUnique.WithLabelValues(engine).Inc()
 	}
-}
-
-// ObserveSearchRoute counts one router dispatch to a native vertical searcher.
-// outcome is "served", "empty", "declined" or "error"; everything but "served"
-// was followed by a SearXNG fallback query.
-func (m *Metrics) ObserveSearchRoute(vertical, outcome string) {
-	m.SearchRoutes.WithLabelValues(vertical, outcome).Inc()
 }
 
 // RegisterMetrics attaches /metrics to mux.

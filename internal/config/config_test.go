@@ -129,49 +129,6 @@ func TestLoad_Crawl4AILatencyKnobs(t *testing.T) {
 	}
 }
 
-// OMNIFEED_SEARCH_VERTICALS names the native site searches the router puts in
-// front of SearXNG. The list is closed, and the router cannot work without the
-// SearXNG fallback every non-served outcome falls through to.
-func TestLoad_SearchVerticals(t *testing.T) {
-	cases := []struct {
-		name       string
-		value      string
-		searxngURL string
-		want       []string
-		wantErr    bool
-	}{
-		{name: "unset means routing is off"},
-		{name: "full list", value: "hackernews,reddit,bluesky", searxngURL: "http://searxng:8080",
-			want: []string{"hackernews", "reddit", "bluesky"}},
-		{name: "whitespace and case are normalized", value: " Reddit , ,BLUESKY ", searxngURL: "http://searxng:8080",
-			want: []string{"reddit", "bluesky"}},
-		{name: "an unknown vertical is a config error", value: "hackernews,mastodon",
-			searxngURL: "http://searxng:8080", wantErr: true},
-		{name: "verticals without a searxng fallback is a config error",
-			value: "hackernews", wantErr: true},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv("OMNIFEED_CRAWL4AI_URL", "http://crawl4ai:11235/crawl")
-			t.Setenv("OMNIFEED_SEARXNG_URL", tc.searxngURL)
-			t.Setenv("OMNIFEED_SEARCH_VERTICALS", tc.value)
-			cfg, err := Load()
-			if tc.wantErr {
-				if err == nil {
-					t.Fatalf("want error, got SearchVerticals=%v", cfg.SearchVerticals)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("Load: %v", err)
-			}
-			if !slices.Equal(cfg.SearchVerticals, tc.want) {
-				t.Errorf("SearchVerticals = %v, want %v", cfg.SearchVerticals, tc.want)
-			}
-		})
-	}
-}
-
 func TestSearchAuditMode(t *testing.T) {
 	for _, tc := range []struct {
 		name, value, want string

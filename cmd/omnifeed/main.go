@@ -17,7 +17,6 @@ import (
 	"time"
 
 	"github.com/kinorai/omnifeed/internal/auth"
-	"github.com/kinorai/omnifeed/internal/browser"
 	browsercrawl4ai "github.com/kinorai/omnifeed/internal/browser/crawl4ai"
 	"github.com/kinorai/omnifeed/internal/config"
 	"github.com/kinorai/omnifeed/internal/domain"
@@ -30,10 +29,6 @@ import (
 	"github.com/kinorai/omnifeed/internal/engine/reddit"
 	"github.com/kinorai/omnifeed/internal/httpx"
 	"github.com/kinorai/omnifeed/internal/observability"
-	searchbluesky "github.com/kinorai/omnifeed/internal/search/bluesky"
-	searchhackernews "github.com/kinorai/omnifeed/internal/search/hackernews"
-	searchreddit "github.com/kinorai/omnifeed/internal/search/reddit"
-	"github.com/kinorai/omnifeed/internal/search/router"
 	"github.com/kinorai/omnifeed/internal/search/searxng"
 	"github.com/kinorai/omnifeed/internal/transport/mcp"
 	"github.com/kinorai/omnifeed/internal/transport/mcp/tools"
@@ -204,22 +199,6 @@ func run(cfg config.Config, logger *slog.Logger) error {
 		}
 	} else {
 		logger.Info("search tool disabled (OMNIFEED_SEARXNG_URL not set)")
-	}
-
-	// Native site searches, in front of SearXNG. A site-scoped query for a wired
-	// host is answered by that site's own search API — which ranks with signals
-	// (points, comments, score) no scraped engine exposes — and anything the
-	// vertical declines, comes back empty on, or fails at falls through to
-	// SearXNG. Off by default: no verticals configured = the previous behaviour.
-	if searcher != nil && len(cfg.SearchVerticals) > 0 {
-		verticals := searchVerticals(cfg, httpClient, crawl4aiBrowser, limiter, logger)
-		logger.Info("vertical search routing enabled", "verticals", cfg.SearchVerticals)
-		searcher = router.New(router.Config{
-			Verticals: verticals,
-			Fallback:  searcher,
-			Logger:    logger,
-			Metrics:   metrics,
-		})
 	}
 
 	// --- MCP tools (shared by the stdio and HTTP transports) ---
@@ -402,46 +381,6 @@ func runServers(ctx context.Context, logger *slog.Logger, health *observability.
 	wg.Wait()
 	logger.Info("shutdown complete")
 	return nil
-}
-
-// searchVerticals builds the host → native searcher map the router dispatches
-// on, one entry per name in OMNIFEED_SEARCH_VERTICALS (config validates the
-// names, so an unknown one never reaches here).
-//
-// All three share the process-wide domain limiter. It is keyed by hostname, so
-// the HN searcher shares hn.algolia.com's pacing slot with the HN fetch engine
-// and the Reddit searcher shares www.reddit.com's with the Reddit engine —
-// politeness is per host, not per component.
-func searchVerticals(cfg config.Config, httpClient *httpx.Client, br browser.Browser,
-	limiter *httpx.DomainLimiter, logger *slog.Logger) map[string]domain.Searcher {
-	verticals := make(map[string]domain.Searcher, len(cfg.SearchVerticals))
-	for _, name := range cfg.SearchVerticals {
-		switch name {
-		case "hackernews":
-			verticals["news.ycombinator.com"] = searchhackernews.New(searchhackernews.Config{
-				Client:  httpClient,
-				Limiter: limiter,
-				Logger:  logger,
-			})
-		case "reddit":
-			// Reddit 403-blocks non-browser clients, so the searcher fetches
-			// through the same browser the Reddit engine uses.
-			verticals["reddit.com"] = searchreddit.New(searchreddit.Config{
-				Browser: br,
-				Limiter: limiter,
-				Logger:  logger,
-			})
-		case "bluesky":
-			// api.bsky.app, not the fetch engine's public.api.bsky.app:
-			// searchPosts is keyless on the former and 403 on the latter.
-			verticals["bsky.app"] = searchbluesky.New(searchbluesky.Config{
-				Client:  httpClient,
-				Limiter: limiter,
-				Logger:  logger,
-			})
-		}
-	}
-	return verticals
 }
 
 // searxngLimiter builds the pacing limiter for search queries, or returns nil
