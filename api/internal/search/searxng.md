@@ -50,6 +50,10 @@ type Config struct {
     // MaxWait caps how long a query may sit in the Limiter before it gives up.
     // Ignored when Limiter is nil. Defaults to defaultMaxWait.
     MaxWait time.Duration
+    // Audit selects the per-search audit log: "off" (default), "summary" or
+    // "full". See config.Config.SearchAudit for why this is its own setting
+    // rather than a log level.
+    Audit string
 }
 ```
 

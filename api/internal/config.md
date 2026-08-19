@@ -17,6 +17,12 @@ Package config loads all runtime configuration from OMNIFEED\_\-prefixed environ
 
 ## Variables
 
+<a name="ValidSearchAudit"></a>ValidSearchAudit is the complete set of OMNIFEED\_SEARCH\_AUDIT modes.
+
+```go
+var ValidSearchAudit = []string{"off", "summary", "full"}
+```
+
 <a name="ValidSearchVerticals"></a>ValidSearchVerticals is the complete set of native site searches OMNIFEED\_SEARCH\_VERTICALS may name. Each one is wired to one host in main.go.
 
 ```go
@@ -124,6 +130,28 @@ type Config struct {
     // comes back empty on, or fails at falls back to SearXNG — so the router
     // needs OMNIFEED_SEARXNG_URL. Empty (the default) disables routing entirely.
     SearchVerticals []string
+
+    // SearchAudit controls the per-search audit log: "off", "summary" or
+    // "full". It is deliberately NOT a log level. A level answers "how bad is
+    // this?", while this stream answers "what did the pool return?" — putting it
+    // behind DEBUG would mean enabling every other component's debug output to
+    // get it, and would invite sampling, which biases the per-engine statistics
+    // it exists to produce. Both modes emit at INFO.
+    //
+    // off     nothing beyond the existing warnings (the default).
+    // summary one line per search: query, filters, how many rows each engine
+    //         contributed, and which engines were unresponsive.
+    // full    adds one line per (engine, result) with that engine's own rank —
+    //         the position table. ~10 lines per search.
+    //
+    // Both modes log the query text; only "full" adds the result URLs. That is
+    // the most revealing data the service holds, so this is opt-in and its
+    // retention is the operator's decision.
+    //
+    // Emitted at INFO through the shared logger, so anything other than "off"
+    // requires OMNIFEED_LOG_LEVEL=debug or info — Load rejects the combination
+    // rather than let a warn-level deployment discard the feed in silence.
+    SearchAudit string
 
     // Search tool limits.
     SearchMaxResults int
