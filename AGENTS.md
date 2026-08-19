@@ -79,6 +79,7 @@ cmd/omnifeed/    entry point + wiring
 - **Tests:** new behavior ships with a test. Prefer table tests and `httptest` fakes over live calls.
 - **Config:** every knob is an `OMNIFEED_`-prefixed env var declared in `internal/config/config.go` — add new ones there, with a default, and document them in the `docs/configuration.md` table.
 - **Errors/metrics:** classify with `observability.Reason`; record search via `metrics.ObserveSearch`, crawl via `metrics.Observe`.
+- **Search audit log** (`OMNIFEED_SEARCH_AUDIT`, off by default): one FLAT log line per fact, never a nested table — log stores that flatten JSON turn arrays into opaque strings, so `positions: [1,4]` becomes untouchable text. Lines join on `query_id`. It is a data feed, not a severity: never move it behind a log level.
 - Match the surrounding style; don't refactor unrelated code in a feature change.
 
 ## Gotchas

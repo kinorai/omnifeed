@@ -9,8 +9,11 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math/rand"
 	"net/http"
 	"net/url"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -57,6 +60,10 @@ type Config struct {
 	// MaxWait caps how long a query may sit in the Limiter before it gives up.
 	// Ignored when Limiter is nil. Defaults to defaultMaxWait.
 	MaxWait time.Duration
+	// Audit selects the per-search audit log: "off" (default), "summary" or
+	// "full". See config.Config.SearchAudit for why this is its own setting
+	// rather than a log level.
+	Audit string
 }
 
 // Searcher queries a SearXNG instance and reshapes results into the canonical
@@ -69,6 +76,7 @@ type Searcher struct {
 	siteEngines string // pre-joined for the `engines` param; empty = all engines
 	limiter     *httpx.DomainLimiter
 	maxWait     time.Duration
+	audit       string
 }
 
 // New returns a Searcher wired with the given config.
@@ -87,6 +95,7 @@ func New(cfg Config) *Searcher {
 		siteEngines: strings.Join(cfg.SiteEngines, ","),
 		limiter:     cfg.Limiter,
 		maxWait:     cfg.MaxWait,
+		audit:       cfg.Audit,
 	}
 }
 
@@ -112,6 +121,14 @@ type searchHit struct {
 	Content       string `json:"content"`
 	Engine        string `json:"engine"`
 	PublishedDate string `json:"publishedDate"`
+	// Engines and Positions are parallel arrays: SearXNG merges every engine's
+	// ranking into one list and records, per result, which engines returned it
+	// and at what rank in each engine's OWN list. Together they reconstruct
+	// each engine's raw ranking from a single response — no per-engine fan-out
+	// needed. Score is SearXNG's merged rank weight (see searx/results.py).
+	Engines   []string `json:"engines"`
+	Positions []int    `json:"positions"`
+	Score     float64  `json:"score"`
 }
 
 // Search runs the query against SearXNG and returns up to opts.Limit results.
@@ -120,6 +137,8 @@ func (s *Searcher) Search(ctx context.Context, query string, opts domain.SearchO
 		return nil, fmt.Errorf("query is empty")
 	}
 
+	started := time.Now()
+	queryID := newQueryID()
 	params := url.Values{}
 	scoped := siteScoped(query, opts.Site)
 	params.Set("q", scoped)
@@ -190,6 +209,10 @@ func (s *Searcher) Search(ctx context.Context, query string, opts domain.SearchO
 			"unresponsive_engines", formatUnresponsive(sr.UnresponsiveEngines),
 			"results", len(sr.Results))
 		s.countUnresponsive(sr.UnresponsiveEngines)
+		// The line above joins every failure into one string, which reads fine
+		// and cannot be aggregated. These carry engine and reason as their own
+		// fields so a log store can group by them.
+		s.logUnresponsive(queryID, sr.UnresponsiveEngines)
 	}
 
 	// Zero results with NO failure report is the shape a silently blocked pool
@@ -206,6 +229,9 @@ func (s *Searcher) Search(ctx context.Context, query string, opts domain.SearchO
 			s.metrics.ObserveEmptySearch(scoped != query)
 		}
 	}
+
+	s.observeRanks(sr.Results)
+	s.logAudit(queryID, query, scoped, opts, sr, time.Since(started))
 
 	results := make([]domain.SearchResult, 0, len(sr.Results))
 	for _, hit := range sr.Results {
@@ -322,4 +348,161 @@ func formatUnresponsive(pairs [][]string) string {
 		}
 	}
 	return strings.Join(parts, "; ")
+}
+
+// --- audit log ---
+//
+// The per-search record that makes engine quality measurable. It is a data
+// feed, not diagnostics, so it is gated by its own setting and emitted at INFO
+// (see config.Config.SearchAudit).
+//
+// SHAPE: one flat line per fact, never a nested table. Log stores that flatten
+// JSON — VictoriaLogs among them — turn arrays into opaque strings, so a line
+// carrying `positions: [1,1,4,7]` stores the literal text "[1, 1, 4, 7]" and
+// can never be grouped or averaged. One line per (engine, result) keeps every
+// value in a field of its own, which is what makes `stats by (engine)` work.
+// Lines are joined by query_id.
+
+const (
+	auditOff     = "off"
+	auditSummary = "summary"
+	auditFull    = "full"
+)
+
+// newQueryID returns the correlation id shared by every line of one search.
+// Non-cryptographic: it only has to be unique among the searches a log store
+// holds at once, and it is never a secret or a capability.
+// #nosec G404 -- log correlation id, not a security token
+func newQueryID() string {
+	return strconv.FormatUint(rand.Uint64(), 36) //nolint:gosec // see above
+}
+
+// logAudit emits the search-level line, plus the per-result position table in
+// "full" mode.
+func (s *Searcher) logAudit(queryID, query, scoped string, opts domain.SearchOptions, sr searchResponse, took time.Duration) {
+	if s.auditDisabled() {
+		return
+	}
+	rows := make(map[string]int, len(sr.Results))
+	for _, hit := range sr.Results {
+		for _, engine := range hit.Engines {
+			rows[engine]++
+		}
+	}
+	// engine_rows is rendered as "engine=n" pairs rather than a map or an
+	// array, for the same flattening reason as above: it stays greppable in
+	// every store, and the authoritative per-engine numbers are the
+	// omnifeed_search_engine_* metrics anyway.
+	s.logger.Info("search audit",
+		"query_id", queryID,
+		"query", query,
+		"site", opts.Site,
+		"time_range", opts.TimeRange,
+		"site_scoped", scoped != query,
+		"total", len(sr.Results),
+		"limit", opts.Limit,
+		"duration_ms", took.Milliseconds(),
+		"engine_rows", formatRows(rows),
+	)
+	if s.audit != auditFull {
+		return
+	}
+	for mergedRank, hit := range sr.Results {
+		unique := len(hit.Engines) == 1
+		for i, engine := range hit.Engines {
+			// Positions is parallel to Engines, but it is upstream data: a
+			// short or missing array must not panic, and rank 0 records "the
+			// engine returned this, rank unknown".
+			rank := 0
+			if i < len(hit.Positions) {
+				rank = hit.Positions[i]
+			}
+			s.logger.Info("search result",
+				"query_id", queryID,
+				"engine", engine,
+				"position", rank,
+				"merged_rank", mergedRank+1,
+				"score", hit.Score,
+				"url", hit.URL,
+				"unique", unique,
+			)
+		}
+	}
+}
+
+// logUnresponsive emits one line per failed engine, with engine and reason as
+// separate fields.
+func (s *Searcher) logUnresponsive(queryID string, pairs [][]string) {
+	if s.auditDisabled() {
+		return
+	}
+	for _, pair := range pairs {
+		if len(pair) == 0 || pair[0] == "" {
+			continue
+		}
+		reason := ""
+		if len(pair) > 1 {
+			reason = pair[1]
+		}
+		s.logger.Info("search engine unresponsive",
+			"query_id", queryID,
+			"engine", pair[0],
+			"reason", reason,
+			"reason_class", normalizeEngineError(reason),
+		)
+	}
+}
+
+// observeRanks feeds the two aggregate metrics. It runs whatever the audit
+// setting is: these carry no query text and no URLs, so there is nothing to
+// gate. Rows with no engine list fall back to the primary `engine` field,
+// which older SearXNG responses are the only thing to provide.
+func (s *Searcher) observeRanks(hits []searchHit) {
+	if s.metrics == nil {
+		return
+	}
+	for _, hit := range hits {
+		engines := hit.Engines
+		if len(engines) == 0 && hit.Engine != "" {
+			engines = []string{hit.Engine}
+		}
+		unique := len(engines) == 1
+		for i, engine := range engines {
+			if engine == "" {
+				continue
+			}
+			rank := 0
+			if i < len(hit.Positions) {
+				rank = hit.Positions[i]
+			}
+			if rank <= 0 {
+				continue // unknown rank would skew the histogram toward zero
+			}
+			s.metrics.ObserveEngineRank(engine, rank, unique)
+		}
+	}
+}
+
+// auditDisabled reports whether the audit log is disabled. The empty string counts
+// as off so a zero-valued Config keeps the previous behaviour.
+func (s *Searcher) auditDisabled() bool {
+	return s.audit == "" || s.audit == auditOff
+}
+
+// formatRows renders per-engine row counts as a stable, sorted "engine=n"
+// string.
+func formatRows(rows map[string]int) string {
+	if len(rows) == 0 {
+		return ""
+	}
+	names := make([]string, 0, len(rows))
+	for engine := range rows {
+		names = append(names, engine)
+	}
+	sort.Strings(names)
+	parts := make([]string, 0, len(names))
+	for _, engine := range names {
+		parts = append(parts, engine+"="+strconv.Itoa(rows[engine]))
+	}
+	return strings.Join(parts, " ")
 }
