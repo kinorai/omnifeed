@@ -40,7 +40,8 @@ go.work.sum
 .env
 .env.local
 
-# Rendered by scripts/container: settings.yml with the Brave Search API key in it
+# Rendered by scripts/container: settings.yml carrying the Brave Search API key
+# and/or your private Google Programmable Search engine id
 searxng/settings.runtime.yml
 
 # ========================

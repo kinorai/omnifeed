@@ -23,6 +23,42 @@ export PATH="/usr/local/bin:/opt/homebrew/bin:$PATH"
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+# ---- .env ------------------------------------------------------------------
+# Your settings, kept out of git: copy .env.example to .env and edit it. Every
+# variable this script reads can go there — ports, image tags, the SearXNG
+# engine credentials below. .gitignore covers .env, so a `git add -A` cannot
+# publish it.
+#
+# One KEY=value per line, `#` for a whole-line comment. Not a shell script: no
+# command substitution, no variable expansion, and no comment after a value
+# (`FOO=1 # note` makes the value `1 # note`). Optional surrounding quotes are
+# stripped. An already-exported variable WINS over the file, so a one-off
+# `GOOGLE_CSE_CX=… ./scripts/container up` still overrides it.
+load_env_file() {
+  local file="$1" line k v
+  [ -f "$file" ] || return 0
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in ''|'#'*) continue ;; *=*) ;; *) continue ;; esac
+    k="${line%%=*}"; v="${line#*=}"
+    k="${k#export }"; k="${k//[[:space:]]/}"
+    # Trim surrounding whitespace, then one layer of matching quotes.
+    v="${v#"${v%%[![:space:]]*}"}"; v="${v%"${v##*[![:space:]]}"}"
+    case "$v" in
+      \"*\") v="${v#\"}"; v="${v%\"}" ;;
+      \'*\') v="${v#\'}"; v="${v%\'}" ;;
+    esac
+    [ -n "$k" ] || continue
+    # Only names this script could plausibly read, so a stray line in .env can
+    # never rewrite PATH or HOME.
+    case "$k" in
+      OMNIFEED_*|SEARXNG_*|CRAWL4AI_*|BRAVEAPI_*|GOOGLE_CSE_*) ;;
+      *) continue ;;
+    esac
+    [ -n "${!k:-}" ] || export "$k=$v"
+  done < "$file"
+}
+load_env_file "$REPO/.env"
+
 # ---- config (all overridable via env) --------------------------------------
 # All three track moving tags so `update` pulls the newest build. crawl4ai 0.9.x
 # serves on the network only with CRAWL4AI_API_TOKEN set (else loopback) and gates
@@ -51,10 +87,16 @@ CRAWL4AI_PORT="${OMNIFEED_CRAWL4AI_PORT:-11235}"
 CRAWL4AI_MEMORY="${OMNIFEED_CRAWL4AI_MEMORY:-4G}"  # headless Chromium; 1G default OOMs
 
 # settings.yml mounted into searxng. Swapped for a rendered, gitignored runtime
-# copy when a Brave Search API key is available (see render_searxng_settings).
+# copy when a Brave Search API key or a Google Programmable Search engine id is
+# available (see render_searxng_settings).
 # Point SEARXNG_SETTINGS at your own file to run a different engine pool without
-# forking this repo; the Brave rendering below still applies to it.
+# forking this repo; the rendering below still applies to it.
 SEARXNG_SETTINGS="${SEARXNG_SETTINGS:-$REPO/searxng/settings.yml}"
+
+# Where the rendered copy is written when a private value has to go into it.
+# It carries credentials, so point SEARXNG_RUNTIME_SETTINGS outside this repo to
+# keep them out of the working tree entirely. The default path is gitignored.
+SEARXNG_RUNTIME_SETTINGS="${SEARXNG_RUNTIME_SETTINGS:-$REPO/searxng/settings.runtime.yml}"
 
 # ---- helpers ---------------------------------------------------------------
 log()  { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
@@ -135,78 +177,138 @@ run_or_start() {
   fi
 }
 
-# SearXNG has no env interpolation for engine fields, so the Brave Search API key
-# has to sit inside the mounted settings.yml — and the committed file must stay
-# keyless. render_searxng_settings resolves the key at start time (first non-empty
-# wins: $BRAVEAPI_KEY, else the output of $BRAVEAPI_KEY_COMMAND) and, if it
-# finds one, renders searxng/settings.runtime.yml (gitignored, mode 600) with the
-# key filled in and `inactive: true` flipped to false — inside the `- name: braveapi` block
-# only. No key from either: SEARXNG_SETTINGS keeps pointing at the committed file
-# and braveapi stays inactive, exactly as before. The key is never printed and never
-# reaches the argv of any command (awk reads it from the environment).
+# SearXNG has no env interpolation for engine fields, so two private values have
+# to sit inside the mounted settings.yml — and the committed file must carry
+# neither. render_searxng_settings resolves them at start time and, if it finds
+# either one, renders searxng/settings.runtime.yml (gitignored, mode 600) and
+# mounts that instead of the committed file:
+#   - the Brave Search API key, a secret: first non-empty of $BRAVEAPI_KEY and
+#     the output of $BRAVEAPI_KEY_COMMAND. It is filled into the
+#     `- name: braveapi` block and flips that block's `inactive: true` to false.
+#   - the Google Programmable Search engine id (CX), not a secret but yours:
+#     first non-empty of $GOOGLE_CSE_CX and the output of
+#     $GOOGLE_CSE_CX_COMMAND. It is appended as a `- name: google cse` override,
+#     with a `weight:` line only when $GOOGLE_CSE_WEIGHT is set.
+#     Needed because searx/engines/google_cse.py hardcodes one CX that every
+#     SearXNG instance on the internet shares, so Google rate-limits it globally
+#     and the engine self-suspends on most queries. A private CX also restores
+#     time_range: the engine maps it onto `sort=date:r:FROM:TO`, and privacywall
+#     is otherwise the pool's only member that honours a range at all.
+#     The key name is UPPERCASE on purpose. SearXNG setattr's every engine
+#     settings key onto the engine module verbatim and the module variable is
+#     `CX`, so `cx:` would create an unused attribute and leave the shared CX in
+#     place.
+# Neither one set: SEARXNG_SETTINGS keeps pointing at the committed file and the
+# pool stays keyless, exactly as before. Neither value is ever printed, and
+# neither reaches the argv of any command (awk reads both from the environment).
 #
-# Store it once in whatever secret manager you already use, and point
-# BRAVEAPI_KEY_COMMAND at the command that prints it. For example:
+# Store each one in whatever secret manager you already use, and point the
+# matching *_COMMAND variable at the command that prints it. For example:
 #   macOS Keychain: export BRAVEAPI_KEY_COMMAND="security find-generic-password -s omnifeed-braveapi -w"
 #   Bitwarden:      export BRAVEAPI_KEY_COMMAND="bw get password omnifeed-braveapi"
 render_searxng_settings() {
-  local key source runtime
+  local key source cx cx_source runtime
   if [ -n "${BRAVEAPI_KEY:-}" ]; then
     key="$BRAVEAPI_KEY"; source=env
   elif [ -n "${BRAVEAPI_KEY_COMMAND:-}" ]; then
     key="$(eval "$BRAVEAPI_KEY_COMMAND" 2>/dev/null || true)"
     source=command
   fi
-  [ -n "${key:-}" ] || return 0
+  if [ -n "${GOOGLE_CSE_CX:-}" ]; then
+    cx="$GOOGLE_CSE_CX"; cx_source=env
+  elif [ -n "${GOOGLE_CSE_CX_COMMAND:-}" ]; then
+    cx="$(eval "$GOOGLE_CSE_CX_COMMAND" 2>/dev/null || true)"
+    cx_source=command
+  fi
+  # A non-numeric weight would render invalid YAML and searxng would then refuse
+  # to start. Drop it rather than mount a broken file.
+  if [ -n "${GOOGLE_CSE_WEIGHT:-}" ] \
+     && ! printf '%s' "$GOOGLE_CSE_WEIGHT" | grep -qE '^[0-9]+(\.[0-9]+)?$'; then
+    warn "google cse: GOOGLE_CSE_WEIGHT=$GOOGLE_CSE_WEIGHT is not a number — ignored"
+    GOOGLE_CSE_WEIGHT=""
+  fi
 
   # A custom SEARXNG_SETTINGS file need not declare braveapi at all. Without the
-  # block there is nothing to inject into, so mount the file untouched rather
-  # than render a copy that claims a key it does not carry.
-  if ! grep -q '^  - name: braveapi$' "$SEARXNG_SETTINGS"; then
+  # block there is nothing to inject into, so drop the key rather than render a
+  # copy that claims a key it does not carry. The google cse override appends,
+  # so it needs no block in the source file.
+  if [ -n "${key:-}" ] && ! grep -q '^  - name: braveapi$' "$SEARXNG_SETTINGS"; then
     warn "braveapi: no '- name: braveapi' block in $SEARXNG_SETTINGS — key not injected"
+    key=""
+  fi
+  if [ -z "${key:-}" ] && [ -z "${cx:-}" ]; then
     return 0
   fi
 
-  runtime="$REPO/searxng/settings.runtime.yml"
+  runtime="$SEARXNG_RUNTIME_SETTINGS"
+  mkdir -p "$(dirname "$runtime")"
   rm -f "$runtime"
   ( umask 077
-    BRAVEAPI_KEY_RENDER="$key" awk '
-      /^  - name: braveapi$/            { inblock = 1; print; next }
-      inblock && /^  - name:/           { inblock = 0 }
-      inblock && /^[[:space:]]*api_key:/ {
-        match($0, /^[[:space:]]*/)
-        printf "%sapi_key: \"%s\"\n", substr($0, 1, RLENGTH), ENVIRON["BRAVEAPI_KEY_RENDER"]
-        next
-      }
-      inblock && /^[[:space:]]*inactive:[[:space:]]*true[[:space:]]*$/ {
-        # Must OVERRIDE, not drop: with use_default_settings, engine blocks merge
-        # key-wise, so a missing `inactive` inherits the upstream default (true)
-        # and the engine is silently never loaded.
-        match($0, /^[[:space:]]*/)
-        printf "%sinactive: false\n", substr($0, 1, RLENGTH)
-        next
-      }
-                                        { print }
-    ' "$SEARXNG_SETTINGS" > "$runtime" )
-  # Two engines are redundant once the API engine is keyed — disable them in the
-  # rendered copy only (merge-by-name override), never in the committed file:
-  #   brave      the HTML scraper, routinely 429-suspended
-  #   startpage  the pool's slowest engine and the repeat 1h-CAPTCHA offender. It
-  #              proxies Google, which `google cse` already covers. Keyless users
-  #              keep it: it is a free general-web engine their pool needs.
-  #
-  # They append at EOF so a later entry wins the merge, which requires `engines:`
-  # to be the file's last top-level key. That holds for the committed file; a
-  # custom SEARXNG_SETTINGS may order keys differently, and grafting list items
-  # onto whatever block ends the file would break the parse. Skip it and say so.
+    if [ -n "${key:-}" ]; then
+      BRAVEAPI_KEY_RENDER="$key" awk '
+        /^  - name: braveapi$/            { inblock = 1; print; next }
+        inblock && /^  - name:/           { inblock = 0 }
+        inblock && /^[[:space:]]*api_key:/ {
+          match($0, /^[[:space:]]*/)
+          printf "%sapi_key: \"%s\"\n", substr($0, 1, RLENGTH), ENVIRON["BRAVEAPI_KEY_RENDER"]
+          next
+        }
+        inblock && /^[[:space:]]*inactive:[[:space:]]*true[[:space:]]*$/ {
+          # Must OVERRIDE, not drop: with use_default_settings, engine blocks merge
+          # key-wise, so a missing `inactive` inherits the upstream default (true)
+          # and the engine is silently never loaded.
+          match($0, /^[[:space:]]*/)
+          printf "%sinactive: false\n", substr($0, 1, RLENGTH)
+          next
+        }
+                                          { print }
+      ' "$SEARXNG_SETTINGS" > "$runtime"
+    else
+      cat "$SEARXNG_SETTINGS" > "$runtime"
+    fi )
+
+  # Both overrides append at EOF so a later entry wins the merge, which requires
+  # `engines:` to be the file's last top-level key. That holds for the committed
+  # file; a custom SEARXNG_SETTINGS may order keys differently, and grafting list
+  # items onto whatever block ends the file would break the parse. Skip them and
+  # say so.
   if engines_is_last "$runtime"; then
-    printf '\n  # Rendered overrides: redundant while braveapi is keyed.\n  - name: brave\n    disabled: true\n  - name: startpage\n    disabled: true\n' >> "$runtime"
+    # Two engines are redundant once the API engine is keyed — disable them in
+    # the rendered copy only (merge-by-name override), never in the committed
+    # file:
+    #   brave      the HTML scraper, routinely 429-suspended
+    #   startpage  the pool's slowest engine and the repeat 1h-CAPTCHA offender. It
+    #              proxies Google, which `google cse` already covers. Keyless users
+    #              keep it: it is a free general-web engine their pool needs.
+    if [ -n "${key:-}" ]; then
+      printf '\n  # Rendered overrides: redundant while braveapi is keyed.\n  - name: brave\n    disabled: true\n  - name: startpage\n    disabled: true\n' >> "$runtime"
+    fi
+    # $GOOGLE_CSE_WEIGHT is optional and has no default: unset renders no
+    # `weight:` line, so the engine keeps SearXNG's 1.0 and ranks by consensus
+    # like every other member of the pool. Weight is ORDERING ONLY — SearXNG
+    # merges every engine's results into one scored list, so it never excludes an
+    # engine, and a suspended google cse simply contributes nothing whatever the
+    # weight. searx/results.py scores a result as (product of the weights of the
+    # engines that returned it) * (number of positions) * sum(1 / position), so
+    # consensus multiplies and a weight above ~5 makes this engine outrank
+    # agreement between several others. It also settles duplicates: the
+    # higher-weighted engine's title and snippet win. Raise it only if you have
+    # measured your own pool.
+    if [ -n "${cx:-}" ]; then
+      GOOGLE_CSE_CX_RENDER="$cx" GOOGLE_CSE_WEIGHT_RENDER="${GOOGLE_CSE_WEIGHT:-}" awk 'BEGIN {
+        printf "\n  # Rendered override: private Programmable Search engine id.\n"
+        printf "  - name: google cse\n    CX: \"%s\"\n", ENVIRON["GOOGLE_CSE_CX_RENDER"]
+        w = ENVIRON["GOOGLE_CSE_WEIGHT_RENDER"]
+        if (w != "") printf "    weight: %s\n", w
+      }' >> "$runtime"
+    fi
   else
-    warn "braveapi: 'engines:' is not the last top-level key in $SEARXNG_SETTINGS — brave/startpage left enabled"
+    warn "'engines:' is not the last top-level key in $SEARXNG_SETTINGS — rendered engine overrides skipped"
   fi
   chmod 600 "$runtime"
   SEARXNG_SETTINGS="$runtime"
-  log "braveapi: key injected from ${source}"
+  if [ -n "${key:-}" ]; then log "braveapi: key injected from ${source}"; fi
+  if [ -n "${cx:-}" ]; then log "google cse: CX injected from ${cx_source}"; fi
 }
 
 rm_one() {
@@ -284,10 +386,29 @@ up() {
     -e "OMNIFEED_CRAWL4AI_URL=http://${crawl4ai_ip}:11235/crawl"
     -e "OMNIFEED_CRAWL4AI_TOKEN=${token}"
     -e OMNIFEED_DEV_NO_AUTH=true
-    -e OMNIFEED_LOG_LEVEL=info
-    -e OMNIFEED_LOG_FORMAT=json
   )
   [ -n "$searxng_ip" ] && env_args+=( -e "OMNIFEED_SEARXNG_URL=http://${searxng_ip}:8080" )
+  # Every other OMNIFEED_* you set in .env or the shell reaches the binary, so a
+  # knob like OMNIFEED_SEARCH_AUDIT or OMNIFEED_REDDIT_MAX_COMMENTS needs no
+  # change here. Two groups are skipped: the three above, which are derived from
+  # the containers this script just started, and the names that configure THIS
+  # script rather than the binary. Setting OMNIFEED_API_KEY here works too — the
+  # binary prefers the key over the DEV_NO_AUTH opt-out and says so in its log.
+  local v
+  for v in $(compgen -v OMNIFEED_ 2>/dev/null || true); do
+    case "$v" in
+      OMNIFEED_CRAWL4AI_URL|OMNIFEED_CRAWL4AI_TOKEN|OMNIFEED_SEARXNG_URL) continue ;;
+      OMNIFEED_PREFIX|OMNIFEED_PLATFORM|OMNIFEED_IMAGE|OMNIFEED_LAUNCHER) continue ;;
+      OMNIFEED_PORT_*|OMNIFEED_CRAWL4AI_PORT|OMNIFEED_CRAWL4AI_MEMORY) continue ;;
+    esac
+    [ -n "${!v:-}" ] || continue
+    env_args+=( -e "$v=${!v}" )
+  done
+  # Defaults for what you did not set. Keep the level at info or debug when you
+  # enable OMNIFEED_SEARCH_AUDIT: the audit stream is emitted at INFO, and the
+  # binary refuses to start if the level would discard it.
+  [ -n "${OMNIFEED_LOG_LEVEL:-}" ]  || env_args+=( -e OMNIFEED_LOG_LEVEL=info )
+  [ -n "${OMNIFEED_LOG_FORMAT:-}" ] || env_args+=( -e OMNIFEED_LOG_FORMAT=json )
   log "run   $OMNIFEED"
   container run -d --name "$OMNIFEED" --platform "$PLATFORM" \
     -p "${PORT_HTTP}:8080" -p "${PORT_MCP}:8081" -p "${PORT_METRICS}:9090" \

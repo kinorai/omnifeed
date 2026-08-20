@@ -34,9 +34,11 @@ outgoing:
 #   - wikipedia / wikidata fire on every query but never help dev/devops lookups
 #     (wikidata also adds ~3s latency + log noise)
 #
-# The general-web pool that carries the queries is duckduckgo, brave, startpage,
-# google cse, mojeek, bing (+ braveapi once keyed). Classic `google` is NOT part
-# of it: upstream marks it inactive since ~2026-06, replaced by `google cse`.
+# The general-web pool that carries the queries is duckduckgo, duckduckgo web,
+# bing, privacywall, searchtoday, infospace, yandex, plus brave, startpage,
+# google cse and mojeek (all four measured dead — see the pool rebuild below).
+# Classic `google` is NOT part of it: upstream marks it inactive since ~2026-06,
+# replaced by `google cse`.
 # Widened after the 2026-07-30 perf benchmark: engines suspended after a
 # 429/CAPTCHA are skipped without a network call, so a narrow pool returns an
 # empty result set as soon as one engine is in cooldown.
@@ -52,7 +54,12 @@ engines:
 
   # Disabled by default upstream; enabled here to widen the general-web pool.
   # `google cse` is already active by default on this image vintage, so it needs
-  # no entry. `qwant` is deliberately left disabled: it silently returns
+  # no entry — but with no entry it rides the one CX hardcoded upstream, which
+  # every SearXNG instance on the internet shares and Google rate-limits
+  # globally, so it self-suspends on most queries. Set GOOGLE_CSE_CX to your own
+  # engine id and `scripts/container` renders it in (docs/apple-container.md);
+  # that also gives the pool a second engine that honours time_range.
+  # `qwant` is deliberately left disabled: it silently returns
   # fabricated results when its server IP is blocked (upstream issue, 2026-07).
   - name: mojeek
     disabled: false
@@ -63,13 +70,58 @@ engines:
   - name: duckduckgo web
     disabled: false
 
-  # Authenticated Brave Search API — a contractual quota (~1,000 req/month free
-  # at 50 qps) instead of bot-detection, so it cannot be suspended by 429s.
+  # 2026-08-16 pool rebuild. The incumbent pool had collapsed: measured on the
+  # running searxng, google cse was "Suspended: too many requests", mojeek
+  # "HTTP error", braveapi "Suspended: access denied" (see the 402 note below),
+  # and brave + startpage returned nothing at all. Only bing and the two
+  # duckduckgo variants still answered. The four engines below were scored the
+  # same day on the k8s deployment against 10 real queries from the dogfooding
+  # error log, hit@5 = correct source in the top 5: privacywall 10/10,
+  # searchtoday 10/10, yandex 9/10, infospace 8/10. Mean Jaccard on top-5 is
+  # <= 0.18 for every pair, so they barely duplicate each other, and together
+  # they restore reddit.com discovery. None needs a key or an account. All four
+  # were re-checked for reachability from this stack's egress before enabling.
+  - name: privacywall
+    disabled: false
+  - name: searchtoday
+    disabled: false
+  - name: infospace
+    disabled: false
+  - name: yandex
+    disabled: false
+  # WARNING, the reason this pool needs watching: privacywall (Bing index) and
+  # the two System1 mirrors — searchtoday (Google) and infospace (Yahoo) — carry
+  # NO block detection, so a block surfaces as an empty result set with no
+  # error. Treat an engine that returns 0 results while others return some as
+  # blocked. Only yandex raises a real CAPTCHA exception.
+  # Of the four, only privacywall honours time_range, and SearXNG SKIPS an
+  # engine that cannot honour a requested range — a time_range=year query drops
+  # this pool to privacywall alone. Put the year in the query text instead.
+  #
+  # REJECTED on the same measurement pass — do not re-add without re-measuring:
+  #   zapmeta   scored 10/10, then served a "ZapMeta access denied" page with
+  #             HTTP 200. It is a generic xpath engine, so SearXNG parses that
+  #             as zero results and reports NO error: the engine dies silently
+  #             and permanently. It answers from this egress today, which is
+  #             exactly how it looked before it died there.
+  #   seznam    3/10, and 0 reddit hits on every reddit-scoped query. Its index
+  #             is Czech-centric, too small for long technical phrases.
+  #   naver     1/10 on the same set; images and videos broken upstream (#6448).
+  #   resulthunter, tusksearch
+  #             Brave-index proxies added upstream to dodge Brave's rate limits.
+  #             Both dead: resulthunter returns empty with no error, tusksearch
+  #             returns HTTP errors and self-suspends.
+
+  # Authenticated Brave Search API — a contractual quota instead of
+  # bot-detection, so it cannot be 429/CAPTCHA-suspended. Brave DELETED the free
+  # tier in February 2026: the plan is metered at $5/1k requests with $5 of
+  # credit granted each month, so ~1,000 requests, then HTTP 402 "Usage limit
+  # exceeded" until the month rolls over.
   # To activate: set your key and change to `inactive: false` (removing the line
   # is NOT enough — engine blocks merge key-wise with the upstream defaults, and
   # the upstream block says inactive: true). NEVER commit a real
   # key. Note SearXNG fires ALL enabled engines on every query, so an active
-  # braveapi burns quota on every single search (~33/day on the free tier).
+  # braveapi burns the whole monthly credit on ~33 searches a day.
   - name: braveapi
     engine: braveapi
     api_key: ""
