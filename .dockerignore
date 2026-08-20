@@ -6,6 +6,11 @@ dist
 .idea
 .vscode
 .DS_Store
+# Local credentials — the Dockerfile copies none of these; keep them out of the
+# build context anyway, so a later COPY cannot pick them up
+.env
+.env.local
+searxng/settings.runtime.yml
 coverage.txt
 coverage.html
 /omnifeed
