@@ -38,7 +38,7 @@ type Engine struct {
 	endpoint       string
 	token          string
 	client         *httpx.Client
-	limiter        *httpx.DomainLimiter
+	limiter        httpx.Limiter
 	keepLinks      bool
 	pruneThreshold float64
 	waitUntil      string
@@ -66,7 +66,7 @@ type Config struct {
 	// config (OMNIFEED_CRAWL4AI_TOKEN); empty sends no Authorization header.
 	Token   string
 	Client  *httpx.Client
-	Limiter *httpx.DomainLimiter
+	Limiter httpx.Limiter
 	// KeepLinks renders hyperlink anchor text and retains external links in the
 	// extracted markdown. When false, both are stripped for leaner output. The
 	// default is owned by config (OMNIFEED_CRAWL4AI_KEEP_LINKS).

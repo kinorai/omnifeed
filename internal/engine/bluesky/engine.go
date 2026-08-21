@@ -46,7 +46,7 @@ var hostMatcher = httpx.HostMatcher("bsky.app")
 // Engine implements domain.Engine for Bluesky URLs via the public AppView.
 type Engine struct {
 	client  *httpx.Client
-	limiter *httpx.DomainLimiter
+	limiter httpx.Limiter
 	apiBase string
 	timeout time.Duration
 	logger  *slog.Logger
@@ -55,7 +55,7 @@ type Engine struct {
 // Config configures a Bluesky Engine.
 type Config struct {
 	Client  *httpx.Client
-	Limiter *httpx.DomainLimiter
+	Limiter httpx.Limiter
 	APIBase string        // defaults to the public AppView; overridden in tests
 	Timeout time.Duration // wall-clock budget per crawl; defaults to defaultTimeout
 	Logger  *slog.Logger
