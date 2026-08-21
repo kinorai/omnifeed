@@ -46,7 +46,7 @@ Config configures a Bluesky Engine.
 ```go
 type Config struct {
     Client  *httpx.Client
-    Limiter *httpx.DomainLimiter
+    Limiter httpx.Limiter
     APIBase string        // defaults to the public AppView; overridden in tests
     Timeout time.Duration // wall-clock budget per crawl; defaults to defaultTimeout
     Logger  *slog.Logger

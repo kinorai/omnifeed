@@ -33,7 +33,7 @@ Config configures a Discourse Engine.
 ```go
 type Config struct {
     Client  *httpx.Client
-    Limiter *httpx.DomainLimiter
+    Limiter httpx.Limiter
     // Hosts is the exact hostname allowlist. Empty means the engine claims
     // nothing — it can still be registered, Matches just always returns false.
     Hosts   []string

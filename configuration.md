@@ -41,6 +41,9 @@ alone breaks those four.
 | `OMNIFEED_SEARXNG_DELAY` | `0` (off) | Minimum gap between queries sent to SearXNG. Paces the **engines behind** SearXNG, not SearXNG itself: one query fans out to every enabled engine, so each engine sees exactly omnifeed's query rate, and an engine that judges that rate bot-like suspends itself or serves a CAPTCHA. Pair with `OMNIFEED_SEARXNG_QUOTA` — a gap alone does not bound a burst. |
 | `OMNIFEED_SEARXNG_QUOTA` | `0` (off) | Maximum queries admitted within any rolling `OMNIFEED_SEARXNG_QUOTA_WINDOW`. Needed because engines enforce two different limits: one measured pool kept answering at a 3s gap from a quiet start yet blocked after ~20 queries in ~85s, because it counts requests in a window. The delay shapes the gap, the quota bounds the burst. Measure both against your own pool. |
 | `OMNIFEED_SEARXNG_QUOTA_WINDOW` | `90s` | Width of the rolling window for `OMNIFEED_SEARXNG_QUOTA`. Ignored when the quota is `0`; must be `> 0` when it is set. |
+| `OMNIFEED_REDIS_URL` | _(unset — off)_ | Share the rate limiters' state through Redis (e.g. `redis://user:pass@redis:6379/2`, `rediss://` for TLS). The **single** switch for distributed pacing: unset, every replica paces in its own memory, so a deployment of N replicas sends up to N times the configured rate — the `OMNIFEED_SEARXNG_QUOTA` and `OMNIFEED_PER_DOMAIN_DELAY` limits each apply per pod. Set, the delay and the rolling-window quota are counted once for the whole deployment. Redis is never on the critical path: if it is unreachable the limiters fall back to in-process pacing (the unset behaviour) and crawls keep working. Per-pod concurrency stays per pod by design, so `OMNIFEED_PER_DOMAIN_CONCURRENCY` is still multiplied by the replica count. |
+| `OMNIFEED_REDIS_KEY_PREFIX` | `omnifeed:ratelimit` | Namespace for the limiter keys, so several omnifeed deployments can share one Redis instance without counting each other's requests. Every key omnifeed writes carries a TTL, which matters on a shared instance running `noeviction`. |
+| `OMNIFEED_REDIS_TIMEOUT` | `250ms` | Budget for **one Redis operation**, not for one acquisition — an acquisition legitimately sleeps for minutes while it waits out a quota window, and only the individual Redis calls inside it are bounded by this. On a breach the limiter reports its backend unavailable and paces in process for a 30s cooldown before probing again, so a dead Redis costs about one timeout per cooldown rather than one per request. |
 | `OMNIFEED_SEARCH_AUDIT` | `off` | Per-search audit log: `off`, `summary` or `full`. **Not a log level** — a level says how bad something is, this says what the engine pool returned, and gating it behind `debug` would mean enabling every other component's debug output to get it (and would invite sampling, which biases the per-engine statistics it exists to produce). Both modes log at INFO. `summary` emits one line per search: `query_id`, query, `site`, `time_range`, `total`, `duration_ms`, and per-engine row counts, plus one line per unresponsive engine with `engine` and `reason_class` as separate fields. `full` adds one line per (engine, result) carrying that engine's **own** rank — the position table — joined to the summary by `query_id`. Flat lines on purpose: log stores that flatten JSON turn arrays into opaque strings, so a nested `positions: [1,4]` could never be grouped or averaged. **Both** modes write the query string; `full` additionally writes every result URL. It is opt-in and its retention is your decision. Emitted at INFO, so anything but `off` requires `OMNIFEED_LOG_LEVEL=debug` or `info` — a higher level would discard the feed silently, so startup refuses the combination. The `omnifeed_search_engine_position_rank` and `omnifeed_search_engine_unique_results_total` metrics carry no query text or URLs and are always recorded, whatever this is set to. |
 | `OMNIFEED_SEARCH_MAX_RESULTS` | `25` | Hard cap on the search `limit` argument (1–100) |
 | `OMNIFEED_FETCH_MAX_CHARS` | `120000` | Default character cap on **markdown** content returned by the `fetch_url` MCP tool (`0` = unlimited). Over the cap, the reply ends with a resumable truncation marker. TOON/JSON output (every dedicated engine: Reddit, Hacker News, GitHub, Discourse) is never cut — use the Reddit knobs below instead. Does not apply to `/crawl` (see [Controlling fetched content size](#controlling-fetched-content-size)). |
@@ -64,6 +67,17 @@ alone breaks those four.
 | `OMNIFEED_LOG_LEVEL` | `info` | `debug`/`info`/`warn`/`error` |
 | `OMNIFEED_LOG_FORMAT` | `json` | `json` or `text` |
 | `OMNIFEED_ENABLE_PPROF` | `false` | Expose `/debug/pprof/*` (opt-in) |
+
+### Retry-After propagation
+
+An upstream that answers `429` or `503` with a `Retry-After` header is telling
+omnifeed to back off, so the answer outlives the request that got it: the host is
+held back for that duration, capped at 5 minutes, across later requests — and
+across replicas when `OMNIFEED_REDIS_URL` is set. This applies with and without
+Redis, and only to upstreams an engine calls directly (the crawled site's own
+`Retry-After` is invisible behind crawl4ai). A held host makes the next callers
+wait, each bounded by its own request budget — the engine timeouts, about 30s, or
+`MaxWait` for a search, 15s — and then time out normally.
 
 ## Controlling fetched content size
 
@@ -120,9 +134,16 @@ Served on `OMNIFEED_METRICS_ADDR` (default `:9090`) at `/metrics`, alongside the
 | `omnifeed_request_attempts_total` | counter | `upstream, attempt` | HTTP attempts by the retrying client (`first` vs `retry`) |
 | `omnifeed_upstream_seconds` | histogram | `upstream, op, status` | Upstream HTTP round-trip per attempt (start → body fully read); `crawl4ai/crawl`, `crawl4ai/execute_js`, `searxng/search`, `github/api`, `hackernews/api`, `discourse/api` |
 | `omnifeed_domain_limiter_wait_seconds` | histogram | `engine, outcome` | Time blocked in per-domain limiter acquisition (semaphore + politeness delay); `outcome="canceled"` = the wait died in the queue |
+| `omnifeed_ratelimit_backend_errors_total` | counter | `op` | Failed Redis operations in the distributed limiter: `acquire` (the limiter then paces in process), `release` or `penalize` (both cost pacing accuracy only) |
+| `omnifeed_ratelimit_penalties_total` | counter | `upstream` | Upstream `Retry-After` headers (on 429 or 503) fed back into the limiters as a hold on that host — the signal that precedes a CAPTCHA or a block |
+| `omnifeed_ratelimit_degraded` | gauge | `scope` | `1` while pacing is degraded to per-pod limits because Redis is unreachable, `0` while it is shared (and always `0` when `OMNIFEED_REDIS_URL` is unset). One series per limiter scope (`domain` for crawling, `searxng` for queries) — each degrades and recovers on its own |
 | `omnifeed_response_chars` | histogram | `engine` | Extracted content length (pre-truncation — the engine's output, before any transport `max_chars` clipping), successful crawls only |
 | `omnifeed_engine_fallbacks_total` | counter | `from_engine, reason` | Dedicated-engine failures re-crawled via the generic fallback |
 | `omnifeed_searxng_unresponsive_engines_total` | counter | `engine, error` | Engines SearXNG reported unresponsive per search; `error` normalized to a closed set (`timeout`, `captcha`, `suspended`, `too_many_requests`, `access_denied`, `error`, `unknown`) |
+| `omnifeed_searxng_engine_results_total` | counter | `engine` | Result rows each SearXNG engine contributed — the silent-block detector: a blocked engine keeps answering 200 with zero results, so its series goes flat while the pool moves. Alert on the divergence, not the absolute rate (and pair it with `absent_over_time()`: an engine already blocked at startup mints no series at all) |
+| `omnifeed_searxng_empty_searches_total` | counter | `scoped` | Searches with zero results **and** no unresponsive-engine report; `scoped="true"` is a `site:`-filtered query, where silent blocks concentrate |
 | `omnifeed_reddit_expansion_rounds` | histogram | — | `/api/morechildren` rounds per Reddit crawl |
 | `omnifeed_search_requests_total` | counter | `searcher, status, reason` | Search queries |
 | `omnifeed_search_request_seconds` | histogram | `searcher, status` | Search latency |
+| `omnifeed_search_engine_position_rank` | histogram | `engine` | Where in its own ranking an engine placed each row it returned (ranks, not seconds: 1–3 is a result a caller reads, 20+ is filler) |
+| `omnifeed_search_engine_unique_results_total` | counter | `engine` | Results no other engine in the pool returned — the metric that decides whether an engine earns its slot |

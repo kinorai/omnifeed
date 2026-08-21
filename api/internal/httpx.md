@@ -10,6 +10,7 @@ Package httpx provides HTTP utilities shared across engines: a retrying HTTP cli
 
 ## Index
 
+- [Variables](<#variables>)
 - [func ClassifyClientError\(err error, fallback domain.FailureKind\) \*domain.FetchError](<#ClassifyClientError>)
 - [func HostMatcher\(domain string\) \*regexp.Regexp](<#HostMatcher>)
 - [func NewGuardedClient\(blockPrivate bool, timeout time.Duration\) \*http.Client](<#NewGuardedClient>)
@@ -23,10 +24,23 @@ Package httpx provides HTTP utilities shared across engines: a retrying HTTP cli
   - [func NewDomainLimiter\(maxConcurrent int, minDelay time.Duration\) \*DomainLimiter](<#NewDomainLimiter>)
   - [func NewDomainQuotaLimiter\(maxConcurrent int, minDelay time.Duration, quota int, window time.Duration\) \*DomainLimiter](<#NewDomainQuotaLimiter>)
   - [func \(d \*DomainLimiter\) Acquire\(ctx context.Context, engine, rawURL string\) \(func\(\), error\)](<#DomainLimiter.Acquire>)
+  - [func \(d \*DomainLimiter\) Penalize\(rawURL string, dur time.Duration\)](<#DomainLimiter.Penalize>)
+- [type FallbackLimiter](<#FallbackLimiter>)
+  - [func \(f \*FallbackLimiter\) Acquire\(ctx context.Context, engine, rawURL string\) \(func\(\), error\)](<#FallbackLimiter.Acquire>)
+  - [func \(f \*FallbackLimiter\) Penalize\(rawURL string, d time.Duration\)](<#FallbackLimiter.Penalize>)
+- [type Limiter](<#Limiter>)
 - [type RetryConfig](<#RetryConfig>)
 - [type StatusError](<#StatusError>)
   - [func \(e \*StatusError\) Error\(\) string](<#StatusError.Error>)
 
+
+## Variables
+
+<a name="ErrLimiterUnavailable"></a>ErrLimiterUnavailable wraps backend failures of a distributed limiter \(Redis unreachable, script error\). It never reaches an engine: FallbackLimiter absorbs it and paces in process instead.
+
+```go
+var ErrLimiterUnavailable = errors.New("rate limiter backend unavailable")
+```
 
 <a name="ClassifyClientError"></a>
 ## func ClassifyClientError
@@ -100,6 +114,15 @@ type Client struct {
     // (or closed), or until the transport error. status is "ok" for 2xx and
     // "error" otherwise (non-2xx status, transport error, timeout).
     OnUpstream func(upstream, op, status string, duration time.Duration)
+    // OnRetryAfter, when non-nil, is called once per response that pairs a 429
+    // or 503 with a parseable Retry-After, with the request URL and the delay
+    // the upstream asked for. It fires whatever the retry loop then does —
+    // including when a RetryableStatus veto or exhausted attempts end the
+    // request — because the point is to keep the upstream's answer AFTER this
+    // request dies: wired to a limiter, the next caller waits instead of walking
+    // into the same wall. This client reports the fact; the cap and the policy
+    // live at the wiring site. The retry loop's own capped backoff is unchanged.
+    OnRetryAfter func(upstream, rawURL string, wait time.Duration)
     // contains filtered or unexported fields
 }
 ```
@@ -181,6 +204,81 @@ func (d *DomainLimiter) Acquire(ctx context.Context, engine, rawURL string) (fun
 ```
 
 Acquire blocks until a slot is available and the minimum delay since the last request to the same domain has elapsed, or until ctx is done — a canceled caller must not keep queuing behind a slow domain. engine names the caller for the wait metric \(the limiter itself only knows hosts\). Caller must Release \(call the returned func\) when done; on error there is nothing to release.
+
+<a name="DomainLimiter.Penalize"></a>
+### func \(\*DomainLimiter\) Penalize
+
+```go
+func (d *DomainLimiter) Penalize(rawURL string, dur time.Duration)
+```
+
+Penalize holds the domain back for d, on top of whatever the pacing settings already impose — what an upstream's Retry\-After on a 429 or 503 is worth. It only ever extends an existing hold, so the strictest answer any upstream gave stands, and it never shortens one. A non\-positive d does nothing.
+
+Nothing is released here: this is a note left for the next Acquire, not an admission.
+
+<a name="FallbackLimiter"></a>
+## type FallbackLimiter
+
+FallbackLimiter runs Primary while it is healthy and falls back to Fallback when Primary's backend is down.
+
+The distributed limiter's whole point is to share pacing state between replicas, and its backend \(Redis\) is a single point of failure. Retrieval must never depend on it: a Redis outage degrades pacing to per\-pod limits \(the behavior omnifeed had before it was introduced\), it does not fail a crawl. Hence fail OPEN — Primary errors are absorbed, not returned.
+
+On the first ErrLimiterUnavailable the circuit opens: this acquire and every later one are served by Fallback until Cooldown elapses, then the next acquire probes Primary again. Context errors are the caller's own timeout, not backend health, so they pass through and leave the circuit alone.
+
+Two costs of failing open, both accepted. Fallback keeps its own state, so a failover lands on a COLD local window \(no lastSend, no admissions recorded\): the first moments of degradation can burst up to the local limits on top of what Redis already admitted in the same window. It is transient and bounded by the per\-pod settings. And the probe is not one request: every concurrent caller passes primaryReady once the cooldown expires, so a dead Redis costs N concurrent timeouts per cooldown, not exactly one.
+
+```go
+type FallbackLimiter struct {
+    Primary  Limiter
+    Fallback Limiter
+
+    // Cooldown is how long to stay on Fallback after a Primary failure.
+    // 0 means defaultLimiterCooldown.
+    Cooldown time.Duration
+
+    // OnDegraded, when non-nil, is called on TRANSITIONS only: true when the
+    // circuit opens, false when a probe finds Primary healthy again. It is the
+    // single hook for logging and metrics — this type stays logger-free so it
+    // can be unit-tested with stubs. Set once at wiring time.
+    OnDegraded func(down bool)
+    // contains filtered or unexported fields
+}
+```
+
+<a name="FallbackLimiter.Acquire"></a>
+### func \(\*FallbackLimiter\) Acquire
+
+```go
+func (f *FallbackLimiter) Acquire(ctx context.Context, engine, rawURL string) (func(), error)
+```
+
+Acquire admits one request through whichever backend is currently serving. The release func returned always belongs to that same backend, so a caller can never release a slot it did not take.
+
+<a name="FallbackLimiter.Penalize"></a>
+### func \(\*FallbackLimiter\) Penalize
+
+```go
+func (f *FallbackLimiter) Penalize(rawURL string, d time.Duration)
+```
+
+Penalize holds a host back on BOTH backends — what an upstream's Retry\-After on a 429 or 503 is worth. Both, because the fallback's state must stay warm: a penalty recorded only in Redis is forgotten the moment the circuit opens, which is exactly when an upstream that is already refusing traffic gets hit with per\-pod pacing.
+
+The primary is skipped while the circuit is open, for the same reason acquires skip it: with Redis down every penalty would otherwise spend a whole RedisTimeout in the response path. The fallback is penalized always.
+
+A backend that cannot be penalized is skipped rather than refused, so a test stub or a future Limiter without the method still composes.
+
+<a name="Limiter"></a>
+## type Limiter
+
+Limiter admits one outbound request, blocking until the pacing policy allows it or ctx dies. engine names the caller for the wait metric, rawURL selects the domain being paced. The returned release func must be called when the request is done; on error there is nothing to release.
+
+Implementations: \*DomainLimiter \(in\-process, the default\), redislimit.Limiter \(state shared between replicas via Redis\) and \*FallbackLimiter \(fail\-open composite of the two\). A nil Limiter means pacing is disabled — every call site checks for it.
+
+```go
+type Limiter interface {
+    Acquire(ctx context.Context, engine, rawURL string) (release func(), err error)
+}
+```
 
 <a name="RetryConfig"></a>
 ## type RetryConfig

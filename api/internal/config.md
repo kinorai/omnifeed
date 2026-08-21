@@ -169,6 +169,20 @@ type Config struct {
     RedditKeepCreated bool   // include the per-comment `created` timestamp
     RedditKeepDepth   bool   // include the per-comment `depth` field
 
+    // Distributed rate limiting (optional). RedisURL is the single opt-in
+    // switch: unset keeps pacing entirely in process, exactly as before. Set,
+    // the limiters share their state through Redis so every replica counts
+    // against one limit instead of one limit each.
+    RedisURL string
+    // RedisKeyPrefix namespaces the limiter keys, so several deployments can
+    // share one Redis instance without colliding.
+    RedisKeyPrefix string
+    // RedisTimeout is the budget for ONE Redis operation, not for one Acquire:
+    // an Acquire legitimately sleeps minutes between attempts while it waits out
+    // a quota window. On a breach the limiter fails open to in-process pacing
+    // for a cooldown, so a dead Redis costs one timeout per cooldown.
+    RedisTimeout time.Duration
+
     // Limits and rate control.
     MaxURLsPerRequest    int
     PerDomainConcurrency int
