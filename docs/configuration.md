@@ -79,6 +79,26 @@ Redis, and only to upstreams an engine calls directly (the crawled site's own
 wait, each bounded by its own request budget — the engine timeouts, about 30s, or
 `MaxWait` for a search, 15s — and then time out normally.
 
+### Pacing fail-fast
+
+A caller is never held for a wait it cannot use. When a request carries a
+deadline (a search always does — `MaxWait`, 15s) and the pacing wait the limiter
+computes is longer than what is left of that deadline, the limiter refuses up
+front instead of queueing: nothing is sent, the window's quota is not consumed,
+and the caller gets `quota_exhausted` with the wait in the message — `pacing
+quota exhausted; retry in 47s`. The old behaviour was to hold the query for the
+whole 15s and then fail it with a timeout anyway, which cost an agent the wait
+**and** the answer (measured 2026-08-21: 21 searches held ~20s each, all of them
+dead on arrival).
+
+It is a verdict, not a fault: `quota_exhausted` means the deployment is pacing as
+configured and the caller should come back later. Raise
+`OMNIFEED_SEARXNG_QUOTA` / lower `OMNIFEED_SEARXNG_DELAY` if it fires more often
+than the engines actually require. A request with **no** deadline queues as
+before, and these refusals are the `outcome="budget_exceeded"` series of
+`omnifeed_domain_limiter_wait_seconds` (~0 seconds each, unlike
+`outcome="canceled"`).
+
 ## Controlling fetched content size
 
 A long article can overflow an MCP client's per-response budget, at which point the client spools the text to a file and the model never reads it. So `fetch_url` caps **markdown** content at `OMNIFEED_FETCH_MAX_CHARS` (120000 by default, `0` = unlimited) and, when it cuts, ends the reply with a resumable marker:
@@ -133,7 +153,7 @@ Served on `OMNIFEED_METRICS_ADDR` (default `:9090`) at `/metrics`, alongside the
 | `omnifeed_request_seconds` | histogram | `engine, status, reason` | End-to-end crawl latency |
 | `omnifeed_request_attempts_total` | counter | `upstream, attempt` | HTTP attempts by the retrying client (`first` vs `retry`) |
 | `omnifeed_upstream_seconds` | histogram | `upstream, op, status` | Upstream HTTP round-trip per attempt (start → body fully read); `crawl4ai/crawl`, `crawl4ai/execute_js`, `searxng/search`, `github/api`, `hackernews/api`, `discourse/api` |
-| `omnifeed_domain_limiter_wait_seconds` | histogram | `engine, outcome` | Time blocked in per-domain limiter acquisition (semaphore + politeness delay); `outcome="canceled"` = the wait died in the queue |
+| `omnifeed_domain_limiter_wait_seconds` | histogram | `engine, outcome` | Time blocked in per-domain limiter acquisition (semaphore + politeness delay); `outcome="canceled"` = the wait died in the queue; `outcome="budget_exceeded"` = the fast-fail, the wait was longer than the caller's remaining deadline so nothing was queued (~0 seconds, and `reason="quota_exhausted"` on the request metric) |
 | `omnifeed_ratelimit_backend_errors_total` | counter | `op` | Failed Redis operations in the distributed limiter: `acquire` (the limiter then paces in process), `release` or `penalize` (both cost pacing accuracy only) |
 | `omnifeed_ratelimit_penalties_total` | counter | `upstream` | Upstream `Retry-After` headers (on 429 or 503) fed back into the limiters as a hold on that host — the signal that precedes a CAPTCHA or a block |
 | `omnifeed_ratelimit_degraded` | gauge | `scope` | `1` while pacing is degraded to per-pod limits because Redis is unreachable, `0` while it is shared. The series exists only when `OMNIFEED_REDIS_URL` is set: each scope is published at `0` on startup, and with Redis off there is no series at all. One series per limiter scope (`domain` for crawling, `searxng` for queries) — each degrades and recovers on its own |

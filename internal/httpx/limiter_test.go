@@ -2,6 +2,7 @@ package httpx
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 )
@@ -283,4 +284,121 @@ func TestAcquireUnaffectedWithoutPenalty(t *testing.T) {
 		t.Fatalf("Acquire: %v", err)
 	}
 	release()
+}
+
+// A wait longer than the caller's remaining deadline must be refused
+// immediately: queueing for a slot that opens after the deadline costs the
+// caller its whole budget and fails anyway. The refusal reports the wait, and
+// the booking it made is handed back — a request that never sent must not
+// consume the window's quota.
+func TestAcquireFailsFastWhenWaitExceedsTheBudget(t *testing.T) {
+	const url = "https://www.reddit.com/"
+	var outcomes []string
+	var waits []time.Duration
+	d := NewDomainQuotaLimiter(1, 0, 2, time.Hour)
+	d.OnWait = func(_, outcome string, waited time.Duration) {
+		outcomes = append(outcomes, outcome)
+		waits = append(waits, waited)
+	}
+
+	// Spend the whole window: the next admission is an hour out.
+	for range 2 {
+		release, err := d.Acquire(context.Background(), "reddit", url)
+		if err != nil {
+			t.Fatalf("Acquire: %v", err)
+		}
+		release()
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	release, err := d.Acquire(ctx, "reddit", url)
+	if err == nil {
+		release()
+		t.Fatal("Acquire: want a WaitBudgetError, got nil")
+	}
+	var wbe *WaitBudgetError
+	if !errors.As(err, &wbe) {
+		t.Fatalf("Acquire err = %T (%v), want *WaitBudgetError", err, err)
+	}
+	if wbe.RetryAfter < 50*time.Minute {
+		t.Fatalf("RetryAfter = %v, want ~1h (the next window opening)", wbe.RetryAfter)
+	}
+	if elapsed := time.Since(start); elapsed > 40*time.Millisecond {
+		t.Fatalf("Acquire blocked for %v, want an immediate refusal", elapsed)
+	}
+	if len(outcomes) != 3 || outcomes[2] != "budget_exceeded" {
+		t.Fatalf("outcomes = %v, want the third to be budget_exceeded", outcomes)
+	}
+	if waits[2] > 40*time.Millisecond {
+		t.Fatalf("budget_exceeded wait = %v, want ~0 (nothing was queued)", waits[2])
+	}
+
+	// The refused caller's booking must be gone: two admissions were made, so
+	// two bookings stand. A leaked third would push every later caller out by a
+	// slot for nothing.
+	s := d.slotFor(url)
+	s.mu.Lock()
+	booked := len(s.window.sent)
+	s.mu.Unlock()
+	if booked != 2 {
+		t.Fatalf("window bookings = %d, want 2 (the refused caller's slot handed back)", booked)
+	}
+}
+
+// A deadline the wait DOES fit in is not a fast-fail: the caller waits and is
+// admitted, as before.
+func TestAcquireQueuesWhenTheWaitFitsTheBudget(t *testing.T) {
+	const minDelay = 20 * time.Millisecond
+	var outcomes []string
+	d := NewDomainLimiter(1, minDelay)
+	d.OnWait = func(_, outcome string, _ time.Duration) { outcomes = append(outcomes, outcome) }
+
+	release, err := d.Acquire(context.Background(), "reddit", "https://www.reddit.com/")
+	if err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+	release()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	release, err = d.Acquire(ctx, "reddit", "https://www.reddit.com/")
+	if err != nil {
+		t.Fatalf("second Acquire: %v", err)
+	}
+	release()
+
+	if len(outcomes) != 2 || outcomes[1] != "acquired" {
+		t.Fatalf("outcomes = %v, want [acquired acquired]", outcomes)
+	}
+}
+
+// A caller with NO deadline has no budget to exceed, so it queues exactly as
+// before — the fast-fail must not turn an unbounded caller into an error.
+func TestAcquireWithoutADeadlineStillQueues(t *testing.T) {
+	const url = "https://www.reddit.com/"
+	const minDelay = 30 * time.Millisecond
+	var outcomes []string
+	d := NewDomainLimiter(1, minDelay)
+	d.OnWait = func(_, outcome string, _ time.Duration) { outcomes = append(outcomes, outcome) }
+
+	release, err := d.Acquire(context.Background(), "reddit", url)
+	if err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+	release()
+
+	start := time.Now()
+	release, err = d.Acquire(context.Background(), "reddit", url)
+	if err != nil {
+		t.Fatalf("second Acquire: %v", err)
+	}
+	release()
+	if elapsed := time.Since(start); elapsed < minDelay/2 {
+		t.Fatalf("second Acquire returned after %v, want it to sit out the politeness delay", elapsed)
+	}
+	if len(outcomes) != 2 || outcomes[1] != "acquired" {
+		t.Fatalf("outcomes = %v, want [acquired acquired]", outcomes)
+	}
 }

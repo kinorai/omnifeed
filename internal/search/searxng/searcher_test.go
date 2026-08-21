@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -418,7 +419,7 @@ func TestSearchCountsResultsPerEngine(t *testing.T) {
 
 // The limiter is opt-in and must gate the request. With the quota spent and a
 // deadline shorter than the window, Search must fail in the limiter rather than
-// reach the server.
+// reach the server (as a fast-fail — see TestSearchFastFailsWhenPacingExceedsMaxWait).
 func TestSearchRespectsTheLimiter(t *testing.T) {
 	var calls int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -448,11 +449,15 @@ func TestSearchRespectsTheLimiter(t *testing.T) {
 }
 
 // A query must not sit in the limiter indefinitely: with no caller deadline the
-// searcher's own MaxWait has to end the wait, or a fan-out queues past the HTTP
+// searcher's own MaxWait bounds the wait, or a fan-out queues past the HTTP
 // server's write timeout and the caller gets no response body at all.
 // The error must also be CLASSIFIED — a local pacing wait reported raw is
 // rendered by the REST transport as an upstream SearXNG failure (HTTP 502),
 // which sends triage at the wrong component.
+//
+// MaxWait is a deadline, so a wait longer than it is now refused up front
+// rather than held for the full budget: the reason is quota_exhausted, not
+// timeout, and it carries the retry-after.
 func TestSearchBoundsTheLimiterWait(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = io.WriteString(w, `{"results":[]}`)
@@ -484,8 +489,11 @@ func TestSearchBoundsTheLimiterWait(t *testing.T) {
 	if !errors.As(err, &fe) {
 		t.Fatalf("want a classified *domain.FetchError, got %T: %v", err, err)
 	}
-	if fe.Kind != domain.KindTimeout {
-		t.Fatalf("Kind = %q, want %q (a pacing wait is our own budget, not an upstream fault)", fe.Kind, domain.KindTimeout)
+	if fe.Kind != domain.KindQuotaExhausted {
+		t.Fatalf("Kind = %q, want %q (a pacing wait is our own budget, not an upstream fault)", fe.Kind, domain.KindQuotaExhausted)
+	}
+	if !strings.Contains(fe.Err.Error(), "retry in ") {
+		t.Fatalf("message = %q, want a retry-after the caller can act on", fe.Err.Error())
 	}
 }
 
@@ -819,5 +827,67 @@ func TestSearchAuditDurationExcludesLimiterWait(t *testing.T) {
 	}
 	if got := lines[1]["duration_ms"].(int); got >= 300 {
 		t.Errorf("duration_ms = %d, want well under the 300ms pacing delay", got)
+	}
+}
+
+// budgetLimiter is a limiter that always refuses with the pacing verdict, so a
+// test can pin how a fast-fail reaches the caller without spending a real
+// window.
+type budgetLimiter struct {
+	retryAfter time.Duration
+	calls      int
+}
+
+func (b *budgetLimiter) Acquire(_ context.Context, _, _ string) (func(), error) {
+	b.calls++
+	return nil, &httpx.WaitBudgetError{RetryAfter: b.retryAfter}
+}
+
+// A refused pacing wait must reach the caller as reason quota_exhausted with the
+// retry-after in the message — an AI agent reads that string and decides when to
+// come back. It must NOT look like an upstream SearXNG failure, and the query
+// must never be sent.
+func TestSearchFastFailsWhenPacingExceedsMaxWait(t *testing.T) {
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		_, _ = io.WriteString(w, `{"results":[]}`)
+	}))
+	defer srv.Close()
+
+	limiter := &budgetLimiter{retryAfter: 12 * time.Second}
+	s := New(Config{
+		Endpoint: srv.URL,
+		Client:   httpx.New(srv.Client()),
+		Limiter:  limiter,
+		MaxWait:  15 * time.Second,
+	})
+
+	start := time.Now()
+	_, err := s.Search(context.Background(), "q", domain.SearchOptions{})
+	if err == nil {
+		t.Fatal("Search: want a fast-fail, got nil")
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("Search blocked for %v, want an immediate refusal", elapsed)
+	}
+	var fe *domain.FetchError
+	if !errors.As(err, &fe) {
+		t.Fatalf("want a classified *domain.FetchError, got %T: %v", err, err)
+	}
+	if fe.Kind != domain.KindQuotaExhausted {
+		t.Fatalf("Kind = %q, want %q", fe.Kind, domain.KindQuotaExhausted)
+	}
+	if got := observability.Reason(err); got != "quota_exhausted" {
+		t.Fatalf("Reason = %q, want quota_exhausted", got)
+	}
+	if got := fe.Err.Error(); got != "pacing quota exhausted; retry in 12s" {
+		t.Fatalf("message = %q, want the retry-after in seconds", got)
+	}
+	if limiter.calls != 1 {
+		t.Fatalf("limiter calls = %d, want 1", limiter.calls)
+	}
+	if calls != 0 {
+		t.Fatalf("server calls = %d, want 0 (nothing was admitted)", calls)
 	}
 }

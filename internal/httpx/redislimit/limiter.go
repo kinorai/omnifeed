@@ -89,9 +89,10 @@ type Limiter struct {
 	nonceSeq    atomic.Uint64
 
 	// OnWait, when non-nil, is called on every Acquire exit that made a pacing
-	// decision, with the engine that waited, the outcome ("acquired", or
-	// "canceled" when the caller's ctx died) and the time spent blocked. Same
-	// contract as DomainLimiter.OnWait. A backend failure deliberately emits
+	// decision, with the engine that waited, the outcome ("acquired",
+	// "canceled" when the caller's ctx died, or "budget_exceeded" when the wait
+	// Redis asked for was longer than the caller's remaining deadline) and the
+	// time spent blocked. Same contract as DomainLimiter.OnWait. A backend failure deliberately emits
 	// NOTHING: FallbackLimiter immediately re-runs the acquire on the in-process
 	// limiter, which observes the whole wait itself, and a second observation
 	// here would double-count every acquire made while Redis is down. Set once
@@ -116,7 +117,9 @@ func New(cfg Config) *Limiter {
 
 // Acquire blocks until Redis admits this request, or until ctx is done. The
 // returned release func must be called when the request finishes: it is what
-// starts the minimum delay for the next one.
+// starts the minimum delay for the next one. When ctx carries a deadline and
+// the wait Redis asks for is longer than what is left of it, Acquire returns
+// *httpx.WaitBudgetError immediately instead of sleeping it out.
 func (l *Limiter) Acquire(ctx context.Context, engine, rawURL string) (func(), error) {
 	start := time.Now()
 	host := hostOf(rawURL)
@@ -153,6 +156,16 @@ func (l *Limiter) Acquire(ctx context.Context, engine, rawURL string) (func(), e
 		}
 		if wait == 0 {
 			break
+		}
+		// Fail fast when the wait cannot fit in the caller's budget: sleeping it
+		// out burns the whole budget and then fails anyway. Compared against the
+		// RAW wait, not wait+jitter — jitter is scheduling noise, and letting it
+		// decide the verdict would refuse waits that do fit. Nothing is booked
+		// on this path, so there is nothing to hand back.
+		if budget, hasBudget := httpx.RemainingBudget(ctx); hasBudget && wait > budget {
+			<-sem
+			l.observeWait(engine, "budget_exceeded", start)
+			return nil, &httpx.WaitBudgetError{RetryAfter: wait}
 		}
 		// Jitter so replicas released by the same opening do not re-synchronize
 		// on it. The wait itself is not booked, so retrying is the whole

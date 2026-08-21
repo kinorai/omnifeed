@@ -37,6 +37,10 @@ func TestClassifyClientError(t *testing.T) {
 		{"deadline is timeout", context.DeadlineExceeded, domain.KindBotBlock, domain.KindTimeout},
 		{"canceled is its own reason", context.Canceled, domain.KindUpstreamError, domain.KindCanceled},
 		{"network error falls back", errors.New("dial tcp: connection refused"), domain.KindBotBlock, domain.KindBotBlock},
+		// A refused pacing wait is omnifeed's own verdict, never an upstream
+		// fault: it must not be classified by the caller's fallback.
+		{"wait budget is quota exhausted", &WaitBudgetError{RetryAfter: 12 * time.Second}, domain.KindBotBlock, domain.KindQuotaExhausted},
+		{"wrapped wait budget", fmt.Errorf("acquire: %w", &WaitBudgetError{RetryAfter: time.Second}), domain.KindUpstreamError, domain.KindQuotaExhausted},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -376,5 +380,28 @@ func TestDoRetryReportsRetryAfter(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// The classified message is what an AI agent reads, so it must carry the
+// actionable part: how long to leave before retrying, rounded UP to whole
+// seconds (a caller told "12s" for a 12.4s wait would be refused again).
+func TestClassifyWaitBudgetCarriesTheRetryAfter(t *testing.T) {
+	cases := []struct {
+		retryAfter time.Duration
+		want       string
+	}{
+		{12 * time.Second, "pacing quota exhausted; retry in 12s"},
+		{12400 * time.Millisecond, "pacing quota exhausted; retry in 13s"},
+		{400 * time.Millisecond, "pacing quota exhausted; retry in 1s"},
+	}
+	for _, tc := range cases {
+		fe := ClassifyClientError(&WaitBudgetError{RetryAfter: tc.retryAfter}, domain.KindUpstreamError)
+		if fe == nil {
+			t.Fatalf("ClassifyClientError(%v) = nil", tc.retryAfter)
+		}
+		if got := fe.Err.Error(); got != tc.want {
+			t.Fatalf("message = %q, want %q", got, tc.want)
+		}
 	}
 }
