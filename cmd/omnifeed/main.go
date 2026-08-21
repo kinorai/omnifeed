@@ -490,6 +490,14 @@ func buildLimiter(scope string, rdb redis.UniversalClient, local *httpx.DomainLi
 		return local
 	}
 
+	// Pre-register the degraded gauge at 0 for this scope. OnDegraded fires on
+	// transitions only, so without this write the series would not exist until
+	// the first outage — a healthy deployment and a missing metric would look
+	// the same to an alert. Only scopes that really have a FallbackLimiter get
+	// the series: with Redis off a permanent 0 would claim a shared backend
+	// that is not there.
+	metrics.SetRatelimitDegraded(scope, false)
+
 	rcfg.Client, rcfg.Scope = rdb, scope
 	primary := redislimit.New(rcfg)
 	primary.OnWait = metrics.ObserveLimiterWait

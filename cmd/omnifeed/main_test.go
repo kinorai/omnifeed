@@ -178,3 +178,54 @@ func counterValue(t *testing.T, c prometheus.Counter) float64 {
 	}
 	return dm.GetCounter().GetValue()
 }
+
+// A GaugeVec emits no series until it is written, so an alert cannot tell a
+// healthy deployment from a metric that never appeared. Redis-on wiring must
+// publish the scope at 0; Redis-off wiring must publish nothing, because there
+// is no distributed backend to be degraded from.
+func TestBuildLimiterPreRegistersDegradedGauge(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	off := observability.NewMetrics()
+	buildLimiter("domain", nil, httpx.NewDomainLimiter(2, time.Second),
+		redislimit.Config{}, off, logger)
+	if got := gaugeVecSeries(t, off.RatelimitDegraded); len(got) != 0 {
+		t.Fatalf("without redis: series = %v, want none", got)
+	}
+
+	rdb := redis.NewClient(&redis.Options{Addr: "127.0.0.1:0"})
+	t.Cleanup(func() { _ = rdb.Close() })
+
+	on := observability.NewMetrics()
+	buildLimiter("searxng", rdb, httpx.NewDomainLimiter(2, time.Second),
+		redislimit.Config{Prefix: "omnifeed:ratelimit", MaxConcurrent: 2, MinDelay: time.Second},
+		on, logger)
+	got := gaugeVecSeries(t, on.RatelimitDegraded)
+	want := map[string]float64{"searxng": 0}
+	if len(got) != len(want) || got["searxng"] != want["searxng"] {
+		t.Fatalf("with redis: series = %v, want %v", got, want)
+	}
+}
+
+// gaugeVecSeries collects every series a GaugeVec currently emits, keyed by its
+// single label value.
+func gaugeVecSeries(t *testing.T, v *prometheus.GaugeVec) map[string]float64 {
+	t.Helper()
+	ch := make(chan prometheus.Metric, 16)
+	v.Collect(ch)
+	close(ch)
+
+	out := map[string]float64{}
+	for m := range ch {
+		var dm dto.Metric
+		if err := m.Write(&dm); err != nil {
+			t.Fatal(err)
+		}
+		labels := dm.GetLabel()
+		if len(labels) != 1 {
+			t.Fatalf("series has %d labels, want 1", len(labels))
+		}
+		out[labels[0].GetValue()] = dm.GetGauge().GetValue()
+	}
+	return out
+}
