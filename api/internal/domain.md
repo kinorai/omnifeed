@@ -191,8 +191,14 @@ const (
     // per-page non-faults, so it gets one bounded retry (for the transient
     // minority sharing the channel) and is not treated as an upstream outage.
     KindUpstreamRejected FailureKind = "upstream_rejected"
-    KindBadResponse      FailureKind = "bad_response" // unparseable or empty upstream response
-    KindError            FailureKind = "error"        // anything else
+    // KindQuotaExhausted is omnifeed's OWN pacing verdict, not an upstream
+    // answer: the politeness quota for the host is spent and the wait until the
+    // next slot is longer than the caller's budget, so nothing was sent. The
+    // retry-after is in the error message. Not a fault — the deployment is
+    // working as configured, and the caller should retry later.
+    KindQuotaExhausted FailureKind = "quota_exhausted"
+    KindBadResponse    FailureKind = "bad_response" // unparseable or empty upstream response
+    KindError          FailureKind = "error"        // anything else
 )
 ```
 

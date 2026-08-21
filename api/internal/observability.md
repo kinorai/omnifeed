@@ -26,12 +26,14 @@ Package observability wires structured logging, Prometheus metrics, and Kubernet
   - [func \(m \*Metrics\) ObserveEmptySearch\(scoped bool\)](<#Metrics.ObserveEmptySearch>)
   - [func \(m \*Metrics\) ObserveEngineRank\(engine string, rank int, unique bool\)](<#Metrics.ObserveEngineRank>)
   - [func \(m \*Metrics\) ObserveEngineResults\(engine string, rows int\)](<#Metrics.ObserveEngineResults>)
+  - [func \(m \*Metrics\) ObserveEngineZeroResults\(engine string\)](<#Metrics.ObserveEngineZeroResults>)
   - [func \(m \*Metrics\) ObserveFallback\(fromEngine, reason string\)](<#Metrics.ObserveFallback>)
   - [func \(m \*Metrics\) ObserveLimiterWait\(engine, outcome string, duration time.Duration\)](<#Metrics.ObserveLimiterWait>)
   - [func \(m \*Metrics\) ObserveRatelimitBackendError\(op string\)](<#Metrics.ObserveRatelimitBackendError>)
   - [func \(m \*Metrics\) ObserveRatelimitPenalty\(upstream string\)](<#Metrics.ObserveRatelimitPenalty>)
   - [func \(m \*Metrics\) ObserveResponseChars\(engine string, chars int\)](<#Metrics.ObserveResponseChars>)
-  - [func \(m \*Metrics\) ObserveSearch\(searcher, status, reason string, duration time.Duration\)](<#Metrics.ObserveSearch>)
+  - [func \(m \*Metrics\) ObserveSearch\(searcher, status, reason string, scoped bool, duration time.Duration\)](<#Metrics.ObserveSearch>)
+  - [func \(m \*Metrics\) ObserveSearxngQuery\(scoped bool\)](<#Metrics.ObserveSearxngQuery>)
   - [func \(m \*Metrics\) ObserveUnresponsiveEngine\(engine, errType string\)](<#Metrics.ObserveUnresponsiveEngine>)
   - [func \(m \*Metrics\) ObserveUpstream\(upstream, op, status string, duration time.Duration\)](<#Metrics.ObserveUpstream>)
   - [func \(m \*Metrics\) RegisterMetrics\(mux \*http.ServeMux\)](<#Metrics.RegisterMetrics>)
@@ -148,8 +150,10 @@ type Metrics struct {
     SearxngUnresponsive *prometheus.CounterVec   // engine, error
     SearxngEngineHits   *prometheus.CounterVec   // engine
     SearxngEmpty        *prometheus.CounterVec   // scoped
+    SearxngQueries      *prometheus.CounterVec   // scoped
+    SearxngEngineZero   *prometheus.CounterVec   // engine
     RedditRounds        prometheus.Histogram
-    SearchesTotal       *prometheus.CounterVec   // searcher, status, reason
+    SearchesTotal       *prometheus.CounterVec   // searcher, status, reason, scoped
     SearchSecs          *prometheus.HistogramVec // searcher, status
     SearchEnginePos     *prometheus.HistogramVec // engine
     SearchEngineUnique  *prometheus.CounterVec   // engine
@@ -211,6 +215,15 @@ func (m *Metrics) ObserveEngineResults(engine string, rows int)
 
 ObserveEngineResults counts the rows one SearXNG engine contributed to a search response. Engines that block silently — HTTP 200, no error, empty results — are invisible in every other metric, and this is what makes them visible: their series stops advancing while the rest of the pool continues.
 
+<a name="Metrics.ObserveEngineZeroResults"></a>
+### func \(\*Metrics\) ObserveEngineZeroResults
+
+```go
+func (m *Metrics) ObserveEngineZeroResults(engine string)
+```
+
+ObserveEngineZeroResults counts one search an engine contributed nothing to while the search itself returned rows. One increment per search per engine, never per row: it measures how OFTEN an engine sits out, not how much it missed.
+
 <a name="Metrics.ObserveFallback"></a>
 ### func \(\*Metrics\) ObserveFallback
 
@@ -227,7 +240,7 @@ ObserveFallback counts one engine→generic\-fallback handoff: fromEngine is the
 func (m *Metrics) ObserveLimiterWait(engine, outcome string, duration time.Duration)
 ```
 
-ObserveLimiterWait records the time an engine spent blocked acquiring the per\-domain limiter. Wired as the DomainLimiter's OnWait hook. outcome is "acquired" or "canceled" \(the wait died in the queue\).
+ObserveLimiterWait records the time an engine spent blocked acquiring the per\-domain limiter. Wired as the DomainLimiter's OnWait hook. outcome is "acquired", "canceled" \(the wait died in the queue\) or "budget\_exceeded" \(the wait was longer than the caller's budget, so the limiter refused to queue\).
 
 <a name="Metrics.ObserveRatelimitBackendError"></a>
 ### func \(\*Metrics\) ObserveRatelimitBackendError
@@ -260,10 +273,19 @@ ObserveResponseChars records the character count of a successful crawl's extract
 ### func \(\*Metrics\) ObserveSearch
 
 ```go
-func (m *Metrics) ObserveSearch(searcher, status, reason string, duration time.Duration)
+func (m *Metrics) ObserveSearch(searcher, status, reason string, scoped bool, duration time.Duration)
 ```
 
-ObserveSearch records a single search query result. reason classifies WHY a search failed \(see Reason\); it is "ok" on success. SearchSecs stays keyed on searcher\+status only — adding reason would just inflate histogram cardinality.
+ObserveSearch records a single search query result. reason classifies WHY a search failed \(see Reason\); it is "ok" on success. scoped says whether the caller asked for a \`site:\` filter — site\-scoped search runs on a different engine pool and fails for different reasons, and every existing sum\(\) over this counter collapses the label anyway. SearchSecs stays keyed on searcher\+status only — adding reason or scoped would just inflate histogram cardinality.
+
+<a name="Metrics.ObserveSearxngQuery"></a>
+### func \(\*Metrics\) ObserveSearxngQuery
+
+```go
+func (m *Metrics) ObserveSearxngQuery(scoped bool)
+```
+
+ObserveSearxngQuery counts one query actually sent to SearXNG — past the limiter, before the HTTP call. This is the rate the engines behind SearXNG see, which is what their own quotas are measured against; the caller\-side counter \(ObserveSearch\) includes queries pacing refused.
 
 <a name="Metrics.ObserveUnresponsiveEngine"></a>
 ### func \(\*Metrics\) ObserveUnresponsiveEngine

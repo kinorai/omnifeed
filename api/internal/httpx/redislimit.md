@@ -56,9 +56,10 @@ Limiter admits outbound requests against state shared through Redis.
 type Limiter struct {
 
     // OnWait, when non-nil, is called on every Acquire exit that made a pacing
-    // decision, with the engine that waited, the outcome ("acquired", or
-    // "canceled" when the caller's ctx died) and the time spent blocked. Same
-    // contract as DomainLimiter.OnWait. A backend failure deliberately emits
+    // decision, with the engine that waited, the outcome ("acquired",
+    // "canceled" when the caller's ctx died, or "budget_exceeded" when the wait
+    // Redis asked for was longer than the caller's remaining deadline) and the
+    // time spent blocked. Same contract as DomainLimiter.OnWait. A backend failure deliberately emits
     // NOTHING: FallbackLimiter immediately re-runs the acquire on the in-process
     // limiter, which observes the whole wait itself, and a second observation
     // here would double-count every acquire made while Redis is down. Set once
@@ -89,7 +90,7 @@ New returns a limiter for one scope. Per\-operation timeouts are NOT this packag
 func (l *Limiter) Acquire(ctx context.Context, engine, rawURL string) (func(), error)
 ```
 
-Acquire blocks until Redis admits this request, or until ctx is done. The returned release func must be called when the request finishes: it is what starts the minimum delay for the next one.
+Acquire blocks until Redis admits this request, or until ctx is done. The returned release func must be called when the request finishes: it is what starts the minimum delay for the next one. When ctx carries a deadline and the wait Redis asks for is longer than what is left of it, Acquire returns \*httpx.WaitBudgetError immediately instead of sleeping it out.
 
 <a name="Limiter.Penalize"></a>
 ### func \(\*Limiter\) Penalize
