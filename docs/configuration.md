@@ -123,9 +123,16 @@ Served on `OMNIFEED_METRICS_ADDR` (default `:9090`) at `/metrics`, alongside the
 | `omnifeed_request_attempts_total` | counter | `upstream, attempt` | HTTP attempts by the retrying client (`first` vs `retry`) |
 | `omnifeed_upstream_seconds` | histogram | `upstream, op, status` | Upstream HTTP round-trip per attempt (start → body fully read); `crawl4ai/crawl`, `crawl4ai/execute_js`, `searxng/search`, `github/api`, `hackernews/api`, `discourse/api` |
 | `omnifeed_domain_limiter_wait_seconds` | histogram | `engine, outcome` | Time blocked in per-domain limiter acquisition (semaphore + politeness delay); `outcome="canceled"` = the wait died in the queue |
+| `omnifeed_ratelimit_backend_errors_total` | counter | `op` | Failed Redis operations in the distributed limiter: `acquire` (the limiter then paces in process), `release` or `penalize` (both cost pacing accuracy only) |
+| `omnifeed_ratelimit_penalties_total` | counter | `upstream` | Upstream `Retry-After` headers (on 429 or 503) fed back into the limiters as a hold on that host — the signal that precedes a CAPTCHA or a block |
+| `omnifeed_ratelimit_degraded` | gauge | — | `1` while pacing is degraded to per-pod limits because Redis is unreachable, `0` while it is shared (and always `0` when `OMNIFEED_REDIS_URL` is unset) |
 | `omnifeed_response_chars` | histogram | `engine` | Extracted content length (pre-truncation — the engine's output, before any transport `max_chars` clipping), successful crawls only |
 | `omnifeed_engine_fallbacks_total` | counter | `from_engine, reason` | Dedicated-engine failures re-crawled via the generic fallback |
 | `omnifeed_searxng_unresponsive_engines_total` | counter | `engine, error` | Engines SearXNG reported unresponsive per search; `error` normalized to a closed set (`timeout`, `captcha`, `suspended`, `too_many_requests`, `access_denied`, `error`, `unknown`) |
+| `omnifeed_searxng_engine_results_total` | counter | `engine` | Result rows each SearXNG engine contributed — the silent-block detector: a blocked engine keeps answering 200 with zero results, so its series goes flat while the pool moves. Alert on the divergence, not the absolute rate (and pair it with `absent_over_time()`: an engine already blocked at startup mints no series at all) |
+| `omnifeed_searxng_empty_searches_total` | counter | `scoped` | Searches with zero results **and** no unresponsive-engine report; `scoped="true"` is a `site:`-filtered query, where silent blocks concentrate |
 | `omnifeed_reddit_expansion_rounds` | histogram | — | `/api/morechildren` rounds per Reddit crawl |
 | `omnifeed_search_requests_total` | counter | `searcher, status, reason` | Search queries |
 | `omnifeed_search_request_seconds` | histogram | `searcher, status` | Search latency |
+| `omnifeed_search_engine_position_rank` | histogram | `engine` | Where in its own ranking an engine placed each row it returned (ranks, not seconds: 1–3 is a result a caller reads, 20+ is filler) |
+| `omnifeed_search_engine_unique_results_total` | counter | `engine` | Results no other engine in the pool returned — the metric that decides whether an engine earns its slot |

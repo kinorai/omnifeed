@@ -28,6 +28,7 @@ import (
 	"github.com/kinorai/omnifeed/internal/engine/hackernews"
 	"github.com/kinorai/omnifeed/internal/engine/reddit"
 	"github.com/kinorai/omnifeed/internal/httpx"
+	"github.com/kinorai/omnifeed/internal/httpx/redislimit"
 	"github.com/kinorai/omnifeed/internal/observability"
 	"github.com/kinorai/omnifeed/internal/search/searxng"
 	"github.com/kinorai/omnifeed/internal/transport/mcp"
@@ -35,6 +36,7 @@ import (
 	"github.com/kinorai/omnifeed/internal/transport/openwebui"
 	"github.com/kinorai/omnifeed/internal/transport/searchapi"
 	"github.com/kinorai/omnifeed/internal/version"
+	"github.com/redis/go-redis/v9"
 )
 
 func main() {
@@ -68,7 +70,6 @@ func run(cfg config.Config, logger *slog.Logger) error {
 	// re-handshaking TLS (DefaultTransport keeps only 2 idle conns per host).
 	transport := httpx.NewTransport()
 	httpClient := httpx.New(&http.Client{Timeout: cfg.Crawl4AITimeout, Transport: transport})
-	limiter := httpx.NewDomainLimiter(cfg.PerDomainConcurrency, cfg.PerDomainDelay)
 	metrics := observability.NewMetrics()
 	// Count every HTTP attempt the crawl client makes (first try + retries) so
 	// retry waste shows up in metrics, not just reconstructed from logs, and
@@ -76,8 +77,25 @@ func run(cfg config.Config, logger *slog.Logger) error {
 	// adapters below copy the client via WithUpstream.
 	httpClient.OnAttempt = metrics.ObserveAttempt
 	httpClient.OnUpstream = metrics.ObserveUpstream
-	// Surface time spent queued behind the per-domain politeness limiter.
-	limiter.OnWait = metrics.ObserveLimiterWait
+
+	// --- Rate limiting (shared through Redis when configured) ---
+
+	rdb, closeRedis, err := redisClient(cfg, logger)
+	if err != nil {
+		return err
+	}
+	if closeRedis != nil {
+		defer closeRedis()
+	}
+	limiter := buildLimiter("domain", rdb,
+		httpx.NewDomainLimiter(cfg.PerDomainConcurrency, cfg.PerDomainDelay),
+		redislimit.Config{
+			Prefix:        cfg.RedisKeyPrefix,
+			MaxConcurrent: cfg.PerDomainConcurrency,
+			MinDelay:      cfg.PerDomainDelay,
+		},
+		metrics, logger)
+	httpClient.OnRetryAfter = retryAfterHook(limiter, metrics)
 
 	// --- Engines ---
 
@@ -176,16 +194,18 @@ func run(cfg config.Config, logger *slog.Logger) error {
 	var searcher domain.Searcher
 	var searxngClient *httpx.Client
 	if cfg.SearXNGURL != "" {
+		searxngPacer := searxngLimiter(cfg, rdb, metrics, logger)
 		searxngClient = httpx.New(&http.Client{Timeout: cfg.SearXNGTimeout, Transport: transport})
 		searxngClient.OnAttempt = metrics.ObserveAttempt
 		searxngClient.OnUpstream = metrics.ObserveUpstream
+		searxngClient.OnRetryAfter = retryAfterHook(searxngPacer, metrics)
 		searcher = searxng.New(searxng.Config{
 			Endpoint:    cfg.SearXNGURL,
 			Client:      searxngClient,
 			Logger:      logger,
 			Metrics:     metrics,
 			SiteEngines: cfg.SearXNGSiteEngines,
-			Limiter:     searxngLimiter(cfg, metrics, logger),
+			Limiter:     searxngPacer,
 			Audit:       cfg.SearchAudit,
 		})
 		if cfg.SearchAudit != "off" {
@@ -383,14 +403,47 @@ func runServers(ctx context.Context, logger *slog.Logger, health *observability.
 	return nil
 }
 
+// pacer is a limiter as main.go wires it: the httpx.Limiter every engine sees,
+// plus the Penalize method all three implementations carry and the interface
+// deliberately does not — engines never penalize, only the retry client that
+// sees the 429 does.
+type pacer interface {
+	httpx.Limiter
+	Penalize(rawURL string, d time.Duration)
+}
+
+// retryAfterCap bounds how long one Retry-After header may hold a host back. A
+// hostile or misconfigured upstream must not be able to starve a domain for a
+// day with one number.
+const retryAfterCap = 5 * time.Minute
+
+// retryAfterHook feeds an upstream's Retry-After back into the limiter that
+// paces THAT client, so the answer outlives the request that got it: without
+// this, the retry loop honors the header once (capped at seconds) and the next
+// caller walks into the same wall.
+//
+// Each client penalizes its own scope only — the crawl client the "domain"
+// limiter, the searxng client the "searxng" pacer. Both key on the URL's host,
+// and a limiter only ever reads keys for the hosts it paces, so a cross-scope
+// penalty would write a key nothing reads.
+func retryAfterHook(p pacer, metrics *observability.Metrics) func(upstream, rawURL string, wait time.Duration) {
+	return func(upstream, rawURL string, wait time.Duration) {
+		if p != nil {
+			p.Penalize(rawURL, min(wait, retryAfterCap))
+		}
+		metrics.ObserveRatelimitPenalty(upstream)
+	}
+}
+
 // searxngLimiter builds the pacing limiter for search queries, or returns nil
 // when neither control is configured — pacing is opt-in, so an unconfigured
-// deployment behaves exactly as before.
+// deployment behaves exactly as before. Unconfigured stays nil even with Redis
+// on: a shared backend has nothing to share when no limit is set.
 //
 // Concurrency is fixed at 1 rather than exposed as a knob: the point is to
 // space requests, and a second query in flight would step straight over the
 // delay the first one is serving.
-func searxngLimiter(cfg config.Config, metrics *observability.Metrics, logger *slog.Logger) httpx.Limiter {
+func searxngLimiter(cfg config.Config, rdb redis.UniversalClient, metrics *observability.Metrics, logger *slog.Logger) pacer {
 	if cfg.SearXNGDelay <= 0 && cfg.SearXNGQuota <= 0 {
 		logger.Info("searxng pacing disabled (OMNIFEED_SEARXNG_DELAY and OMNIFEED_SEARXNG_QUOTA unset)")
 		return nil
@@ -399,9 +452,90 @@ func searxngLimiter(cfg config.Config, metrics *observability.Metrics, logger *s
 		"delay", cfg.SearXNGDelay,
 		"quota", cfg.SearXNGQuota,
 		"window", cfg.SearXNGQuotaWindow)
-	l := httpx.NewDomainQuotaLimiter(1, cfg.SearXNGDelay, cfg.SearXNGQuota, cfg.SearXNGQuotaWindow)
-	l.OnWait = metrics.ObserveLimiterWait
-	return l
+	return buildLimiter("searxng", rdb,
+		httpx.NewDomainQuotaLimiter(1, cfg.SearXNGDelay, cfg.SearXNGQuota, cfg.SearXNGQuotaWindow),
+		redislimit.Config{
+			Prefix:        cfg.RedisKeyPrefix,
+			MaxConcurrent: 1,
+			MinDelay:      cfg.SearXNGDelay,
+			Quota:         cfg.SearXNGQuota,
+			Window:        cfg.SearXNGQuotaWindow,
+		},
+		metrics, logger)
+}
+
+// buildLimiter wires one pacing scope ("domain" for crawling, "searxng" for
+// queries). Without Redis the in-process limiter IS the limiter, exactly as
+// before. With Redis it becomes the fail-open fallback behind a limiter whose
+// state every replica shares, so one deployment enforces one limit instead of
+// one per pod.
+//
+// rcfg carries the pacing settings for the scope; the client and the scope are
+// filled in here so a caller cannot pair one scope's name with another's keys.
+// OnWait is set on both CONCRETE limiters before either is wrapped: the Limiter
+// interface has no such hook, and whichever backend serves an acquire is the one
+// that measures its wait.
+func buildLimiter(scope string, rdb redis.UniversalClient, local *httpx.DomainLimiter,
+	rcfg redislimit.Config, metrics *observability.Metrics, logger *slog.Logger) pacer {
+	local.OnWait = metrics.ObserveLimiterWait
+	if rdb == nil {
+		return local
+	}
+
+	rcfg.Client, rcfg.Scope = rdb, scope
+	primary := redislimit.New(rcfg)
+	primary.OnWait = metrics.ObserveLimiterWait
+	primary.OnError = metrics.ObserveRatelimitBackendError
+
+	return &httpx.FallbackLimiter{
+		Primary:  primary,
+		Fallback: local,
+		OnDegraded: func(down bool) {
+			metrics.SetRatelimitDegraded(down)
+			if down {
+				logger.Warn("rate limiting degraded to per-pod pacing (redis unreachable)", "scope", scope)
+				return
+			}
+			logger.Info("rate limiting shared again (redis reachable)", "scope", scope)
+		},
+	}
+}
+
+// redisClient builds the one Redis client both limiter scopes share, or
+// (nil, nil, nil) when OMNIFEED_REDIS_URL is unset — the zero-config path, where
+// pacing stays in process. A set but unparseable URL is a fatal config error: an
+// operator who asked for shared pacing must not silently get per-pod pacing.
+func redisClient(cfg config.Config, logger *slog.Logger) (redis.UniversalClient, func(), error) {
+	if cfg.RedisURL == "" {
+		logger.Info("rate limiting backend", "backend", "in-process")
+		return nil, nil, nil
+	}
+	opts, err := redis.ParseURL(cfg.RedisURL)
+	if err != nil {
+		return nil, nil, fmt.Errorf("OMNIFEED_REDIS_URL is not a valid redis URL: %w", err)
+	}
+	// One operation's budget, applied to every call the limiters make. Retries
+	// are OFF (-1, since 0 means go-redis' default of 3): with them a dead Redis
+	// costs ~1.7s per acquire instead of the ~250ms the fail-open cooldown is
+	// sized for, and the fallback already covers the failure.
+	opts.DialTimeout = cfg.RedisTimeout
+	opts.ReadTimeout = cfg.RedisTimeout
+	opts.WriteTimeout = cfg.RedisTimeout
+	opts.MaxRetries = -1
+	client := redis.NewClient(opts)
+	logger.Info("rate limiting backend", "backend", "redis",
+		"addr", opts.Addr, "db", opts.DB, "key_prefix", cfg.RedisKeyPrefix, "timeout", cfg.RedisTimeout)
+
+	// Startup probe, never a readiness gate: pacing degrades to per-pod when
+	// Redis is down, retrieval does not stop.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := client.Ping(ctx).Err(); err != nil {
+		logger.Warn("redis unreachable at startup — pacing is per-pod until it answers", "err", err)
+	} else {
+		logger.Info("redis reachable — rate limiting state is shared across replicas")
+	}
+	return client, func() { _ = client.Close() }, nil
 }
 
 // upstreamReady is a readiness check: GET the endpoint and report failure if
