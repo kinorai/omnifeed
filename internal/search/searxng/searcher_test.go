@@ -891,3 +891,108 @@ func TestSearchFastFailsWhenPacingExceedsMaxWait(t *testing.T) {
 		t.Fatalf("server calls = %d, want 0 (nothing was admitted)", calls)
 	}
 }
+
+// counter reads one CounterVec child.
+func counter(t *testing.T, c prometheus.Counter) float64 {
+	t.Helper()
+	var dm dto.Metric
+	if err := c.Write(&dm); err != nil {
+		t.Fatal(err)
+	}
+	return dm.GetCounter().GetValue()
+}
+
+// The admitted-query counter must fire once per query that actually reaches
+// SearXNG, labelled by site-scoping — and never for a query pacing refused,
+// which is the whole point of counting it here rather than at the caller.
+func TestSearchCountsAdmittedQueries(t *testing.T) {
+	m := observability.NewMetrics()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"results":[]}`)
+	}))
+	defer srv.Close()
+
+	s := New(Config{Endpoint: srv.URL, Client: httpx.New(srv.Client()), Metrics: m})
+	if _, err := s.Search(context.Background(), "q", domain.SearchOptions{}); err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if _, err := s.Search(context.Background(), "q", domain.SearchOptions{Site: "reddit.com"}); err != nil {
+		t.Fatalf("scoped Search: %v", err)
+	}
+	if got := counter(t, m.SearxngQueries.WithLabelValues("false")); got != 1 {
+		t.Fatalf("queries{scoped=false} = %v, want 1", got)
+	}
+	if got := counter(t, m.SearxngQueries.WithLabelValues("true")); got != 1 {
+		t.Fatalf("queries{scoped=true} = %v, want 1", got)
+	}
+
+	refused := New(Config{
+		Endpoint: srv.URL,
+		Client:   httpx.New(srv.Client()),
+		Metrics:  m,
+		Limiter:  &budgetLimiter{retryAfter: time.Minute},
+	})
+	if _, err := refused.Search(context.Background(), "q", domain.SearchOptions{}); err == nil {
+		t.Fatal("Search: want the limiter's fast-fail, got nil")
+	}
+	if got := counter(t, m.SearxngQueries.WithLabelValues("false")); got != 1 {
+		t.Fatalf("queries{scoped=false} = %v, want 1 (a refused query was never sent)", got)
+	}
+}
+
+// An engine that contributes no row to a search the rest of the pool answered
+// is the silent-block signature. It must be counted once per search — but only
+// for engines already known to the pool, and never for engines SearXNG openly
+// reported unresponsive.
+func TestSearchCountsZeroResultEngines(t *testing.T) {
+	m := observability.NewMetrics()
+	var body string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, body)
+	}))
+	defer srv.Close()
+	s := New(Config{Endpoint: srv.URL, Client: httpx.New(srv.Client()), Metrics: m})
+
+	// First search: three engines answer, so the pool is now known. Nobody sat
+	// out, so nothing is counted.
+	body = `{"results":[
+		{"title":"a","url":"https://example.com/a","engines":["privacywall"]},
+		{"title":"b","url":"https://example.com/b","engines":["searchtoday"]},
+		{"title":"c","url":"https://example.com/c","engines":["zapmeta"]}
+	]}`
+	if _, err := s.Search(context.Background(), "q", domain.SearchOptions{}); err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	for _, engine := range []string{"privacywall", "searchtoday", "zapmeta"} {
+		if got := counter(t, m.SearxngEngineZero.WithLabelValues(engine)); got != 0 {
+			t.Fatalf("zero_results{engine=%q} = %v, want 0", engine, got)
+		}
+	}
+
+	// Second search: zapmeta silently contributes nothing while the pool
+	// answers, and searchtoday failed openly (already counted as unresponsive).
+	body = `{"results":[{"title":"a","url":"https://example.com/a","engines":["privacywall"]}],` +
+		`"unresponsive_engines":[["searchtoday","timeout"]]}`
+	if _, err := s.Search(context.Background(), "q", domain.SearchOptions{}); err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if got := counter(t, m.SearxngEngineZero.WithLabelValues("zapmeta")); got != 1 {
+		t.Fatalf("zero_results{engine=zapmeta} = %v, want 1", got)
+	}
+	if got := counter(t, m.SearxngEngineZero.WithLabelValues("searchtoday")); got != 0 {
+		t.Fatalf("zero_results{engine=searchtoday} = %v, want 0 (it failed openly)", got)
+	}
+	if got := counter(t, m.SearxngEngineZero.WithLabelValues("privacywall")); got != 0 {
+		t.Fatalf("zero_results{engine=privacywall} = %v, want 0 (it answered)", got)
+	}
+
+	// A search that returned nothing at all says nothing about any single
+	// engine: it is the empty-search counter's business, not this one's.
+	body = `{"results":[]}`
+	if _, err := s.Search(context.Background(), "q", domain.SearchOptions{}); err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if got := counter(t, m.SearxngEngineZero.WithLabelValues("zapmeta")); got != 1 {
+		t.Fatalf("zero_results{engine=zapmeta} = %v, want 1 (a wholly empty search is not evidence)", got)
+	}
+}

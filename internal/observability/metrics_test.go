@@ -113,6 +113,41 @@ func TestNewCollectorsObservable(t *testing.T) {
 	if got := counterValue(t, m.SearxngUnresponsive.WithLabelValues("brave", "timeout")); got != 1 {
 		t.Fatalf("SearxngUnresponsive count = %v, want 1", got)
 	}
+
+	m.ObserveSearxngQuery(true)
+	m.ObserveSearxngQuery(false)
+	m.ObserveSearxngQuery(false)
+	if got := counterValue(t, m.SearxngQueries.WithLabelValues("true")); got != 1 {
+		t.Fatalf("SearxngQueries{scoped=true} = %v, want 1", got)
+	}
+	if got := counterValue(t, m.SearxngQueries.WithLabelValues("false")); got != 2 {
+		t.Fatalf("SearxngQueries{scoped=false} = %v, want 2", got)
+	}
+
+	m.ObserveEngineZeroResults("zapmeta")
+	m.ObserveEngineZeroResults("zapmeta")
+	if got := counterValue(t, m.SearxngEngineZero.WithLabelValues("zapmeta")); got != 2 {
+		t.Fatalf("SearxngEngineZero{engine=zapmeta} = %v, want 2", got)
+	}
+}
+
+// The scoped label splits site-scoped search from open search on the caller-side
+// counter. The latency histogram deliberately does NOT carry it.
+func TestObserveSearchCarriesTheScopedLabel(t *testing.T) {
+	m := NewMetrics()
+
+	m.ObserveSearch("searxng", "ok", "ok", true, 100*time.Millisecond)
+	m.ObserveSearch("searxng", "error", "quota_exhausted", false, 10*time.Millisecond)
+
+	if got := counterValue(t, m.SearchesTotal.WithLabelValues("searxng", "ok", "ok", "true")); got != 1 {
+		t.Fatalf("SearchesTotal{scoped=true} = %v, want 1", got)
+	}
+	if got := counterValue(t, m.SearchesTotal.WithLabelValues("searxng", "error", "quota_exhausted", "false")); got != 1 {
+		t.Fatalf("SearchesTotal{reason=quota_exhausted,scoped=false} = %v, want 1", got)
+	}
+	if got := histogramCount(t, m.SearchSecs.WithLabelValues("searxng", "ok")); got != 1 {
+		t.Fatalf("SearchSecs count = %d, want 1 (no scoped label on the histogram)", got)
+	}
 }
 
 // The degraded gauge is per scope: the two FallbackLimiters degrade and recover

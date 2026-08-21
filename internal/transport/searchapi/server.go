@@ -120,7 +120,8 @@ func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	results, err := s.searcher.Search(r.Context(), req.Query, opts)
 	if s.metrics != nil {
-		s.metrics.ObserveSearch(s.searcher.Name(), observability.StatusOf(err), observability.Reason(err), time.Since(start))
+		s.metrics.ObserveSearch(s.searcher.Name(), observability.StatusOf(err), observability.Reason(err),
+			opts.Site != "", time.Since(start))
 	}
 	if err != nil {
 		s.logger.Warn("search failed", "query", req.Query, "reason", observability.Reason(err), "err", err)
