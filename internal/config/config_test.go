@@ -3,6 +3,7 @@ package config
 import (
 	"slices"
 	"testing"
+	"time"
 )
 
 // Load requires crawl4ai, so every case sets it.
@@ -205,5 +206,103 @@ func TestSearchAuditRejectsALevelThatDiscardsIt(t *testing.T) {
 func TestSearchAuditOffAllowsAnyLevel(t *testing.T) {
 	if _, err := loadWith(t, "OMNIFEED_LOG_LEVEL", "error"); err != nil {
 		t.Fatalf("Load with audit off at error level: %v", err)
+	}
+}
+
+// OMNIFEED_REDIS_URL is shape-checked only: config carries no Redis client, so
+// a scheme mistake is what Load can usefully catch.
+func TestLoad_RedisURL(t *testing.T) {
+	cases := []struct {
+		name    string
+		value   string
+		wantErr bool
+	}{
+		{name: "redis scheme", value: "redis://redis:6379/2"},
+		{name: "rediss scheme with credentials", value: "rediss://user:pass@redis.example.com:6380/2"},
+		{name: "wrong scheme is a config error", value: "http://redis:6379", wantErr: true},
+		{name: "garbage is a config error", value: "redis://user:pass{@host:6379", wantErr: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, err := loadWith(t, "OMNIFEED_REDIS_URL", tc.value)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("want error, got RedisURL=%q", cfg.RedisURL)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if cfg.RedisURL != tc.value {
+				t.Errorf("RedisURL: got %q, want %q", cfg.RedisURL, tc.value)
+			}
+		})
+	}
+}
+
+// The timeout bounds one Redis operation, so a zero or negative value would
+// make every operation fail instantly rather than mean "no limit".
+func TestLoad_RedisTimeout(t *testing.T) {
+	cases := []struct {
+		name    string
+		value   string
+		want    time.Duration
+		wantErr bool
+	}{
+		{name: "default when unset", value: "", want: 250 * time.Millisecond},
+		{name: "explicit value", value: "1s", want: time.Second},
+		{name: "zero is a config error", value: "0s", wantErr: true},
+		{name: "negative is a config error", value: "-1s", wantErr: true},
+		{name: "unparseable is a config error", value: "soon", wantErr: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			key := ""
+			if tc.value != "" {
+				key = "OMNIFEED_REDIS_TIMEOUT"
+			}
+			cfg, err := loadWith(t, key, tc.value)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("want error, got RedisTimeout=%s", cfg.RedisTimeout)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if cfg.RedisTimeout != tc.want {
+				t.Errorf("RedisTimeout: got %s, want %s", cfg.RedisTimeout, tc.want)
+			}
+		})
+	}
+}
+
+// Unset means off: no URL, and the defaults that only matter once one is set.
+func TestLoad_RedisDefaults(t *testing.T) {
+	cfg, err := loadWith(t, "", "")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.RedisURL != "" {
+		t.Errorf("RedisURL: got %q, want empty (distributed limiting off)", cfg.RedisURL)
+	}
+	if cfg.RedisKeyPrefix != "omnifeed:ratelimit" {
+		t.Errorf("RedisKeyPrefix: got %q, want omnifeed:ratelimit", cfg.RedisKeyPrefix)
+	}
+	if cfg.RedisTimeout != 250*time.Millisecond {
+		t.Errorf("RedisTimeout: got %s, want 250ms", cfg.RedisTimeout)
+	}
+}
+
+// The prefix namespaces the limiter keys, so deployments can share one Redis.
+func TestLoad_RedisKeyPrefix(t *testing.T) {
+	cfg, err := loadWith(t, "OMNIFEED_REDIS_KEY_PREFIX", "staging:omnifeed:rl")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.RedisKeyPrefix != "staging:omnifeed:rl" {
+		t.Errorf("RedisKeyPrefix: got %q, want staging:omnifeed:rl", cfg.RedisKeyPrefix)
 	}
 }
