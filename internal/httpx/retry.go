@@ -55,6 +55,15 @@ type Client struct {
 	// (or closed), or until the transport error. status is "ok" for 2xx and
 	// "error" otherwise (non-2xx status, transport error, timeout).
 	OnUpstream func(upstream, op, status string, duration time.Duration)
+	// OnRetryAfter, when non-nil, is called once per response that pairs a 429
+	// or 503 with a parseable Retry-After, with the request URL and the delay
+	// the upstream asked for. It fires whatever the retry loop then does —
+	// including when a RetryableStatus veto or exhausted attempts end the
+	// request — because the point is to keep the upstream's answer AFTER this
+	// request dies: wired to a limiter, the next caller waits instead of walking
+	// into the same wall. This client reports the fact; the cap and the policy
+	// live at the wiring site. The retry loop's own capped backoff is unchanged.
+	OnRetryAfter func(upstream, rawURL string, wait time.Duration)
 
 	// upstream/op label every attempt this client makes in metrics. Set once per
 	// adapter via WithUpstream so labels never derive from URLs.
@@ -177,6 +186,12 @@ func (c *Client) DoRetry(
 		// classification, drain the rest so the connection can be reused, then
 		// capture Retry-After and schedule the next attempt.
 		retryAfter := resp.Header.Get("Retry-After")
+		if secs, ok := parseRetryAfter(retryAfter); ok && c.OnRetryAfter != nil &&
+			(resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusServiceUnavailable) {
+			// Reported before the veto below, so a non-transient block still
+			// hands its Retry-After on.
+			c.OnRetryAfter(upstream, url, time.Duration(secs)*time.Second)
+		}
 		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, statusBodySnippetLimit))
 		_, _ = io.Copy(io.Discard, resp.Body)
 		_ = resp.Body.Close()

@@ -90,8 +90,8 @@ type Limiter struct {
 	OnWait func(engine, outcome string, waited time.Duration)
 
 	// OnError, when non-nil, is called on every backend failure with the
-	// operation that failed ("acquire" or "release"). Release failures reach the
-	// caller no other way. Set once at wiring time.
+	// operation that failed ("acquire", "release" or "penalize"). Release and
+	// penalize failures reach the caller no other way. Set once at wiring time.
 	OnError func(op string)
 }
 
@@ -174,11 +174,33 @@ func (l *Limiter) release(nextKey string) {
 	if l.cfg.MinDelay <= 0 {
 		return
 	}
+	l.bump(nextKey, l.cfg.MinDelay, "release")
+}
+
+// Penalize holds the host back for d across every replica — what an upstream's
+// Retry-After on a 429 or 503 is worth. It is the same next-allowed-at bump a
+// release makes, with the upstream's delay instead of the configured one, so it
+// only ever extends the hold and never shortens one another replica reserved.
+//
+// Fire and forget, like release: a failed penalty costs pacing accuracy, and the
+// caller is a response handler with nothing to do about it. A non-positive d
+// does nothing.
+func (l *Limiter) Penalize(rawURL string, d time.Duration) {
+	if d <= 0 {
+		return
+	}
+	_, nextKey := l.keys(hostOf(rawURL))
+	l.bump(nextKey, d, "penalize")
+}
+
+// bump pushes the next admission for one host to at least d from now, and
+// reports a backend failure under the given op label.
+func (l *Limiter) bump(nextKey string, d time.Duration, op string) {
 	ctx, cancel := context.WithTimeout(context.Background(), releaseCeiling)
 	defer cancel()
 	if err := release.Run(ctx, l.cfg.Client, []string{nextKey},
-		l.cfg.MinDelay.Milliseconds(), keyTTLSlack.Milliseconds()).Err(); err != nil {
-		l.observeError("release")
+		d.Milliseconds(), keyTTLSlack.Milliseconds()).Err(); err != nil {
+		l.observeError(op)
 	}
 }
 

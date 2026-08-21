@@ -75,6 +75,30 @@ func (f *FallbackLimiter) Acquire(ctx context.Context, engine, rawURL string) (f
 	}
 }
 
+// Penalize holds a host back on BOTH backends — what an upstream's Retry-After
+// on a 429 or 503 is worth. Both, because the fallback's state must stay warm:
+// a penalty recorded only in Redis is forgotten the moment the circuit opens,
+// which is exactly when an upstream that is already refusing traffic gets hit
+// with per-pod pacing.
+//
+// A backend that cannot be penalized is skipped rather than refused, so a test
+// stub or a future Limiter without the method still composes.
+func (f *FallbackLimiter) Penalize(rawURL string, d time.Duration) {
+	penalize(f.Primary, rawURL, d)
+	penalize(f.Fallback, rawURL, d)
+}
+
+// penalize applies a penalty to l when its implementation accepts one. Penalize
+// is deliberately not part of the Limiter interface: engines never penalize,
+// only the retry client that sees the 429 does.
+func penalize(l Limiter, rawURL string, d time.Duration) {
+	if p, ok := l.(interface {
+		Penalize(rawURL string, d time.Duration)
+	}); ok {
+		p.Penalize(rawURL, d)
+	}
+}
+
 // primaryReady reports whether Primary should be tried: either the circuit is
 // closed, or the cooldown has expired and this call is the probe.
 func (f *FallbackLimiter) primaryReady() bool {

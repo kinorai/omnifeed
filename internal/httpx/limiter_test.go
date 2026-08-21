@@ -217,3 +217,70 @@ func TestReserveReturnsTheBookedInstant(t *testing.T) {
 		t.Fatalf("forget left %d bookings, want 0", len(s.window.sent))
 	}
 }
+
+// A Retry-After penalty must outlive the request that received it: the next
+// reserve for that host waits until the penalized instant, even though the
+// politeness delay alone would have admitted it at once.
+func TestReserveHonorsNotBefore(t *testing.T) {
+	s := &domainSlot{}
+	now := time.Unix(1_000_000, 0)
+
+	// First request: nothing holds it back.
+	if wait, _ := s.reserve(now, 0); wait != 0 {
+		t.Fatalf("first reserve waited %v, want 0", wait)
+	}
+
+	s.notBefore = now.Add(30 * time.Second)
+	wait, _ := s.reserve(now, 0)
+	if wait < 30*time.Second || wait > 30*time.Second+500*time.Millisecond {
+		t.Fatalf("second reserve waited %v, want ~30s (the penalty, plus jitter)", wait)
+	}
+}
+
+// The penalty and the minimum delay are two lower bounds on the same instant,
+// so the later one wins — in both directions.
+func TestReserveComposesPenaltyWithMinDelay(t *testing.T) {
+	now := time.Unix(1_000_000, 0)
+
+	// Penalty longer than the delay: the penalty decides.
+	s := &domainSlot{lastSend: now, notBefore: now.Add(10 * time.Second)}
+	if wait, _ := s.reserve(now, 2*time.Second); wait < 10*time.Second {
+		t.Fatalf("penalty 10s vs delay 2s: waited %v, want >= 10s", wait)
+	}
+
+	// Delay longer than the penalty: the delay decides.
+	s = &domainSlot{lastSend: now, notBefore: now.Add(time.Second)}
+	if wait, _ := s.reserve(now, 8*time.Second); wait < 8*time.Second {
+		t.Fatalf("penalty 1s vs delay 8s: waited %v, want >= 8s", wait)
+	}
+}
+
+// Penalize keeps the strictest hold any upstream asked for, and never shortens
+// one — two 429s in a row must not let the second, milder one release the host.
+func TestPenalizeOnlyExtendsTheHold(t *testing.T) {
+	d := NewDomainLimiter(1, 0)
+	const rawURL = "https://example.com/a"
+
+	d.Penalize(rawURL, time.Minute)
+	first := d.slotFor(rawURL).notBefore
+
+	d.Penalize(rawURL, time.Second)
+	if got := d.slotFor(rawURL).notBefore; !got.Equal(first) {
+		t.Fatalf("notBefore moved from %v to %v: a milder penalty shortened the hold", first, got)
+	}
+
+	d.Penalize(rawURL, 0)
+	if got := d.slotFor(rawURL).notBefore; !got.Equal(first) {
+		t.Fatalf("notBefore moved to %v on a zero penalty", got)
+	}
+}
+
+// Acquire is unchanged when Penalize is never called: no hold, no extra wait.
+func TestAcquireUnaffectedWithoutPenalty(t *testing.T) {
+	d := NewDomainLimiter(1, 0)
+	release, err := d.Acquire(context.Background(), "crawl4ai", "https://example.com/a")
+	if err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+	release()
+}
