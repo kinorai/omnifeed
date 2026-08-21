@@ -21,10 +21,14 @@ type DomainLimiter struct {
 	limits        sync.Map      // host → *domainSlot
 
 	// OnWait, when non-nil, is called on every Acquire exit with the engine
-	// that waited, the outcome ("acquired", or "canceled" when the caller's
-	// ctx died in the queue — the worst waits, which never acquire), and the
-	// time spent blocked (semaphore wait + politeness delay); ~0 when
-	// uncontended. Set once at wiring time.
+	// that waited, the outcome, and the time spent blocked (semaphore wait +
+	// politeness delay); ~0 when uncontended. Set once at wiring time.
+	//
+	// Three outcomes: "acquired"; "canceled" when the caller's ctx died in the
+	// queue — the worst waits, which never acquire; and "budget_exceeded" when
+	// the computed wait was longer than the caller's remaining deadline, so
+	// Acquire refused to queue at all (see WaitBudgetError). The last one is
+	// the cheap failure: it costs ~0 seconds, not the caller's whole budget.
 	OnWait func(engine, outcome string, waited time.Duration)
 }
 
@@ -78,7 +82,10 @@ func (d *DomainLimiter) slotFor(rawURL string) *domainSlot {
 
 // Acquire blocks until a slot is available and the minimum delay since the
 // last request to the same domain has elapsed, or until ctx is done — a
-// canceled caller must not keep queuing behind a slow domain. engine names the
+// canceled caller must not keep queuing behind a slow domain. When ctx carries
+// a deadline and the pacing wait is longer than what is left of it, Acquire
+// returns *WaitBudgetError immediately instead of queueing (fail fast, the
+// wait is reported so the caller can retry later). engine names the
 // caller for the wait metric (the limiter itself only knows hosts). Caller must
 // Release (call the returned func) when done; on error there is nothing to
 // release.
@@ -95,6 +102,19 @@ func (d *DomainLimiter) Acquire(ctx context.Context, engine, rawURL string) (fun
 	s.mu.Lock()
 	wait, admitAt := s.reserve(time.Now(), d.minDelay)
 	s.mu.Unlock()
+	// Fail fast when the wait cannot fit in the caller's budget: queueing for a
+	// slot that opens after the deadline burns the whole budget and then fails
+	// anyway. Hand the booking back, and report the wait so the caller can say
+	// when to retry. No deadline means no budget to exceed, so such a caller
+	// queues as before.
+	if budget, hasBudget := RemainingBudget(ctx); hasBudget && wait > budget {
+		s.mu.Lock()
+		s.window.forget(admitAt)
+		s.mu.Unlock()
+		<-s.sem
+		d.observeWait(engine, "budget_exceeded", start)
+		return nil, &WaitBudgetError{RetryAfter: wait}
+	}
 	if wait > 0 {
 		t := time.NewTimer(wait)
 		select {

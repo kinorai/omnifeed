@@ -282,14 +282,28 @@ func (e *StatusError) Error() string {
 // itself surfacing as a crawl4ai 5xx (see browser/crawl4ai) — so the caller's
 // fallback decides (KindUpstreamError for a generic crawl, KindBotBlock for a
 // Reddit navigation). A context deadline becomes KindTimeout; a caller
-// cancellation (client abort) becomes KindCanceled; anything else becomes the
-// fallback. Returns nil when err is nil.
+// cancellation (client abort) becomes KindCanceled; a limiter's fast-fail
+// (*WaitBudgetError) becomes KindQuotaExhausted with the retry-after in the
+// message; anything else becomes the fallback. Returns nil when err is nil.
+//
+// The WaitBudgetError case lives here rather than at each call site so the
+// search path and every crawl path classify a refused pacing wait the same way:
+// every limiter error already reaches a caller through this function.
 func ClassifyClientError(err error, fallback domain.FailureKind) *domain.FetchError {
 	if err == nil {
 		return nil
 	}
 	var se *StatusError
+	var wbe *WaitBudgetError
 	switch {
+	case errors.As(err, &wbe):
+		// A refused pacing wait, not a failure of anything upstream. The
+		// message is what an AI agent reads, so it carries the actionable part:
+		// how long to leave before retrying.
+		return &domain.FetchError{
+			Kind: domain.KindQuotaExhausted,
+			Err:  fmt.Errorf("pacing quota exhausted; retry in %ds", retryAfterSeconds(wbe.RetryAfter)),
+		}
 	case errors.As(err, &se):
 		// A 5xx after retry exhaustion is ambiguous (infra fault vs. an anti-bot
 		// block served as a 5xx), so let the caller's fallback classify it; a 429
@@ -309,4 +323,14 @@ func ClassifyClientError(err error, fallback domain.FailureKind) *domain.FetchEr
 	default:
 		return &domain.FetchError{Kind: fallback, Err: err}
 	}
+}
+
+// retryAfterSeconds renders a refused pacing wait as whole seconds, rounded UP:
+// a caller told "retry in 12s" for a 12.4s wait would be refused again.
+func retryAfterSeconds(d time.Duration) int {
+	secs := int(d / time.Second)
+	if d%time.Second > 0 {
+		secs++
+	}
+	return secs
 }

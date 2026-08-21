@@ -360,3 +360,45 @@ func TestFallbackLimiterPenalizeSkipsThePrimaryWhileDegraded(t *testing.T) {
 		t.Fatalf("fallback got penalties %v, want [42s]", fallback.penalties)
 	}
 }
+
+// A WaitBudgetError is a pacing verdict, not a backend failure: it must reach
+// the caller unchanged, without failing over to the fallback and without
+// opening the circuit. Absorbing it would re-run the acquire on a cold local
+// limiter, which is exactly the queue the fast-fail exists to avoid.
+func TestFallbackLimiterPassesWaitBudgetErrorsThrough(t *testing.T) {
+	primary := &stubLimiter{name: "primary", err: &WaitBudgetError{RetryAfter: 12 * time.Second}}
+	fallback := &stubLimiter{name: "fallback"}
+	var degraded int
+	f := &FallbackLimiter{
+		Primary:    primary,
+		Fallback:   fallback,
+		OnDegraded: func(bool) { degraded++ },
+	}
+
+	_, err := f.Acquire(context.Background(), "searxng", "http://searxng:8080/search")
+	var wbe *WaitBudgetError
+	if !errors.As(err, &wbe) {
+		t.Fatalf("Acquire err = %T (%v), want *WaitBudgetError", err, err)
+	}
+	if wbe.RetryAfter != 12*time.Second {
+		t.Fatalf("RetryAfter = %v, want 12s (passed through untouched)", wbe.RetryAfter)
+	}
+	if errors.Is(err, ErrLimiterUnavailable) {
+		t.Fatal("a WaitBudgetError must not be wrapped in ErrLimiterUnavailable")
+	}
+	if fallback.count() != 0 {
+		t.Fatalf("fallback calls = %d, want 0 — a pacing verdict must not fail over", fallback.count())
+	}
+	if degraded != 0 {
+		t.Fatalf("OnDegraded fired %d times, want 0 — the circuit must stay closed", degraded)
+	}
+
+	// Still healthy: the next acquire goes to the primary.
+	primary.err = nil
+	if _, err := f.Acquire(context.Background(), "searxng", "http://searxng:8080/search"); err != nil {
+		t.Fatalf("Acquire after the fast-fail: %v", err)
+	}
+	if primary.count() != 2 {
+		t.Fatalf("primary calls = %d, want 2 (circuit never opened)", primary.count())
+	}
+}

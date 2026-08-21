@@ -63,7 +63,7 @@ func NewMetrics() *Metrics {
 		}, []string{"upstream", "op", "status"}),
 		LimiterWaitSecs: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name: "omnifeed_domain_limiter_wait_seconds",
-			Help: "Time spent blocked in per-domain limiter acquisition (semaphore wait + politeness delay); ~0 when uncontended. outcome=\"canceled\" is a wait that died in the queue (caller gave up) — the worst waits, which never acquire.",
+			Help: "Time spent blocked in per-domain limiter acquisition (semaphore wait + politeness delay); ~0 when uncontended. outcome=\"canceled\" is a wait that died in the queue (caller gave up) — the worst waits, which never acquire. outcome=\"budget_exceeded\" is the fast-fail: the pacing wait was longer than the caller's remaining deadline, so the limiter refused to queue at all and the request cost ~0 seconds (reason=\"quota_exhausted\" on the request metric).",
 			// 14 buckets → top ~81.9s: queued-behind-a-slow-domain waits run
 			// to the caller's deadline (90s crawl timeouts), well past 20s.
 			Buckets: prometheus.ExponentialBuckets(0.01, 2, 14),
@@ -179,7 +179,8 @@ func (m *Metrics) ObserveUpstream(upstream, op, status string, duration time.Dur
 
 // ObserveLimiterWait records the time an engine spent blocked acquiring the
 // per-domain limiter. Wired as the DomainLimiter's OnWait hook. outcome is
-// "acquired" or "canceled" (the wait died in the queue).
+// "acquired", "canceled" (the wait died in the queue) or "budget_exceeded" (the
+// wait was longer than the caller's budget, so the limiter refused to queue).
 func (m *Metrics) ObserveLimiterWait(engine, outcome string, duration time.Duration) {
 	m.LimiterWaitSecs.WithLabelValues(engine, outcome).Observe(duration.Seconds())
 }

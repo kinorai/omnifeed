@@ -55,7 +55,10 @@ func TestAcquireAdmitsOnceTheWindowRolls(t *testing.T) {
 }
 
 // A caller that gives up mid-wait must leave nothing behind: waits are not
-// booked, so no cleanup path exists to get wrong.
+// booked, so no cleanup path exists to get wrong. The caller is CANCELED rather
+// than given a deadline, because a deadline shorter than the wait is now
+// refused up front (see TestAcquireFailsFastWhenWaitExceedsTheBudget) and would
+// never reach the sleep this covers.
 func TestAcquireCancelBooksNothing(t *testing.T) {
 	l, m, _ := newFixture(t, Config{MaxConcurrent: 4, Quota: 1, Window: time.Hour})
 	const url = "https://example.com/a"
@@ -74,10 +77,16 @@ func TestAcquireCancelBooksNothing(t *testing.T) {
 
 	var outcomes []string
 	l.OnWait = func(_, outcome string, _ time.Duration) { outcomes = append(outcomes, outcome) }
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
-	defer cancel()
-	if _, err := l.Acquire(ctx, "crawl4ai", url); !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("Acquire on a spent quota: err = %v, want a deadline error", err)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, err := l.Acquire(ctx, "crawl4ai", url)
+		done <- err
+	}()
+	time.Sleep(20 * time.Millisecond) // let the waiter reach its sleep
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("Acquire on a spent quota: err = %v, want a cancellation", err)
 	}
 
 	after, err := l.cfg.Client.ZCard(context.Background(), win).Result()
@@ -404,4 +413,68 @@ func TestKeysBraceTheHostForClusterSlots(t *testing.T) {
 	if next != "omnifeed:ratelimit:test:{news.ycombinator.com}:next" {
 		t.Fatalf("next key = %q", next)
 	}
+}
+
+// A wait longer than the caller's remaining deadline is refused immediately
+// instead of slept out: the caller would have burned its whole budget and
+// failed anyway. Nothing is booked on the wait path, so Redis must be untouched
+// by the refusal.
+func TestAcquireFailsFastWhenWaitExceedsTheBudget(t *testing.T) {
+	l, m, _ := newFixture(t, Config{MaxConcurrent: 4, Quota: 1, Window: time.Hour})
+	const url = "https://example.com/a"
+	win, _ := l.keys("example.com")
+
+	release, err := l.Acquire(context.Background(), "crawl4ai", url)
+	if err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+	release()
+
+	before, err := l.cfg.Client.ZCard(context.Background(), win).Result()
+	if err != nil {
+		t.Fatalf("ZCARD: %v", err)
+	}
+
+	var outcomes []string
+	var waits []time.Duration
+	l.OnWait = func(_, outcome string, waited time.Duration) {
+		outcomes = append(outcomes, outcome)
+		waits = append(waits, waited)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	if _, err := l.Acquire(ctx, "crawl4ai", url); err == nil {
+		t.Fatal("Acquire on a spent quota: want a WaitBudgetError, got nil")
+	} else {
+		var wbe *httpx.WaitBudgetError
+		if !errors.As(err, &wbe) {
+			t.Fatalf("Acquire err = %T (%v), want *httpx.WaitBudgetError", err, err)
+		}
+		if wbe.RetryAfter < 50*time.Minute {
+			t.Fatalf("RetryAfter = %v, want ~1h (the next window opening)", wbe.RetryAfter)
+		}
+		if errors.Is(err, httpx.ErrLimiterUnavailable) {
+			t.Fatal("a pacing verdict must not be reported as a backend failure")
+		}
+	}
+	if elapsed := time.Since(start); elapsed > 40*time.Millisecond {
+		t.Fatalf("Acquire blocked for %v, want an immediate refusal", elapsed)
+	}
+
+	after, err := l.cfg.Client.ZCard(context.Background(), win).Result()
+	if err != nil {
+		t.Fatalf("ZCARD: %v", err)
+	}
+	if after != before {
+		t.Fatalf("ZCARD %d → %d: the refused caller wrote to Redis", before, after)
+	}
+	if len(outcomes) != 1 || outcomes[0] != "budget_exceeded" {
+		t.Fatalf("outcomes = %v, want [budget_exceeded]", outcomes)
+	}
+	if waits[0] > 40*time.Millisecond {
+		t.Fatalf("budget_exceeded wait = %v, want ~0 (nothing was slept)", waits[0])
+	}
+	assertTTLs(t, m)
 }
