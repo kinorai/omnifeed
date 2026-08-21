@@ -27,7 +27,7 @@ var hostMatcher = httpx.HostMatcher("reddit.com")
 // Engine implements domain.Engine for Reddit URLs.
 type Engine struct {
 	fetcher     *Fetcher
-	limiter     *httpx.DomainLimiter
+	limiter     httpx.Limiter
 	timeout     time.Duration
 	defaultOpts Options
 	logger      *slog.Logger
@@ -37,7 +37,7 @@ type Engine struct {
 // Config configures a Reddit Engine.
 type Config struct {
 	Fetcher     *Fetcher
-	Limiter     *httpx.DomainLimiter
+	Limiter     httpx.Limiter
 	Timeout     time.Duration
 	DefaultOpts Options
 	Logger      *slog.Logger

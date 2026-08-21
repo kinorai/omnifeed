@@ -46,7 +46,7 @@ var feedQuery = map[string]struct{ endpoint, tag string }{
 // Engine implements domain.Engine for Hacker News URLs via the Algolia API.
 type Engine struct {
 	client  *httpx.Client
-	limiter *httpx.DomainLimiter
+	limiter httpx.Limiter
 	apiBase string
 	timeout time.Duration
 	logger  *slog.Logger
@@ -55,7 +55,7 @@ type Engine struct {
 // Config configures a Hacker News Engine.
 type Config struct {
 	Client  *httpx.Client
-	Limiter *httpx.DomainLimiter
+	Limiter httpx.Limiter
 	APIBase string        // defaults to the public Algolia API; overridden in tests
 	Timeout time.Duration // wall-clock budget per crawl; defaults to defaultTimeout
 	Logger  *slog.Logger

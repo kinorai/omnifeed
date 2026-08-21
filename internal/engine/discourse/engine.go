@@ -40,7 +40,7 @@ var targetRE = regexp.MustCompile(`^/t/(?:([^/]*[^0-9/][^/]*)/([0-9]+)(?:/[0-9]+
 // JSON API.
 type Engine struct {
 	client  *httpx.Client
-	limiter *httpx.DomainLimiter
+	limiter httpx.Limiter
 	hosts   map[string]struct{}
 	timeout time.Duration
 	logger  *slog.Logger
@@ -53,7 +53,7 @@ type Engine struct {
 // Config configures a Discourse Engine.
 type Config struct {
 	Client  *httpx.Client
-	Limiter *httpx.DomainLimiter
+	Limiter httpx.Limiter
 	// Hosts is the exact hostname allowlist. Empty means the engine claims
 	// nothing — it can still be registered, Matches just always returns false.
 	Hosts   []string

@@ -42,7 +42,7 @@ var linkNextRE = regexp.MustCompile(`<([^>]+)>\s*;\s*rel="next"`)
 // REST API.
 type Engine struct {
 	client  *httpx.Client
-	limiter *httpx.DomainLimiter
+	limiter httpx.Limiter
 	apiBase string
 	token   string
 	timeout time.Duration
@@ -52,7 +52,7 @@ type Engine struct {
 // Config configures a GitHub Engine.
 type Config struct {
 	Client  *httpx.Client
-	Limiter *httpx.DomainLimiter
+	Limiter httpx.Limiter
 	APIBase string        // defaults to the public REST API; overridden in tests
 	Token   string        // optional PAT; empty = anonymous (60 req/h/IP)
 	Timeout time.Duration // wall-clock budget per crawl; defaults to defaultTimeout

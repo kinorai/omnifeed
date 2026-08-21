@@ -390,7 +390,7 @@ func runServers(ctx context.Context, logger *slog.Logger, health *observability.
 // Concurrency is fixed at 1 rather than exposed as a knob: the point is to
 // space requests, and a second query in flight would step straight over the
 // delay the first one is serving.
-func searxngLimiter(cfg config.Config, metrics *observability.Metrics, logger *slog.Logger) *httpx.DomainLimiter {
+func searxngLimiter(cfg config.Config, metrics *observability.Metrics, logger *slog.Logger) httpx.Limiter {
 	if cfg.SearXNGDelay <= 0 && cfg.SearXNGQuota <= 0 {
 		logger.Info("searxng pacing disabled (OMNIFEED_SEARXNG_DELAY and OMNIFEED_SEARXNG_QUOTA unset)")
 		return nil
