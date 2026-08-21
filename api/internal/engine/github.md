@@ -49,7 +49,7 @@ Config configures a GitHub Engine.
 ```go
 type Config struct {
     Client  *httpx.Client
-    Limiter *httpx.DomainLimiter
+    Limiter httpx.Limiter
     APIBase string        // defaults to the public REST API; overridden in tests
     Token   string        // optional PAT; empty = anonymous (60 req/h/IP)
     Timeout time.Duration // wall-clock budget per crawl; defaults to defaultTimeout

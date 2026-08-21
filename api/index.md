@@ -17,6 +17,7 @@ Generated from the Go source by [gomarkdoc](https://github.com/princjef/gomarkdo
 - [internal/engine/hackernews](internal/engine/hackernews.md)
 - [internal/engine/reddit](internal/engine/reddit.md)
 - [internal/httpx](internal/httpx.md)
+- [internal/httpx/redislimit](internal/httpx/redislimit.md)
 - [internal/observability](internal/observability.md)
 - [internal/search/searxng](internal/search/searxng.md)
 - [internal/transport/mcp](internal/transport/mcp.md)

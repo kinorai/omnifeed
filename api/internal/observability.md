@@ -28,11 +28,14 @@ Package observability wires structured logging, Prometheus metrics, and Kubernet
   - [func \(m \*Metrics\) ObserveEngineResults\(engine string, rows int\)](<#Metrics.ObserveEngineResults>)
   - [func \(m \*Metrics\) ObserveFallback\(fromEngine, reason string\)](<#Metrics.ObserveFallback>)
   - [func \(m \*Metrics\) ObserveLimiterWait\(engine, outcome string, duration time.Duration\)](<#Metrics.ObserveLimiterWait>)
+  - [func \(m \*Metrics\) ObserveRatelimitBackendError\(op string\)](<#Metrics.ObserveRatelimitBackendError>)
+  - [func \(m \*Metrics\) ObserveRatelimitPenalty\(upstream string\)](<#Metrics.ObserveRatelimitPenalty>)
   - [func \(m \*Metrics\) ObserveResponseChars\(engine string, chars int\)](<#Metrics.ObserveResponseChars>)
   - [func \(m \*Metrics\) ObserveSearch\(searcher, status, reason string, duration time.Duration\)](<#Metrics.ObserveSearch>)
   - [func \(m \*Metrics\) ObserveUnresponsiveEngine\(engine, errType string\)](<#Metrics.ObserveUnresponsiveEngine>)
   - [func \(m \*Metrics\) ObserveUpstream\(upstream, op, status string, duration time.Duration\)](<#Metrics.ObserveUpstream>)
   - [func \(m \*Metrics\) RegisterMetrics\(mux \*http.ServeMux\)](<#Metrics.RegisterMetrics>)
+  - [func \(m \*Metrics\) SetRatelimitDegraded\(scope string, down bool\)](<#Metrics.SetRatelimitDegraded>)
 - [type ReadyCheck](<#ReadyCheck>)
 
 
@@ -137,6 +140,9 @@ type Metrics struct {
     RequestSecs         *prometheus.HistogramVec // engine, status, reason
     UpstreamSecs        *prometheus.HistogramVec // upstream, op, status
     LimiterWaitSecs     *prometheus.HistogramVec // engine
+    RatelimitErrors     *prometheus.CounterVec   // op
+    RatelimitPenalties  *prometheus.CounterVec   // upstream
+    RatelimitDegraded   *prometheus.GaugeVec     // scope
     ResponseChars       *prometheus.HistogramVec // engine
     EngineFallbacks     *prometheus.CounterVec   // from_engine, reason
     SearxngUnresponsive *prometheus.CounterVec   // engine, error
@@ -223,6 +229,24 @@ func (m *Metrics) ObserveLimiterWait(engine, outcome string, duration time.Durat
 
 ObserveLimiterWait records the time an engine spent blocked acquiring the per\-domain limiter. Wired as the DomainLimiter's OnWait hook. outcome is "acquired" or "canceled" \(the wait died in the queue\).
 
+<a name="Metrics.ObserveRatelimitBackendError"></a>
+### func \(\*Metrics\) ObserveRatelimitBackendError
+
+```go
+func (m *Metrics) ObserveRatelimitBackendError(op string)
+```
+
+ObserveRatelimitBackendError counts one failed Redis operation in the distributed limiter. op is "acquire" or "release". Wired as the redis limiter's OnError hook.
+
+<a name="Metrics.ObserveRatelimitPenalty"></a>
+### func \(\*Metrics\) ObserveRatelimitPenalty
+
+```go
+func (m *Metrics) ObserveRatelimitPenalty(upstream string)
+```
+
+ObserveRatelimitPenalty counts one upstream Retry\-After fed back into the limiters as a hold on that host. upstream is the client's own upstream label, never the host — hosts are unbounded.
+
 <a name="Metrics.ObserveResponseChars"></a>
 ### func \(\*Metrics\) ObserveResponseChars
 
@@ -267,6 +291,17 @@ func (m *Metrics) RegisterMetrics(mux *http.ServeMux)
 ```
 
 RegisterMetrics attaches /metrics to mux.
+
+<a name="Metrics.SetRatelimitDegraded"></a>
+### func \(\*Metrics\) SetRatelimitDegraded
+
+```go
+func (m *Metrics) SetRatelimitDegraded(scope string, down bool)
+```
+
+SetRatelimitDegraded records whether pacing is currently degraded to per\-pod limits because the Redis backend is unreachable. Wired as the FallbackLimiter's OnDegraded hook, which fires on transitions only.
+
+Keyed by scope \("domain" or "searxng"\): each scope has its own FallbackLimiter and degrades on its own, so one recovering must not zero the other's signal.
 
 <a name="ReadyCheck"></a>
 ## type ReadyCheck

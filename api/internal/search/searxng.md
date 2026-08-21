@@ -46,7 +46,7 @@ type Config struct {
     // searcher's query rate, and an engine that decides the rate is bot-like
     // suspends itself (or gets CAPTCHA'd) for the whole pool's benefit. Nil
     // keeps the previous unpaced behaviour.
-    Limiter *httpx.DomainLimiter
+    Limiter httpx.Limiter
     // MaxWait caps how long a query may sit in the Limiter before it gives up.
     // Ignored when Limiter is nil. Defaults to defaultMaxWait.
     MaxWait time.Duration

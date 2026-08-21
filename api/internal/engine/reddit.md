@@ -122,7 +122,7 @@ Config configures a Reddit Engine.
 ```go
 type Config struct {
     Fetcher     *Fetcher
-    Limiter     *httpx.DomainLimiter
+    Limiter     httpx.Limiter
     Timeout     time.Duration
     DefaultOpts Options
     Logger      *slog.Logger
