@@ -74,11 +74,38 @@ services:
       OMNIFEED_DEV_NO_AUTH: "true"
       OMNIFEED_LOG_LEVEL: info
       OMNIFEED_LOG_FORMAT: json
+      # Share the rate limiters' state through Redis so several replicas obey
+      # one limit instead of one each. Uncomment together with the redis
+      # service below (and start the stack with `--profile redis`); unset, each
+      # instance paces in its own memory, which is all a single one needs.
+      # OMNIFEED_REDIS_URL: redis://redis:6379/0
     depends_on:
       crawl4ai:
         condition: service_healthy
       searxng:
         condition: service_healthy
+    restart: unless-stopped
+
+  # Distributed rate limiting, off by default: a single omnifeed instance paces
+  # correctly in its own memory, so this only earns its keep once you run more
+  # than one. Guarded by the "redis" profile — start it with
+  #   docker compose --profile redis up
+  # and uncomment OMNIFEED_REDIS_URL on the proxy service above.
+  redis:
+    image: redis:8.10.1-alpine
+    container_name: omnifeed-redis
+    profiles: ["redis"]
+    # No password: this listens on the compose network only, and no omnifeed
+    # deployment should share a Redis with anything it does not trust. Set
+    # --requirepass here and a redis://:<pass>@redis:6379 URL above if yours
+    # does. Persistence is off on purpose: every key is pacing state with a TTL
+    # of seconds to minutes, so an empty Redis after a restart is correct.
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     restart: unless-stopped
 
   # Stdio MCP, for clients that only speak stdio. Prefer the HTTP transport on
