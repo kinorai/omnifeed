@@ -284,7 +284,8 @@ func WebSearch(searcher domain.Searcher, maxResults int, metrics *observability.
 			start := time.Now()
 			results, err := searcher.Search(ctx, query, opts)
 			if metrics != nil {
-				metrics.ObserveSearch(searcher.Name(), observability.StatusOf(err), observability.Reason(err), time.Since(start))
+				metrics.ObserveSearch(searcher.Name(), observability.StatusOf(err), observability.Reason(err),
+					opts.Site != "", time.Since(start))
 			}
 			if err != nil {
 				return mcp.ToolResult{}, err

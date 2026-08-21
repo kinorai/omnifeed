@@ -28,8 +28,10 @@ type Metrics struct {
 	SearxngUnresponsive *prometheus.CounterVec   // engine, error
 	SearxngEngineHits   *prometheus.CounterVec   // engine
 	SearxngEmpty        *prometheus.CounterVec   // scoped
+	SearxngQueries      *prometheus.CounterVec   // scoped
+	SearxngEngineZero   *prometheus.CounterVec   // engine
 	RedditRounds        prometheus.Histogram
-	SearchesTotal       *prometheus.CounterVec   // searcher, status, reason
+	SearchesTotal       *prometheus.CounterVec   // searcher, status, reason, scoped
 	SearchSecs          *prometheus.HistogramVec // searcher, status
 	SearchEnginePos     *prometheus.HistogramVec // engine
 	SearchEngineUnique  *prometheus.CounterVec   // engine
@@ -106,6 +108,22 @@ func NewMetrics() *Metrics {
 			Name: "omnifeed_searxng_empty_searches_total",
 			Help: "Searches that returned zero results AND no unresponsive_engines report. SearXNG cannot distinguish these from an honest zero-hit query, so a rising rate — especially with scoped=\"true\" — is the signature of engines that block silently.",
 		}, []string{"scoped"}),
+		// The ADMITTED query rate: one increment per query actually sent to
+		// SearXNG. omnifeed_search_requests_total counts what CALLERS asked
+		// for, which diverges from this the moment pacing refuses anything —
+		// and the difference was only reconstructable from the audit log.
+		SearxngQueries: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "omnifeed_searxng_queries_total",
+			Help: "Queries actually sent to SearXNG (past the limiter, before the HTTP call), by whether a `site:` filter was applied. The admitted rate — compare with omnifeed_search_requests_total to see what pacing refused, and with the engines' own quotas to see how close the pool is to its limits.",
+		}, []string{"scoped"}),
+		// The per-search complement of SearxngEngineHits: that counter goes flat
+		// for a silently blocked engine, which is only visible against the rest
+		// of the pool; this one names the engine directly, once per search it
+		// sat out while the pool answered.
+		SearxngEngineZero: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "omnifeed_searxng_engine_zero_results_total",
+			Help: "Searches in which one engine contributed no rows while the search as a whole did return results, by engine — the silent-block signature (an engine blocked by its upstream answers HTTP 200 with an empty result set and no unresponsive_engines entry). Engines SearXNG reported unresponsive for that search are excluded: those failed openly and are counted by omnifeed_searxng_unresponsive_engines_total. Only engines the process has already seen answer can be counted, so pair with absent_over_time() for an engine blocked since startup.",
+		}, []string{"engine"}),
 		RedditRounds: prometheus.NewHistogram(prometheus.HistogramOpts{
 			Name:    "omnifeed_reddit_expansion_rounds",
 			Help:    "Number of /api/morechildren rounds per Reddit crawl.",
@@ -113,8 +131,8 @@ func NewMetrics() *Metrics {
 		}),
 		SearchesTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "omnifeed_search_requests_total",
-			Help: "Total search queries by searcher, status, and failure reason.",
-		}, []string{"searcher", "status", "reason"}),
+			Help: "Total search queries by searcher, status, failure reason, and whether a `site:` filter was applied.",
+		}, []string{"searcher", "status", "reason", "scoped"}),
 		SearchSecs: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name:    "omnifeed_search_request_seconds",
 			Help:    "Search latency by searcher and status.",
@@ -141,7 +159,7 @@ func NewMetrics() *Metrics {
 	reg.MustRegister(m.RequestsTotal, m.RequestAttempts, m.RequestSecs, m.UpstreamSecs,
 		m.LimiterWaitSecs, m.RatelimitErrors, m.RatelimitPenalties, m.RatelimitDegraded,
 		m.ResponseChars, m.EngineFallbacks, m.SearxngUnresponsive,
-		m.SearxngEngineHits, m.SearxngEmpty,
+		m.SearxngEngineHits, m.SearxngEmpty, m.SearxngQueries, m.SearxngEngineZero,
 		m.RedditRounds, m.SearchesTotal, m.SearchSecs,
 		m.SearchEnginePos, m.SearchEngineUnique)
 	reg.MustRegister(
@@ -252,11 +270,31 @@ func (m *Metrics) ObserveEmptySearch(scoped bool) {
 }
 
 // ObserveSearch records a single search query result. reason classifies WHY a
-// search failed (see Reason); it is "ok" on success. SearchSecs stays keyed on
-// searcher+status only — adding reason would just inflate histogram cardinality.
-func (m *Metrics) ObserveSearch(searcher, status, reason string, duration time.Duration) {
-	m.SearchesTotal.WithLabelValues(searcher, status, reason).Inc()
+// search failed (see Reason); it is "ok" on success. scoped says whether the
+// caller asked for a `site:` filter — site-scoped search runs on a different
+// engine pool and fails for different reasons, and every existing sum() over
+// this counter collapses the label anyway. SearchSecs stays keyed on
+// searcher+status only — adding reason or scoped would just inflate histogram
+// cardinality.
+func (m *Metrics) ObserveSearch(searcher, status, reason string, scoped bool, duration time.Duration) {
+	m.SearchesTotal.WithLabelValues(searcher, status, reason, strconv.FormatBool(scoped)).Inc()
 	m.SearchSecs.WithLabelValues(searcher, status).Observe(duration.Seconds())
+}
+
+// ObserveSearxngQuery counts one query actually sent to SearXNG — past the
+// limiter, before the HTTP call. This is the rate the engines behind SearXNG
+// see, which is what their own quotas are measured against; the caller-side
+// counter (ObserveSearch) includes queries pacing refused.
+func (m *Metrics) ObserveSearxngQuery(scoped bool) {
+	m.SearxngQueries.WithLabelValues(strconv.FormatBool(scoped)).Inc()
+}
+
+// ObserveEngineZeroResults counts one search an engine contributed nothing to
+// while the search itself returned rows. One increment per search per engine,
+// never per row: it measures how OFTEN an engine sits out, not how much it
+// missed.
+func (m *Metrics) ObserveEngineZeroResults(engine string) {
+	m.SearxngEngineZero.WithLabelValues(engine).Inc()
 }
 
 // ObserveEngineRank records the rank an engine gave one of its own results,

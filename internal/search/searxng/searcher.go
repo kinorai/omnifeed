@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/kinorai/omnifeed/internal/domain"
@@ -77,6 +78,11 @@ type Searcher struct {
 	limiter     httpx.Limiter
 	maxWait     time.Duration
 	audit       string
+	// seenEngines is the engine pool as learned from SearXNG's own responses —
+	// the set an engine must be in before a search it sat out can be counted
+	// against it. There is no list of enabled engines in the JSON API, and the
+	// set is bounded by the instance's configuration.
+	seenEngines sync.Map // engine name → struct{}
 }
 
 // New returns a Searcher wired with the given config.
@@ -179,6 +185,12 @@ func (s *Searcher) Search(ctx context.Context, query string, opts domain.SearchO
 	// comparing engine pools needs. Queue time has its own metric
 	// (omnifeed_domain_limiter_wait_seconds).
 	started := time.Now()
+	// The admitted rate: counted here, past the limiter and before the call, so
+	// it measures what the engines behind SearXNG actually saw — not what the
+	// callers asked for.
+	if s.metrics != nil {
+		s.metrics.ObserveSearxngQuery(scoped != query)
+	}
 	resp, err := s.client.DoRetry(ctx, http.MethodGet, s.searchURL+"?"+params.Encode(),
 		nil, nil, httpx.RetryConfig{})
 	if err != nil {
@@ -235,8 +247,11 @@ func (s *Searcher) Search(ctx context.Context, query string, opts domain.SearchO
 		}
 	}
 
+	rows := engineRows(sr.Results)
+	s.countZeroResultEngines(rows, len(sr.Results), sr.UnresponsiveEngines)
+
 	s.observeRanks(sr.Results)
-	s.logAudit(queryID, query, scoped, opts, sr, time.Since(started))
+	s.logAudit(queryID, query, scoped, opts, sr, rows, time.Since(started))
 
 	results := make([]domain.SearchResult, 0, len(sr.Results))
 	for _, hit := range sr.Results {
@@ -315,6 +330,65 @@ func (s *Searcher) countEngineResults(hits []searchHit) {
 	}
 }
 
+// engineRows tallies how many rows each engine contributed, counting every
+// engine credited for a result (SearXNG's `engines` array), not just the one in
+// the legacy `engine` field. It is computed once per search and shared by the
+// audit line and the zero-results counter.
+func engineRows(hits []searchHit) map[string]int {
+	rows := make(map[string]int, len(hits))
+	for _, hit := range hits {
+		for _, engine := range hitEngines(hit) {
+			rows[engine]++
+		}
+	}
+	return rows
+}
+
+// countZeroResultEngines counts, once per search, each engine that contributed
+// nothing while the search as a whole returned rows — the silent-block
+// signature: an engine blocked by its upstream answers HTTP 200 with an empty
+// result set and no unresponsive_engines entry, so nothing else names it.
+//
+// Two exclusions. A search that returned nothing at all says nothing about any
+// single engine (that case has its own counter, see ObserveEmptySearch). And an
+// engine SearXNG reported unresponsive failed OPENLY: it is already counted as
+// such, and letting cooldowns — near-constant on a wide pool — feed this counter
+// would bury the silent case they exist to isolate.
+//
+// The pool is learned at runtime: an engine can only be counted once the
+// process has seen it named in a response. An engine already blocked when the
+// process started mints no series at all, the same caveat
+// omnifeed_searxng_engine_results_total carries.
+func (s *Searcher) countZeroResultEngines(rows map[string]int, total int, unresponsive [][]string) {
+	if s.metrics == nil {
+		return
+	}
+	for engine := range rows {
+		s.seenEngines.Store(engine, struct{}{})
+	}
+	for _, pair := range unresponsive {
+		if len(pair) > 0 && pair[0] != "" {
+			s.seenEngines.Store(pair[0], struct{}{})
+		}
+	}
+	if total == 0 {
+		return
+	}
+	failed := make(map[string]struct{}, len(unresponsive))
+	for _, pair := range unresponsive {
+		if len(pair) > 0 {
+			failed[pair[0]] = struct{}{}
+		}
+	}
+	s.seenEngines.Range(func(key, _ any) bool {
+		engine := key.(string)
+		if _, reported := failed[engine]; !reported && rows[engine] == 0 {
+			s.metrics.ObserveEngineZeroResults(engine)
+		}
+		return true
+	})
+}
+
 // normalizeEngineError maps SearXNG's free-text unresponsive reasons onto a
 // closed label vocabulary. Substring checks, most specific first: SearXNG
 // composes messages like "Suspended: too many requests" or "CAPTCHA required",
@@ -384,15 +458,9 @@ func newQueryID() string {
 
 // logAudit emits the search-level line, plus the per-result position table in
 // "full" mode.
-func (s *Searcher) logAudit(queryID, query, scoped string, opts domain.SearchOptions, sr searchResponse, took time.Duration) {
+func (s *Searcher) logAudit(queryID, query, scoped string, opts domain.SearchOptions, sr searchResponse, rows map[string]int, took time.Duration) {
 	if s.auditDisabled() {
 		return
-	}
-	rows := make(map[string]int, len(sr.Results))
-	for _, hit := range sr.Results {
-		for _, engine := range hitEngines(hit) {
-			rows[engine]++
-		}
 	}
 	// engine_rows is rendered as "engine=n" pairs rather than a map or an
 	// array, for the same flattening reason as above: it stays greppable in
