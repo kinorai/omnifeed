@@ -5,6 +5,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"slices"
 	"strconv"
@@ -155,6 +156,20 @@ type Config struct {
 	RedditKeepCreated bool   // include the per-comment `created` timestamp
 	RedditKeepDepth   bool   // include the per-comment `depth` field
 
+	// Distributed rate limiting (optional). RedisURL is the single opt-in
+	// switch: unset keeps pacing entirely in process, exactly as before. Set,
+	// the limiters share their state through Redis so every replica counts
+	// against one limit instead of one limit each.
+	RedisURL string
+	// RedisKeyPrefix namespaces the limiter keys, so several deployments can
+	// share one Redis instance without colliding.
+	RedisKeyPrefix string
+	// RedisTimeout is the budget for ONE Redis operation, not for one Acquire:
+	// an Acquire legitimately sleeps minutes between attempts while it waits out
+	// a quota window. On a breach the limiter fails open to in-process pacing
+	// for a cooldown, so a dead Redis costs one timeout per cooldown.
+	RedisTimeout time.Duration
+
 	// Limits and rate control.
 	MaxURLsPerRequest    int
 	PerDomainConcurrency int
@@ -187,10 +202,13 @@ func Load() (Config, error) {
 		Crawl4AIExcludedSelector: env("OMNIFEED_CRAWL4AI_EXCLUDED_SELECTOR", ""),
 		Crawl4AITargetElements:   env("OMNIFEED_CRAWL4AI_TARGET_ELEMENTS", ""),
 
-		SearXNGURL:   env("OMNIFEED_SEARXNG_URL", ""),
-		GitHubToken:  env("OMNIFEED_GITHUB_TOKEN", ""),
-		RedditFormat: env("OMNIFEED_REDDIT_FORMAT", "toon"),
-		RedditSort:   env("OMNIFEED_REDDIT_SORT", domain.DefaultRedditSort),
+		SearXNGURL: env("OMNIFEED_SEARXNG_URL", ""),
+
+		RedisURL:       env("OMNIFEED_REDIS_URL", ""),
+		RedisKeyPrefix: env("OMNIFEED_REDIS_KEY_PREFIX", "omnifeed:ratelimit"),
+		GitHubToken:    env("OMNIFEED_GITHUB_TOKEN", ""),
+		RedditFormat:   env("OMNIFEED_REDDIT_FORMAT", "toon"),
+		RedditSort:     env("OMNIFEED_REDDIT_SORT", domain.DefaultRedditSort),
 	}
 
 	// Tri-state: unset = the shipped default list, set = that list verbatim,
@@ -296,6 +314,9 @@ func Load() (Config, error) {
 	if c.PerDomainDelay, err = envDuration("OMNIFEED_PER_DOMAIN_DELAY", 1500*time.Millisecond); err != nil {
 		return c, err
 	}
+	if c.RedisTimeout, err = envDuration("OMNIFEED_REDIS_TIMEOUT", 250*time.Millisecond); err != nil {
+		return c, err
+	}
 
 	c.RedditFormat = strings.ToLower(c.RedditFormat)
 	if c.RedditFormat != "toon" && c.RedditFormat != "json" {
@@ -369,6 +390,23 @@ func Load() (Config, error) {
 	case "domcontentloaded", "load", "networkidle", "commit":
 	default:
 		return c, fmt.Errorf("OMNIFEED_CRAWL4AI_WAIT_UNTIL must be one of domcontentloaded, load, networkidle, commit, got %q", c.Crawl4AIWaitUntil)
+	}
+
+	// The URL is only shape-checked here: config stays free of any Redis client,
+	// and go-redis parses it for real at wiring time. A wrong scheme is the
+	// mistake worth catching early — an http:// URL would otherwise fail deep
+	// inside startup.
+	if c.RedisURL != "" {
+		u, err := url.Parse(c.RedisURL)
+		if err != nil {
+			return c, fmt.Errorf("OMNIFEED_REDIS_URL is not a valid URL: %w", err)
+		}
+		if u.Scheme != "redis" && u.Scheme != "rediss" {
+			return c, fmt.Errorf("OMNIFEED_REDIS_URL scheme must be redis or rediss, got %q", u.Scheme)
+		}
+	}
+	if c.RedisTimeout <= 0 {
+		return c, fmt.Errorf("OMNIFEED_REDIS_TIMEOUT must be > 0, got %s", c.RedisTimeout)
 	}
 
 	// crawl4ai is required for ALL engines now: the Reddit engine fetches
