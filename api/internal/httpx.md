@@ -15,6 +15,7 @@ Package httpx provides HTTP utilities shared across engines: a retrying HTTP cli
 - [func HostMatcher\(domain string\) \*regexp.Regexp](<#HostMatcher>)
 - [func NewGuardedClient\(blockPrivate bool, timeout time.Duration\) \*http.Client](<#NewGuardedClient>)
 - [func NewTransport\(\) \*http.Transport](<#NewTransport>)
+- [func RemainingBudget\(ctx context.Context\) \(time.Duration, bool\)](<#RemainingBudget>)
 - [func ValidateURL\(rawURL string, blockPrivate bool\) error](<#ValidateURL>)
 - [type Client](<#Client>)
   - [func New\(c \*http.Client\) \*Client](<#New>)
@@ -32,6 +33,8 @@ Package httpx provides HTTP utilities shared across engines: a retrying HTTP cli
 - [type RetryConfig](<#RetryConfig>)
 - [type StatusError](<#StatusError>)
   - [func \(e \*StatusError\) Error\(\) string](<#StatusError.Error>)
+- [type WaitBudgetError](<#WaitBudgetError>)
+  - [func \(e \*WaitBudgetError\) Error\(\) string](<#WaitBudgetError.Error>)
 
 
 ## Variables
@@ -49,7 +52,9 @@ var ErrLimiterUnavailable = errors.New("rate limiter backend unavailable")
 func ClassifyClientError(err error, fallback domain.FailureKind) *domain.FetchError
 ```
 
-ClassifyClientError translates an error returned by DoRetry into a typed domain.FetchError. A StatusError carries the upstream status after retries: a 429 is unambiguous and becomes KindHTTP429, but a 5xx is ambiguous — it can be a genuine upstream fault OR, on the browser/anti\-bot paths, the block itself surfacing as a crawl4ai 5xx \(see browser/crawl4ai\) — so the caller's fallback decides \(KindUpstreamError for a generic crawl, KindBotBlock for a Reddit navigation\). A context deadline becomes KindTimeout; a caller cancellation \(client abort\) becomes KindCanceled; anything else becomes the fallback. Returns nil when err is nil.
+ClassifyClientError translates an error returned by DoRetry into a typed domain.FetchError. A StatusError carries the upstream status after retries: a 429 is unambiguous and becomes KindHTTP429, but a 5xx is ambiguous — it can be a genuine upstream fault OR, on the browser/anti\-bot paths, the block itself surfacing as a crawl4ai 5xx \(see browser/crawl4ai\) — so the caller's fallback decides \(KindUpstreamError for a generic crawl, KindBotBlock for a Reddit navigation\). A context deadline becomes KindTimeout; a caller cancellation \(client abort\) becomes KindCanceled; a limiter's fast\-fail \(\*WaitBudgetError\) becomes KindQuotaExhausted with the retry\-after in the message; anything else becomes the fallback. Returns nil when err is nil.
+
+The WaitBudgetError case lives here rather than at each call site so the search path and every crawl path classify a refused pacing wait the same way: every limiter error already reaches a caller through this function.
 
 <a name="HostMatcher"></a>
 ## func HostMatcher
@@ -77,6 +82,15 @@ func NewTransport() *http.Transport
 ```
 
 NewTransport returns the outbound transport shared by omnifeed's HTTP clients: DefaultTransport's dial/TLS/proxy behavior with a per\-host idle pool sized for this proxy's traffic. Go's DefaultTransport keeps only 2 idle connections per host, so concurrent requests to the same upstream \(crawl4ai, SearXNG, api.github.com\) evict each other's connections and re\-handshake TCP \+ TLS on the next call.
+
+<a name="RemainingBudget"></a>
+## func RemainingBudget
+
+```go
+func RemainingBudget(ctx context.Context) (time.Duration, bool)
+```
+
+RemainingBudget reports how long ctx has left, and whether it has a deadline at all. A context without one has no budget to exceed, so pacing queues as before. Exported for the out\-of\-package limiter implementations \(redislimit\), which make the same fast\-fail decision as \*DomainLimiter.
 
 <a name="ValidateURL"></a>
 ## func ValidateURL
@@ -167,10 +181,14 @@ DomainLimiter caps concurrency and enforces a minimum delay between successive r
 type DomainLimiter struct {
 
     // OnWait, when non-nil, is called on every Acquire exit with the engine
-    // that waited, the outcome ("acquired", or "canceled" when the caller's
-    // ctx died in the queue — the worst waits, which never acquire), and the
-    // time spent blocked (semaphore wait + politeness delay); ~0 when
-    // uncontended. Set once at wiring time.
+    // that waited, the outcome, and the time spent blocked (semaphore wait +
+    // politeness delay); ~0 when uncontended. Set once at wiring time.
+    //
+    // Three outcomes: "acquired"; "canceled" when the caller's ctx died in the
+    // queue — the worst waits, which never acquire; and "budget_exceeded" when
+    // the computed wait was longer than the caller's remaining deadline, so
+    // Acquire refused to queue at all (see WaitBudgetError). The last one is
+    // the cheap failure: it costs ~0 seconds, not the caller's whole budget.
     OnWait func(engine, outcome string, waited time.Duration)
     // contains filtered or unexported fields
 }
@@ -203,7 +221,7 @@ A minimum delay alone cannot express the limit some upstreams actually enforce. 
 func (d *DomainLimiter) Acquire(ctx context.Context, engine, rawURL string) (func(), error)
 ```
 
-Acquire blocks until a slot is available and the minimum delay since the last request to the same domain has elapsed, or until ctx is done — a canceled caller must not keep queuing behind a slow domain. engine names the caller for the wait metric \(the limiter itself only knows hosts\). Caller must Release \(call the returned func\) when done; on error there is nothing to release.
+Acquire blocks until a slot is available and the minimum delay since the last request to the same domain has elapsed, or until ctx is done — a canceled caller must not keep queuing behind a slow domain. When ctx carries a deadline and the pacing wait is longer than what is left of it, Acquire returns \*WaitBudgetError immediately instead of queueing \(fail fast, the wait is reported so the caller can retry later\). engine names the caller for the wait metric \(the limiter itself only knows hosts\). Caller must Release \(call the returned func\) when done; on error there is nothing to release.
 
 <a name="DomainLimiter.Penalize"></a>
 ### func \(\*DomainLimiter\) Penalize
@@ -319,6 +337,30 @@ type StatusError struct {
 
 ```go
 func (e *StatusError) Error() string
+```
+
+
+
+<a name="WaitBudgetError"></a>
+## type WaitBudgetError
+
+WaitBudgetError reports that the pacing wait a limiter computed is longer than the time the caller's context has left, so nothing was admitted and the caller was not made to queue for a slot it could never use. The alternative is what omnifeed did before: hold the caller for its whole budget and then fail it with a deadline error anyway, which costs an agent the wait AND the answer.
+
+It is a pacing VERDICT, not a backend failure: it is deliberately NOT wrapped in ErrLimiterUnavailable, so \*FallbackLimiter passes it through untouched instead of absorbing it and opening its circuit against a healthy backend.
+
+RetryAfter is the wait that was refused — how long the caller must leave before the same request can be admitted.
+
+```go
+type WaitBudgetError struct {
+    RetryAfter time.Duration
+}
+```
+
+<a name="WaitBudgetError.Error"></a>
+### func \(\*WaitBudgetError\) Error
+
+```go
+func (e *WaitBudgetError) Error() string
 ```
 
 
