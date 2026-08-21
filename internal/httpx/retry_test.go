@@ -299,3 +299,82 @@ func TestDoRetryReportsUpstreamRoundTrips(t *testing.T) {
 		}
 	})
 }
+
+// OnRetryAfter reports what an upstream asked for, once per response that
+// actually asked: 429 and 503 with a parseable Retry-After, nothing else. The
+// retry loop's own capped backoff is a separate thing and stays unchanged.
+func TestDoRetryReportsRetryAfter(t *testing.T) {
+	type call struct {
+		upstream, rawURL string
+		wait             time.Duration
+	}
+
+	tests := []struct {
+		name        string
+		status      int
+		retryAfter  string
+		maxAttempts int
+		veto        func(status int, body string) bool
+		wantCalls   int
+		wantWait    time.Duration
+	}{
+		{name: "429 with Retry-After", status: http.StatusTooManyRequests, retryAfter: "120",
+			maxAttempts: 1, wantCalls: 1, wantWait: 2 * time.Minute},
+		{name: "503 with Retry-After", status: http.StatusServiceUnavailable, retryAfter: "30",
+			maxAttempts: 1, wantCalls: 1, wantWait: 30 * time.Second},
+		{name: "429 without the header", status: http.StatusTooManyRequests,
+			maxAttempts: 1, wantCalls: 0},
+		{name: "429 with an unparseable header", status: http.StatusTooManyRequests,
+			retryAfter: "Wed, 21 Oct 2026 07:28:00 GMT", maxAttempts: 1, wantCalls: 0},
+		{name: "500 with Retry-After is not a rate limit", status: http.StatusInternalServerError,
+			retryAfter: "30", maxAttempts: 1, wantCalls: 0},
+		// One call per RESPONSE, so a retried 429 reports each of them — and a
+		// vetoed retry still reports the one it saw.
+		{name: "once per response across retries", status: http.StatusTooManyRequests, retryAfter: "10",
+			maxAttempts: 3, wantCalls: 3, wantWait: 10 * time.Second},
+		{name: "reported even when the retry is vetoed", status: http.StatusTooManyRequests, retryAfter: "10",
+			maxAttempts: 3, veto: func(int, string) bool { return false }, wantCalls: 1, wantWait: 10 * time.Second},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				if tt.retryAfter != "" {
+					w.Header().Set("Retry-After", tt.retryAfter)
+				}
+				w.WriteHeader(tt.status)
+			}))
+			defer srv.Close()
+
+			var calls []call
+			c := New(nil).WithUpstream("hackernews", "api")
+			c.OnRetryAfter = func(upstream, rawURL string, wait time.Duration) {
+				calls = append(calls, call{upstream, rawURL, wait})
+			}
+			resp, err := c.DoRetry(context.Background(), http.MethodGet, srv.URL, nil, nil,
+				RetryConfig{MaxAttempts: tt.maxAttempts, BaseDelay: time.Microsecond,
+					RetryableStatus: tt.veto})
+			if resp != nil {
+				_ = resp.Body.Close()
+			}
+			if err == nil {
+				t.Fatalf("DoRetry() error = nil, want a %d failure", tt.status)
+			}
+
+			if len(calls) != tt.wantCalls {
+				t.Fatalf("OnRetryAfter fired %d times, want %d (%v)", len(calls), tt.wantCalls, calls)
+			}
+			for _, got := range calls {
+				if got.wait != tt.wantWait {
+					t.Fatalf("wait = %v, want %v", got.wait, tt.wantWait)
+				}
+				if got.upstream != "hackernews" {
+					t.Fatalf("upstream = %q, want hackernews", got.upstream)
+				}
+				if got.rawURL != srv.URL {
+					t.Fatalf("rawURL = %q, want %q", got.rawURL, srv.URL)
+				}
+			}
+		})
+	}
+}

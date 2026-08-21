@@ -3,6 +3,7 @@ package redislimit
 import (
 	"context"
 	"errors"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -179,4 +180,51 @@ func TestAcquireSeparatesHosts(t *testing.T) {
 		t.Fatalf("Acquire b while a is held: %v", err)
 	}
 	releaseB()
+}
+
+// A penalty bumps the shared next-allowed-at key, with a TTL (the instance runs
+// noeviction), and the next admission waits for it.
+func TestPenalizeBumpsNextKey(t *testing.T) {
+	l, m, _ := newFixture(t, Config{MaxConcurrent: 1})
+	const url = "https://news.ycombinator.com/item?id=1"
+	_, nextKey := l.keys("news.ycombinator.com")
+
+	l.Penalize(url, 30*time.Second)
+
+	got, err := m.Get(nextKey)
+	if err != nil {
+		t.Fatalf("next key missing after Penalize: %v", err)
+	}
+	want := base.Add(30 * time.Second).UnixMilli()
+	if got != strconv.FormatInt(want, 10) {
+		t.Fatalf("next = %s, want %d (now + 30s)", got, want)
+	}
+	assertTTLs(t, m)
+
+	// The hold is what the next admission attempt now waits for.
+	if wait := book(t, l, m, "news.ycombinator.com"); wait != 30*time.Second {
+		t.Fatalf("book after Penalize waited %v, want 30s", wait)
+	}
+
+	// A milder penalty must not shorten it, and a zero one must do nothing.
+	l.Penalize(url, time.Second)
+	l.Penalize(url, 0)
+	if got, _ := m.Get(nextKey); got != strconv.FormatInt(want, 10) {
+		t.Fatalf("next = %s after a milder penalty, want %d unchanged", got, want)
+	}
+}
+
+// A penalty against a dead backend reports op="penalize" and nothing else: the
+// caller is a response handler with nothing to do about it.
+func TestPenalizeReportsBackendErrors(t *testing.T) {
+	l, m, _ := newFixture(t, Config{MaxConcurrent: 1})
+	var ops []string
+	l.OnError = func(op string) { ops = append(ops, op) }
+	m.Close()
+
+	l.Penalize("https://example.com/a", time.Second)
+
+	if len(ops) != 1 || ops[0] != "penalize" {
+		t.Fatalf("OnError ops = %v, want [penalize]", ops)
+	}
 }

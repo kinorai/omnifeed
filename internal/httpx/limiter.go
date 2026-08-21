@@ -32,7 +32,12 @@ type domainSlot struct {
 	sem      chan struct{}
 	mu       sync.Mutex
 	lastSend time.Time
-	window   quotaWindow
+	// notBefore holds this domain back until an instant an upstream itself
+	// asked for (a Retry-After on a 429/503, applied via Penalize). Zero when
+	// no upstream has asked, which is the only state Acquire ever sees unless
+	// Penalize is called.
+	notBefore time.Time
+	window    quotaWindow
 }
 
 // NewDomainLimiter returns a limiter with the given concurrency cap and
@@ -116,6 +121,26 @@ func (d *DomainLimiter) Acquire(ctx context.Context, engine, rawURL string) (fun
 	}, nil
 }
 
+// Penalize holds the domain back for d, on top of whatever the pacing settings
+// already impose — what an upstream's Retry-After on a 429 or 503 is worth. It
+// only ever extends an existing hold, so the strictest answer any upstream gave
+// stands, and it never shortens one. A non-positive d does nothing.
+//
+// Nothing is released here: this is a note left for the next Acquire, not an
+// admission.
+func (d *DomainLimiter) Penalize(rawURL string, dur time.Duration) {
+	if dur <= 0 {
+		return
+	}
+	s := d.slotFor(rawURL)
+	until := time.Now().Add(dur)
+	s.mu.Lock()
+	if until.After(s.notBefore) {
+		s.notBefore = until
+	}
+	s.mu.Unlock()
+}
+
 func (d *DomainLimiter) observeWait(engine, outcome string, start time.Time) {
 	if d.OnWait != nil {
 		d.OnWait(engine, outcome, time.Since(start))
@@ -142,6 +167,11 @@ func (s *domainSlot) reserve(now time.Time, minDelay time.Duration) (time.Durati
 	var wait time.Duration
 	if since := now.Sub(s.lastSend); since < minDelay {
 		wait = minDelay - since
+	}
+	// An upstream's own Retry-After and our politeness delay are two lower
+	// bounds on the same instant, so the later one wins.
+	if hold := s.notBefore.Sub(now); hold > wait {
+		wait = hold
 	}
 	booked := now.Add(wait)
 	bookWait := s.window.book(booked)

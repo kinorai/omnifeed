@@ -286,3 +286,53 @@ func TestFallbackLimiterConcurrentAcquire(t *testing.T) {
 		t.Fatal("OnDegraded never fired")
 	}
 }
+
+// penalizingStub is a stubLimiter that also records penalties.
+type penalizingStub struct {
+	stubLimiter
+
+	mu         sync.Mutex
+	penalties  []time.Duration
+	lastRawURL string
+}
+
+func (p *penalizingStub) Penalize(rawURL string, d time.Duration) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.penalties = append(p.penalties, d)
+	p.lastRawURL = rawURL
+}
+
+// A penalty must reach BOTH backends: one recorded only in Redis is forgotten
+// the moment the circuit opens, which is exactly when the upstream that asked
+// for it is still refusing traffic.
+func TestFallbackLimiterPenalizesBothBackends(t *testing.T) {
+	primary := &penalizingStub{stubLimiter: stubLimiter{name: "primary"}}
+	fallback := &penalizingStub{stubLimiter: stubLimiter{name: "fallback"}}
+	f := &FallbackLimiter{Primary: primary, Fallback: fallback}
+
+	f.Penalize("https://news.ycombinator.com/item?id=1", 42*time.Second)
+
+	for name, s := range map[string]*penalizingStub{"primary": primary, "fallback": fallback} {
+		if len(s.penalties) != 1 || s.penalties[0] != 42*time.Second {
+			t.Fatalf("%s got penalties %v, want [42s]", name, s.penalties)
+		}
+		if s.lastRawURL != "https://news.ycombinator.com/item?id=1" {
+			t.Fatalf("%s got rawURL %q", name, s.lastRawURL)
+		}
+	}
+}
+
+// A backend that cannot be penalized is skipped, not a panic: the Limiter
+// interface does not carry Penalize, so a stub or a future implementation
+// without it must still compose.
+func TestFallbackLimiterPenalizeSkipsBackendsWithoutIt(t *testing.T) {
+	primary := &penalizingStub{stubLimiter: stubLimiter{name: "primary"}}
+	f := &FallbackLimiter{Primary: primary, Fallback: &stubLimiter{name: "fallback"}}
+
+	f.Penalize("https://example.com/a", time.Second)
+
+	if len(primary.penalties) != 1 {
+		t.Fatalf("primary got penalties %v, want one", primary.penalties)
+	}
+}
