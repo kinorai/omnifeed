@@ -114,3 +114,29 @@ func TestNewCollectorsObservable(t *testing.T) {
 		t.Fatalf("SearxngUnresponsive count = %v, want 1", got)
 	}
 }
+
+// The degraded gauge is per scope: the two FallbackLimiters degrade and recover
+// independently, so one coming back must not zero the other's signal.
+func TestSetRatelimitDegradedIsPerScope(t *testing.T) {
+	m := NewMetrics()
+	m.SetRatelimitDegraded("domain", true)
+	m.SetRatelimitDegraded("searxng", true)
+	m.SetRatelimitDegraded("searxng", false)
+
+	if got := gaugeValue(t, m.RatelimitDegraded.WithLabelValues("domain")); got != 1 {
+		t.Fatalf("domain gauge = %v, want 1", got)
+	}
+	if got := gaugeValue(t, m.RatelimitDegraded.WithLabelValues("searxng")); got != 0 {
+		t.Fatalf("searxng gauge = %v, want 0", got)
+	}
+}
+
+// gaugeValue reads a GaugeVec child's current value.
+func gaugeValue(t *testing.T, g prometheus.Gauge) float64 {
+	t.Helper()
+	var dm dto.Metric
+	if err := g.Write(&dm); err != nil {
+		t.Fatal(err)
+	}
+	return dm.GetGauge().GetValue()
+}

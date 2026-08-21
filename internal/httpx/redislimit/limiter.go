@@ -13,6 +13,14 @@
 // cancellation needs no cleanup — the price is that cross-pod queueing is
 // jittered retry rather than the local limiter's future-booked FIFO order.
 //
+// The third divergence is the one MinDelay buys. The acquire script sets the
+// next-allowed-at at admission and release bumps it again from completion, so
+// with MinDelay > 0 admissions to one host are strictly serialized across the
+// whole cluster: same-host concurrency collapses to 1 however many MaxConcurrent
+// slots each pod holds. That is politer than the in-process limiter's N
+// concurrent requests, and slower — deliberate for a politeness control, and
+// crash-safe, since a pod that dies mid-request leaves correct spacing behind.
+//
 // Both scripts take the clock from Redis' TIME rather than from the pod. That
 // was gated on a question about the test double: redis.call('TIME') inside
 // miniredis' EVAL does honour miniredis.SetTime (verified), so tests drive the
@@ -28,6 +36,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	mrand "math/rand"
 	"net/url"
@@ -124,6 +133,19 @@ func (l *Limiter) Acquire(ctx context.Context, engine, rawURL string) (func(), e
 		wait, err := l.book(ctx, winKey, nextKey)
 		if err != nil {
 			<-sem
+			// A caller that walked away mid-EVALSHA is not a backend failure:
+			// the redis client reports the CALLER's dead ctx as its own error,
+			// and wrapping that would open FallbackLimiter's circuit against a
+			// healthy Redis. Same exit as the sleep-cancel path below.
+			//
+			// Discriminate on ctx, never on the error alone: a
+			// DeadlineExceeded raised by the client's own ReadTimeout arrives
+			// while ctx is still alive, and that one IS a backend failure.
+			if ctx.Err() != nil &&
+				(errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
+				l.observeWait(engine, "canceled", start)
+				return nil, ctx.Err()
+			}
 			l.observeError("acquire")
 			// Wrapped so FallbackLimiter recognizes it and paces in process
 			// instead: an unwrapped error here would fail the crawl.
@@ -204,8 +226,12 @@ func (l *Limiter) bump(nextKey string, d time.Duration, op string) {
 	}
 }
 
+// keys names the two keys the acquire script takes for one host. The host is
+// braced as a Redis Cluster hash tag so both keys land in the same slot: a
+// multi-key EVALSHA across two slots is a CROSSSLOT error on every call, which
+// on a cluster would mean permanent, silent degradation to per-pod pacing.
 func (l *Limiter) keys(host string) (win, next string) {
-	base := l.cfg.Prefix + ":" + l.cfg.Scope + ":" + host
+	base := l.cfg.Prefix + ":" + l.cfg.Scope + ":{" + host + "}"
 	return base + ":win", base + ":next"
 }
 

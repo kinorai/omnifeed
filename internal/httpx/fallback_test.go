@@ -336,3 +336,27 @@ func TestFallbackLimiterPenalizeSkipsBackendsWithoutIt(t *testing.T) {
 		t.Fatalf("primary got penalties %v, want one", primary.penalties)
 	}
 }
+
+// While the circuit is open the primary is not penalized either: with Redis
+// down every penalty would spend a whole RedisTimeout in the response path,
+// for a key nothing is reading. The fallback is the one doing the pacing, and
+// it must still get the hold.
+func TestFallbackLimiterPenalizeSkipsThePrimaryWhileDegraded(t *testing.T) {
+	primary := &penalizingStub{stubLimiter: stubLimiter{name: "primary", err: ErrLimiterUnavailable}}
+	fallback := &penalizingStub{stubLimiter: stubLimiter{name: "fallback"}}
+	f := &FallbackLimiter{Primary: primary, Fallback: fallback, Cooldown: time.Hour}
+
+	// Open the circuit.
+	if _, err := f.Acquire(context.Background(), "reddit", "https://www.reddit.com/"); err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+
+	f.Penalize("https://www.reddit.com/", 42*time.Second)
+
+	if len(primary.penalties) != 0 {
+		t.Fatalf("primary got penalties %v while degraded, want none", primary.penalties)
+	}
+	if len(fallback.penalties) != 1 || fallback.penalties[0] != 42*time.Second {
+		t.Fatalf("fallback got penalties %v, want [42s]", fallback.penalties)
+	}
+}

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/kinorai/omnifeed/internal/httpx"
+	"github.com/redis/go-redis/v9"
 )
 
 // Acquire loops: it sleeps the wait Redis reported and retries, so a caller is
@@ -226,5 +227,181 @@ func TestPenalizeReportsBackendErrors(t *testing.T) {
 
 	if len(ops) != 1 || ops[0] != "penalize" {
 		t.Fatalf("OnError ops = %v, want [penalize]", ops)
+	}
+}
+
+// countingLimiter is the minimum httpx.Limiter a FallbackLimiter can fall back
+// to: it records how often it was asked.
+type countingLimiter struct {
+	mu    sync.Mutex
+	calls int
+}
+
+func (c *countingLimiter) Acquire(context.Context, string, string) (func(), error) {
+	c.mu.Lock()
+	c.calls++
+	c.mu.Unlock()
+	return func() {}, nil
+}
+
+func (c *countingLimiter) count() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.calls
+}
+
+// failingEval is a real client whose script calls fail with a scripted error,
+// optionally killing the caller's ctx first — the mid-EVALSHA cancellation
+// go-redis reports when a caller walks away while its call waits for a pool
+// turn or a retry backoff. miniredis cannot produce it: it always answers.
+// Everything else still reaches miniredis, so a test can prove nothing was
+// booked.
+type failingEval struct {
+	redis.UniversalClient
+	cancel func() // called before the failure, nil to leave the ctx alive
+	err    error
+}
+
+func (f *failingEval) EvalSha(ctx context.Context, _ string, _ []string, _ ...any) *redis.Cmd {
+	if f.cancel != nil {
+		f.cancel()
+	}
+	cmd := redis.NewCmd(ctx, "evalsha")
+	cmd.SetErr(f.err)
+	return cmd
+}
+
+// A caller that walks away mid-EVALSHA is not a Redis outage. The client reports
+// the caller's own dead ctx as its error, and wrapping that in
+// ErrLimiterUnavailable would open the fail-open circuit against a healthy
+// backend: 30s of per-pod pacing bought by a client disconnect. A timeout raised
+// by the client's OWN ReadTimeout arrives with the ctx still alive, and that one
+// is a real backend failure.
+func TestAcquireDiscriminatesCallerCancellationFromBackendFailure(t *testing.T) {
+	tests := []struct {
+		name      string
+		err       error
+		killCtx   bool
+		wantWrap  bool
+		wantWaits []string
+		wantOps   []string
+	}{
+		{
+			name:      "caller canceled mid-eval",
+			err:       context.Canceled,
+			killCtx:   true,
+			wantWaits: []string{"canceled"},
+		},
+		{
+			name:      "caller deadline expired mid-eval",
+			err:       context.DeadlineExceeded,
+			killCtx:   true,
+			wantWaits: []string{"canceled"},
+		},
+		{
+			name:     "client read timeout, caller still alive",
+			err:      context.DeadlineExceeded,
+			wantWrap: true,
+			wantOps:  []string{"acquire"},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			l, m, _ := newFixture(t, Config{MaxConcurrent: 4, MinDelay: time.Second})
+			win, next := l.keys("example.com")
+
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			fake := &failingEval{UniversalClient: l.cfg.Client, err: tc.err}
+			if tc.killCtx {
+				fake.cancel = cancel
+			}
+			l.cfg.Client = fake
+
+			var ops, waits []string
+			l.OnError = func(op string) { ops = append(ops, op) }
+			l.OnWait = func(_, outcome string, _ time.Duration) { waits = append(waits, outcome) }
+
+			_, err := l.Acquire(ctx, "crawl4ai", "https://example.com/a")
+			if tc.wantWrap {
+				if !errors.Is(err, httpx.ErrLimiterUnavailable) {
+					t.Fatalf("err = %v, want errors.Is ErrLimiterUnavailable", err)
+				}
+			} else {
+				if !errors.Is(err, context.Canceled) {
+					t.Fatalf("err = %v, want context.Canceled (the ctx error, unwrapped)", err)
+				}
+				if errors.Is(err, httpx.ErrLimiterUnavailable) {
+					t.Fatalf("err = %v, want it UNWRAPPED — a wrap opens the circuit", err)
+				}
+			}
+			if len(ops) != len(tc.wantOps) || (len(ops) == 1 && ops[0] != tc.wantOps[0]) {
+				t.Fatalf("OnError ops = %v, want %v", ops, tc.wantOps)
+			}
+			if len(waits) != len(tc.wantWaits) || (len(waits) == 1 && waits[0] != tc.wantWaits[0]) {
+				t.Fatalf("OnWait outcomes = %v, want %v", waits, tc.wantWaits)
+			}
+			// Nothing booked, either way: the script never ran.
+			if m.Exists(win) || m.Exists(next) {
+				t.Fatalf("keys written after a failed acquire: %v", m.Keys())
+			}
+			// And the slot is back, or the host stays wedged for good.
+			if sem := l.semFor("example.com"); len(sem) != 0 {
+				t.Fatalf("semaphore holds %d slots, want 0", len(sem))
+			}
+		})
+	}
+}
+
+// The same thing through the composite the wiring actually builds: a canceled
+// caller must leave the circuit CLOSED, so the next request still gets shared
+// pacing. The pass-through test in package httpx only stubs the error kind;
+// this drives a real redislimit primary.
+func TestCanceledCallerLeavesTheFallbackCircuitClosed(t *testing.T) {
+	primary, _, _ := newFixture(t, Config{MaxConcurrent: 4, MinDelay: time.Second})
+	fallback := &countingLimiter{}
+
+	var tried []string
+	primary.OnWait = func(_, outcome string, _ time.Duration) { tried = append(tried, outcome) }
+	var events []bool
+	f := &httpx.FallbackLimiter{
+		Primary:    primary,
+		Fallback:   fallback,
+		OnDegraded: func(down bool) { events = append(events, down) },
+	}
+
+	client := primary.cfg.Client
+	for i := range 2 {
+		ctx, cancel := context.WithCancel(context.Background())
+		primary.cfg.Client = &failingEval{UniversalClient: client, cancel: cancel, err: context.Canceled}
+		if _, err := f.Acquire(ctx, "crawl4ai", "https://example.com/a"); !errors.Is(err, context.Canceled) {
+			t.Fatalf("acquire %d: err = %v, want context.Canceled", i, err)
+		}
+		cancel()
+	}
+
+	if len(tried) != 2 {
+		t.Fatalf("the primary was consulted %d times (%v), want 2 — the circuit opened", len(tried), tried)
+	}
+	if fallback.count() != 0 {
+		t.Fatalf("fallback calls = %d, want 0 — a ctx error must not fail over", fallback.count())
+	}
+	if len(events) != 0 {
+		t.Fatalf("OnDegraded events = %v, want none", events)
+	}
+}
+
+// Both keys of one host must share a Redis Cluster hash slot, or every
+// multi-key EVALSHA is a CROSSSLOT error and pacing degrades to per-pod
+// silently and permanently.
+func TestKeysBraceTheHostForClusterSlots(t *testing.T) {
+	l, _, _ := newFixture(t, Config{})
+
+	win, next := l.keys("news.ycombinator.com")
+	if win != "omnifeed:ratelimit:test:{news.ycombinator.com}:win" {
+		t.Fatalf("win key = %q", win)
+	}
+	if next != "omnifeed:ratelimit:test:{news.ycombinator.com}:next" {
+		t.Fatalf("next key = %q", next)
 	}
 }

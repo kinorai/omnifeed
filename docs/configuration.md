@@ -68,6 +68,17 @@ alone breaks those four.
 | `OMNIFEED_LOG_FORMAT` | `json` | `json` or `text` |
 | `OMNIFEED_ENABLE_PPROF` | `false` | Expose `/debug/pprof/*` (opt-in) |
 
+### Retry-After propagation
+
+An upstream that answers `429` or `503` with a `Retry-After` header is telling
+omnifeed to back off, so the answer outlives the request that got it: the host is
+held back for that duration, capped at 5 minutes, across later requests — and
+across replicas when `OMNIFEED_REDIS_URL` is set. This applies with and without
+Redis, and only to upstreams an engine calls directly (the crawled site's own
+`Retry-After` is invisible behind crawl4ai). A held host makes the next callers
+wait, each bounded by its own request budget — the engine timeouts, about 30s, or
+`MaxWait` for a search, 15s — and then time out normally.
+
 ## Controlling fetched content size
 
 A long article can overflow an MCP client's per-response budget, at which point the client spools the text to a file and the model never reads it. So `fetch_url` caps **markdown** content at `OMNIFEED_FETCH_MAX_CHARS` (120000 by default, `0` = unlimited) and, when it cuts, ends the reply with a resumable marker:
@@ -125,7 +136,7 @@ Served on `OMNIFEED_METRICS_ADDR` (default `:9090`) at `/metrics`, alongside the
 | `omnifeed_domain_limiter_wait_seconds` | histogram | `engine, outcome` | Time blocked in per-domain limiter acquisition (semaphore + politeness delay); `outcome="canceled"` = the wait died in the queue |
 | `omnifeed_ratelimit_backend_errors_total` | counter | `op` | Failed Redis operations in the distributed limiter: `acquire` (the limiter then paces in process), `release` or `penalize` (both cost pacing accuracy only) |
 | `omnifeed_ratelimit_penalties_total` | counter | `upstream` | Upstream `Retry-After` headers (on 429 or 503) fed back into the limiters as a hold on that host — the signal that precedes a CAPTCHA or a block |
-| `omnifeed_ratelimit_degraded` | gauge | — | `1` while pacing is degraded to per-pod limits because Redis is unreachable, `0` while it is shared (and always `0` when `OMNIFEED_REDIS_URL` is unset) |
+| `omnifeed_ratelimit_degraded` | gauge | `scope` | `1` while pacing is degraded to per-pod limits because Redis is unreachable, `0` while it is shared (and always `0` when `OMNIFEED_REDIS_URL` is unset). One series per limiter scope (`domain` for crawling, `searxng` for queries) — each degrades and recovers on its own |
 | `omnifeed_response_chars` | histogram | `engine` | Extracted content length (pre-truncation — the engine's output, before any transport `max_chars` clipping), successful crawls only |
 | `omnifeed_engine_fallbacks_total` | counter | `from_engine, reason` | Dedicated-engine failures re-crawled via the generic fallback |
 | `omnifeed_searxng_unresponsive_engines_total` | counter | `engine, error` | Engines SearXNG reported unresponsive per search; `error` normalized to a closed set (`timeout`, `captcha`, `suspended`, `too_many_requests`, `access_denied`, `error`, `unknown`) |
