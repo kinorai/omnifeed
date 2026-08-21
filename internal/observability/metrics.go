@@ -22,7 +22,7 @@ type Metrics struct {
 	LimiterWaitSecs     *prometheus.HistogramVec // engine
 	RatelimitErrors     *prometheus.CounterVec   // op
 	RatelimitPenalties  *prometheus.CounterVec   // upstream
-	RatelimitDegraded   prometheus.Gauge
+	RatelimitDegraded   *prometheus.GaugeVec     // scope
 	ResponseChars       *prometheus.HistogramVec // engine
 	EngineFallbacks     *prometheus.CounterVec   // from_engine, reason
 	SearxngUnresponsive *prometheus.CounterVec   // engine, error
@@ -81,10 +81,10 @@ func NewMetrics() *Metrics {
 			Name: "omnifeed_ratelimit_penalties_total",
 			Help: "Upstream Retry-After headers (on 429 or 503) fed back into the limiters as a hold on that host, by upstream. Rising means an upstream is telling omnifeed to slow down — the signal that precedes a CAPTCHA or a block.",
 		}, []string{"upstream"}),
-		RatelimitDegraded: prometheus.NewGauge(prometheus.GaugeOpts{
+		RatelimitDegraded: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "omnifeed_ratelimit_degraded",
-			Help: "1 while pacing is degraded to per-pod limits because the Redis backend is unreachable, 0 while it is shared. Always 0 when distributed rate limiting is off (OMNIFEED_REDIS_URL unset).",
-		}),
+			Help: "1 while pacing is degraded to per-pod limits because the Redis backend is unreachable, 0 while it is shared, by limiter scope. Always 0 when distributed rate limiting is off (OMNIFEED_REDIS_URL unset).",
+		}, []string{"scope"}),
 		ResponseChars: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name:    "omnifeed_response_chars",
 			Help:    "Extracted content length in characters on successful crawls, pre-truncation (the engine's output, not what a transport delivered after max_chars) — comparable across transports, the quality guard for scrape-option changes.",
@@ -201,12 +201,16 @@ func (m *Metrics) ObserveRatelimitPenalty(upstream string) {
 // SetRatelimitDegraded records whether pacing is currently degraded to per-pod
 // limits because the Redis backend is unreachable. Wired as the
 // FallbackLimiter's OnDegraded hook, which fires on transitions only.
-func (m *Metrics) SetRatelimitDegraded(down bool) {
+//
+// Keyed by scope ("domain" or "searxng"): each scope has its own
+// FallbackLimiter and degrades on its own, so one recovering must not zero the
+// other's signal.
+func (m *Metrics) SetRatelimitDegraded(scope string, down bool) {
 	v := 0.0
 	if down {
 		v = 1
 	}
-	m.RatelimitDegraded.Set(v)
+	m.RatelimitDegraded.WithLabelValues(scope).Set(v)
 }
 
 // ObserveResponseChars records the character count of a successful crawl's

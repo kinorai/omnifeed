@@ -10,6 +10,8 @@ import (
 	"github.com/kinorai/omnifeed/internal/httpx"
 	"github.com/kinorai/omnifeed/internal/httpx/redislimit"
 	"github.com/kinorai/omnifeed/internal/observability"
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -140,4 +142,39 @@ func TestRetryAfterHookCapsThePenalty(t *testing.T) {
 func TestRetryAfterHookWithoutALimiter(t *testing.T) {
 	hook := retryAfterHook(nil, observability.NewMetrics())
 	hook("searxng", "http://searxng:8080/search", time.Second)
+}
+
+// crawl4ai is a proxy: the request that gets the 429 goes to the crawl4ai
+// endpoint, while the limiter paced the target site's host. Penalizing would
+// hold back a host no limiter reads, and the counter must not claim a penalty
+// that never happened.
+func TestRetryAfterHookSkipsTheCrawl4aiProxy(t *testing.T) {
+	metrics := observability.NewMetrics()
+	p := &stubPacer{}
+	hook := retryAfterHook(p, metrics)
+
+	hook("crawl4ai", "http://crawl4ai:11235/crawl", time.Minute)
+
+	if len(p.penalties) != 0 {
+		t.Fatalf("penalties = %v, want none — the paced host is not the one that answered", p.penalties)
+	}
+	if got := counterValue(t, metrics.RatelimitPenalties.WithLabelValues("crawl4ai")); got != 0 {
+		t.Fatalf("omnifeed_ratelimit_penalties_total{upstream=crawl4ai} = %v, want 0", got)
+	}
+
+	// Every other upstream is an engine's own call, and still penalized.
+	hook("hackernews", "https://news.ycombinator.com/item?id=1", time.Minute)
+	if len(p.penalties) != 1 {
+		t.Fatalf("penalties = %v, want one", p.penalties)
+	}
+}
+
+// counterValue reads a CounterVec child's current value.
+func counterValue(t *testing.T, c prometheus.Counter) float64 {
+	t.Helper()
+	var dm dto.Metric
+	if err := c.Write(&dm); err != nil {
+		t.Fatal(err)
+	}
+	return dm.GetCounter().GetValue()
 }

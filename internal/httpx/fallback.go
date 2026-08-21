@@ -26,6 +26,14 @@ const defaultLimiterCooldown = 30 * time.Second
 // later one are served by Fallback until Cooldown elapses, then the next
 // acquire probes Primary again. Context errors are the caller's own timeout,
 // not backend health, so they pass through and leave the circuit alone.
+//
+// Two costs of failing open, both accepted. Fallback keeps its own state, so a
+// failover lands on a COLD local window (no lastSend, no admissions recorded):
+// the first moments of degradation can burst up to the local limits on top of
+// what Redis already admitted in the same window. It is transient and bounded by
+// the per-pod settings. And the probe is not one request: every concurrent
+// caller passes primaryReady once the cooldown expires, so a dead Redis costs N
+// concurrent timeouts per cooldown, not exactly one.
 type FallbackLimiter struct {
 	Primary  Limiter
 	Fallback Limiter
@@ -81,10 +89,16 @@ func (f *FallbackLimiter) Acquire(ctx context.Context, engine, rawURL string) (f
 // which is exactly when an upstream that is already refusing traffic gets hit
 // with per-pod pacing.
 //
+// The primary is skipped while the circuit is open, for the same reason acquires
+// skip it: with Redis down every penalty would otherwise spend a whole
+// RedisTimeout in the response path. The fallback is penalized always.
+//
 // A backend that cannot be penalized is skipped rather than refused, so a test
 // stub or a future Limiter without the method still composes.
 func (f *FallbackLimiter) Penalize(rawURL string, d time.Duration) {
-	penalize(f.Primary, rawURL, d)
+	if f.primaryReady() {
+		penalize(f.Primary, rawURL, d)
+	}
 	penalize(f.Fallback, rawURL, d)
 }
 
@@ -100,7 +114,9 @@ func penalize(l Limiter, rawURL string, d time.Duration) {
 }
 
 // primaryReady reports whether Primary should be tried: either the circuit is
-// closed, or the cooldown has expired and this call is the probe.
+// closed, or the cooldown has expired and Primary is due for a probe. It admits
+// every concurrent caller, not one — the probe is a window, not a single
+// request.
 func (f *FallbackLimiter) primaryReady() bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()

@@ -428,6 +428,14 @@ const retryAfterCap = 5 * time.Minute
 // penalty would write a key nothing reads.
 func retryAfterHook(p pacer, metrics *observability.Metrics) func(upstream, rawURL string, wait time.Duration) {
 	return func(upstream, rawURL string, wait time.Duration) {
+		// crawl4ai is a proxy, so the two URLs are different hosts: the request
+		// URL is the crawl4ai endpoint, the URL the limiter paced is the target
+		// site. Penalizing here would hold back a host no limiter ever reads,
+		// and the crawled site's own 429 never reaches us anyway. No penalty
+		// happened, so the counter must not claim one either.
+		if upstream == "crawl4ai" {
+			return
+		}
 		if p != nil {
 			p.Penalize(rawURL, min(wait, retryAfterCap))
 		}
@@ -491,7 +499,7 @@ func buildLimiter(scope string, rdb redis.UniversalClient, local *httpx.DomainLi
 		Primary:  primary,
 		Fallback: local,
 		OnDegraded: func(down bool) {
-			metrics.SetRatelimitDegraded(down)
+			metrics.SetRatelimitDegraded(scope, down)
 			if down {
 				logger.Warn("rate limiting degraded to per-pod pacing (redis unreachable)", "scope", scope)
 				return
