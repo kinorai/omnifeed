@@ -20,6 +20,9 @@ type Metrics struct {
 	RequestSecs         *prometheus.HistogramVec // engine, status, reason
 	UpstreamSecs        *prometheus.HistogramVec // upstream, op, status
 	LimiterWaitSecs     *prometheus.HistogramVec // engine
+	RatelimitErrors     *prometheus.CounterVec   // op
+	RatelimitPenalties  *prometheus.CounterVec   // upstream
+	RatelimitDegraded   prometheus.Gauge
 	ResponseChars       *prometheus.HistogramVec // engine
 	EngineFallbacks     *prometheus.CounterVec   // from_engine, reason
 	SearxngUnresponsive *prometheus.CounterVec   // engine, error
@@ -65,6 +68,23 @@ func NewMetrics() *Metrics {
 			// to the caller's deadline (90s crawl timeouts), well past 20s.
 			Buckets: prometheus.ExponentialBuckets(0.01, 2, 14),
 		}, []string{"engine", "outcome"}),
+		// The distributed limiter's backend is a single point of failure, so it
+		// fails open: these two say when that happened, since no crawl ever
+		// fails because of it and no `reason` label ever changes.
+		RatelimitErrors: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "omnifeed_ratelimit_backend_errors_total",
+			Help: `Failed Redis operations in the distributed rate limiter, by operation: op="acquire" (the admission attempt — the limiter then paces in process), op="release" (the completion bump) or op="penalize" (an upstream Retry-After hold); the latter two cost pacing accuracy only.`,
+		}, []string{"op"}),
+		// The upstream label, never the host: hosts are unbounded, upstreams are
+		// the closed set this client already labels its attempts with.
+		RatelimitPenalties: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "omnifeed_ratelimit_penalties_total",
+			Help: "Upstream Retry-After headers (on 429 or 503) fed back into the limiters as a hold on that host, by upstream. Rising means an upstream is telling omnifeed to slow down — the signal that precedes a CAPTCHA or a block.",
+		}, []string{"upstream"}),
+		RatelimitDegraded: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "omnifeed_ratelimit_degraded",
+			Help: "1 while pacing is degraded to per-pod limits because the Redis backend is unreachable, 0 while it is shared. Always 0 when distributed rate limiting is off (OMNIFEED_REDIS_URL unset).",
+		}),
 		ResponseChars: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name:    "omnifeed_response_chars",
 			Help:    "Extracted content length in characters on successful crawls, pre-truncation (the engine's output, not what a transport delivered after max_chars) — comparable across transports, the quality guard for scrape-option changes.",
@@ -119,7 +139,8 @@ func NewMetrics() *Metrics {
 		}, []string{"engine"}),
 	}
 	reg.MustRegister(m.RequestsTotal, m.RequestAttempts, m.RequestSecs, m.UpstreamSecs,
-		m.LimiterWaitSecs, m.ResponseChars, m.EngineFallbacks, m.SearxngUnresponsive,
+		m.LimiterWaitSecs, m.RatelimitErrors, m.RatelimitPenalties, m.RatelimitDegraded,
+		m.ResponseChars, m.EngineFallbacks, m.SearxngUnresponsive,
 		m.SearxngEngineHits, m.SearxngEmpty,
 		m.RedditRounds, m.SearchesTotal, m.SearchSecs,
 		m.SearchEnginePos, m.SearchEngineUnique)
@@ -161,6 +182,31 @@ func (m *Metrics) ObserveUpstream(upstream, op, status string, duration time.Dur
 // "acquired" or "canceled" (the wait died in the queue).
 func (m *Metrics) ObserveLimiterWait(engine, outcome string, duration time.Duration) {
 	m.LimiterWaitSecs.WithLabelValues(engine, outcome).Observe(duration.Seconds())
+}
+
+// ObserveRatelimitBackendError counts one failed Redis operation in the
+// distributed limiter. op is "acquire" or "release". Wired as the redis
+// limiter's OnError hook.
+func (m *Metrics) ObserveRatelimitBackendError(op string) {
+	m.RatelimitErrors.WithLabelValues(op).Inc()
+}
+
+// ObserveRatelimitPenalty counts one upstream Retry-After fed back into the
+// limiters as a hold on that host. upstream is the client's own upstream label,
+// never the host — hosts are unbounded.
+func (m *Metrics) ObserveRatelimitPenalty(upstream string) {
+	m.RatelimitPenalties.WithLabelValues(upstream).Inc()
+}
+
+// SetRatelimitDegraded records whether pacing is currently degraded to per-pod
+// limits because the Redis backend is unreachable. Wired as the
+// FallbackLimiter's OnDegraded hook, which fires on transitions only.
+func (m *Metrics) SetRatelimitDegraded(down bool) {
+	v := 0.0
+	if down {
+		v = 1
+	}
+	m.RatelimitDegraded.Set(v)
 }
 
 // ObserveResponseChars records the character count of a successful crawl's

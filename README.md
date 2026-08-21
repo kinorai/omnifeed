@@ -123,6 +123,8 @@ Everything is configured with `OMNIFEED_`-prefixed environment variables. In pra
 
 The full reference lives in **[docs/configuration.md](docs/configuration.md)** — every variable, content-size control (resumable `max_chars` / `start_char` truncation on `fetch_url`), infinite-scroll fetching, Reddit size knobs, and Prometheus metrics.
 
+**Running more than one replica?** Set `OMNIFEED_REDIS_URL` and the rate limiters share their state through Redis, so the whole deployment obeys one limit instead of one limit per pod (N replicas otherwise send N times the configured rate, which is what upstream search engines notice). It is opt-in and fail-open: unset, every replica paces in its own memory exactly as before, and if Redis becomes unreachable the limiters fall straight back to that in-process pacing rather than failing a crawl.
+
 <img src="https://user-images.githubusercontent.com/74038190/212284100-561aa473-3905-4a80-b561-0d28506553ee.gif" width="100%">
 
 ## <img src="https://raw.githubusercontent.com/Tarikul-Islam-Anik/Animated-Fluent-Emojis/master/Emojis/Travel%20and%20places/Building%20Construction.png" width="26" height="26" /> Architecture
