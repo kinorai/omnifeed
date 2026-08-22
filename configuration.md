@@ -133,6 +133,22 @@ A Reddit thread's comment tree can be huge. The size knobs come in two kinds —
 
 Rule of thumb: reach for the **upstream params** to fetch less from Reddit; reach for the **engine caps** when you need a guaranteed ceiling — `OMNIFEED_REDDIT_MAX_ROUNDS` expansion adds comments on top of `limit`, so only the caps bound the final total. All five are also per-request on the `fetch_url` MCP tool (`limit`, `depth`, `sort`, `max_comments`, `max_top_level`); a positive value overrides the env default. All five are **thread** knobs: a subreddit listing has no comment tree, and takes its post count and time window from the URL itself instead — `?limit=` (1–100, default 25) and `?t=hour|day|week|month|year|all` (on `top`/`controversial`, which are the only sorts Reddit applies it to).
 
+## Controlling Hacker News response size
+
+A Hacker News megathread is shaped very differently from a Reddit thread: the Algolia item API returns the **whole** tree in one response, and the top-level subtree sizes are wildly skewed (one measured thread: 105, 55, 16, 13, 12, 11, 10, 6, … over 62 top-level threads). So there are no upstream params to forward — only omnifeed caps, applied after the fetch, all three per-request on the `fetch_url` MCP tool:
+
+| Param | Default | Purpose |
+|---|---|---|
+| `max_per_subtree` | unlimited | Max comments kept inside **each** top-level thread, counting that thread's root comment. Selection is breadth-first per thread, so a thread contributes its root and shallow replies before its deep tail. |
+| `max_top_level` | unlimited | Keep the first N top-level threads (in HN's order) with all their replies. |
+| `max_comments` | 500 | Absolute ceiling on the flat comment list, applied last. A caller value can only lower the 500 engine ceiling, never raise it. |
+
+Reach for `max_per_subtree` first: it is the cap that matches the mega-thread shape. Measured on two real threads, `max_per_subtree=12` returned ~56% and ~47% of the full-tree bytes while keeping 9/12 and 11/14 of the comments a human reader rated substantive — a flat `max_comments` truncation instead spends most of its budget inside the single biggest branch (at 100 comments it covered 4 of 62 top-level threads, 72% of them in one subtree).
+
+There is deliberately **no depth cap for Hacker News**. Depth carries no quality signal there — the single most valuable comment in both measured threads sat at depth 7, and adding `depth<=5` on top of a subtree cap cost real content while saving under 1k characters out of 84k. The `depth` and `sort` params stay Reddit-only, and are ignored on an HN URL.
+
+Output order is never reordered by a cap: survivors stay in the order HN returned them, and because breadth-first selection keeps a comment's ancestors before the comment itself, the `parent_id` chain in the output is never broken.
+
 ## Reddit anti-bot handling
 
 Reddit's edge 403-blocks non-browser HTTP clients (it fingerprints the TLS/JA3 handshake), so the Reddit engine never calls Reddit directly. It drives a **real headless browser** to a `www.reddit.com` page (which clears the bot wall), then runs a **same-origin `fetch()`** of the `.json` and `/api/morechildren` endpoints from inside that page. No Reddit auth, cookies, or API key. By default the browser is crawl4ai, reached through its token-gated **`POST /execute_js`** endpoint, so the upstream must run with `CRAWL4AI_EXECUTE_JS_ENABLED=true` and `OMNIFEED_CRAWL4AI_TOKEN` set to its `CRAWL4AI_API_TOKEN`.
