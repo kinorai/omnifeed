@@ -12,6 +12,7 @@ import (
 
 	"github.com/kinorai/omnifeed/internal/domain"
 	"github.com/kinorai/omnifeed/internal/engine"
+	"github.com/kinorai/omnifeed/internal/engine/hackernews"
 	"github.com/kinorai/omnifeed/internal/engine/reddit"
 	"github.com/kinorai/omnifeed/internal/observability"
 	"github.com/kinorai/omnifeed/internal/transport/mcp"
@@ -62,34 +63,47 @@ func FetchURL(reg *engine.Registry, defaults reddit.Options, metrics *observabil
 				},
 				"format": map[string]any{
 					"type":        "string",
-					"description": "Reddit-only: 'toon' (default, token-efficient) or 'json'.",
+					"description": "Reddit only (ignored elsewhere): 'toon' (default, token-efficient) or 'json'.",
 					"enum":        []string{"toon", "json"},
 				},
 				"expand": map[string]any{
 					"type":        "integer",
-					"description": "Reddit-only: number of /api/morechildren expansion rounds (0-40).",
+					"description": "Reddit only (ignored elsewhere): number of /api/morechildren expansion rounds (0-40).",
 				},
 				"limit": map[string]any{
 					"type": "integer",
-					"description": "Reddit threads only: max comments to fetch in the initial tree (Reddit `limit`). " +
+					"description": "Reddit threads only (ignored elsewhere): max comments to fetch in the initial tree (Reddit `limit`). " +
 						"It does not apply to subreddit listings — those take their post count from the URL's own `?limit=`.",
 				},
 				"depth": map[string]any{
-					"type":        "integer",
-					"description": "Reddit-only: max nesting depth of the comment tree (Reddit `depth`).",
+					"type": "integer",
+					"description": "Reddit only (ignored elsewhere — Hacker News included): max nesting depth of the comment tree " +
+						"(Reddit `depth`). There is deliberately no depth cap for Hacker News: HN's best comments are often deep in " +
+						"a branch, so use max_per_subtree to bound an HN thread instead.",
 				},
 				"sort": map[string]any{
 					"type":        "string",
-					"description": "Reddit-only: comment sort order ('confidence' = best).",
+					"description": "Reddit only (ignored elsewhere): comment sort order ('confidence' = best).",
 					"enum":        domain.ValidRedditSorts,
 				},
 				"max_comments": map[string]any{
-					"type":        "integer",
-					"description": "Reddit-only: hard cap on total comments after expansion (0 = unlimited).",
+					"type": "integer",
+					"description": "Reddit and Hacker News threads: hard cap on total comments emitted (0 = engine default; " +
+						"Reddit unlimited, Hacker News " + strconv.Itoa(hackernews.MaxThreadComments) + "). Applied last, after the " +
+						"structural caps below.",
 				},
 				"max_top_level": map[string]any{
-					"type":        "integer",
-					"description": "Reddit-only: hard cap on top-level comment threads (0 = unlimited).",
+					"type": "integer",
+					"description": "Reddit and Hacker News threads: hard cap on top-level comment threads, kept with all their " +
+						"replies (0 = unlimited).",
+				},
+				"max_per_subtree": map[string]any{
+					"type": "integer",
+					"description": "Hacker News threads only (ignored elsewhere): max comments kept inside EACH top-level thread, " +
+						"counting that thread's own root comment (0 = unlimited). Selection is breadth-first per thread — root and " +
+						"shallow replies before the deep tail — and output keeps HN's original order. This is the knob to reach for " +
+						"on a big HN thread: 12 measured at ~50% of the full-tree bytes while keeping most of the substantive " +
+						"comments, whereas max_comments alone spends the whole budget on the first branch.",
 				},
 				"max_chars": map[string]any{
 					"type": "integer",
@@ -149,11 +163,18 @@ func crawlHandler(reg *engine.Registry, defaults reddit.Options, metrics *observ
 		if s, isString := args["sort"].(string); isString && domain.ValidRedditSort(s) {
 			opts.RedditSort = s
 		}
+		// max_comments / max_top_level are shared by the Reddit and Hacker News
+		// engines: one caller-facing param, one field per engine.
 		if mc, isNumber := args["max_comments"].(float64); isNumber && mc >= 0 {
 			opts.RedditMaxComments = int(mc)
+			opts.HNMaxComments = int(mc)
 		}
 		if mt, isNumber := args["max_top_level"].(float64); isNumber && mt >= 0 {
 			opts.RedditMaxTopLevel = int(mt)
+			opts.HNMaxTopLevel = int(mt)
+		}
+		if mps, isNumber := args["max_per_subtree"].(float64); isNumber && mps >= 0 {
+			opts.HNMaxPerSubtree = int(mps)
 		}
 		if sfp, isBool := args["scan_full_page"].(bool); isBool {
 			opts.ScanFullPage = &sfp

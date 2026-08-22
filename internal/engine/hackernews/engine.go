@@ -17,11 +17,15 @@ import (
 )
 
 const (
-	defaultAPIBase    = "https://hn.algolia.com/api/v1"
-	frontPageSize     = 30
-	defaultTimeout    = 30 * time.Second // wall-clock budget per HN crawl
-	maxThreadComments = 500              // cap emitted comments so a megathread can't blow the consumer's context
+	defaultAPIBase = "https://hn.algolia.com/api/v1"
+	frontPageSize  = 30
+	defaultTimeout = 30 * time.Second // wall-clock budget per HN crawl
 )
+
+// MaxThreadComments is the ceiling on comments emitted for one thread, so a
+// megathread can't blow the consumer's context. A caller's max_comments can only
+// lower it. Exported because the fetch_url tool schema states the number.
+const MaxThreadComments = 500
 
 // hostMatcher matches news.ycombinator.com and its subdomains.
 var hostMatcher = httpx.HostMatcher("news.ycombinator.com")
@@ -126,7 +130,7 @@ func parseTarget(rawURL string) (target, bool) {
 
 // Crawl fetches the HN item or feed behind rawURL from the Algolia API and
 // returns it encoded as TOON.
-func (e *Engine) Crawl(ctx context.Context, rawURL string, _ domain.EngineOptions) (domain.Document, error) {
+func (e *Engine) Crawl(ctx context.Context, rawURL string, eo domain.EngineOptions) (domain.Document, error) {
 	t, ok := parseTarget(rawURL)
 	if !ok {
 		return domain.Document{}, fmt.Errorf("unsupported hacker news url: %s", rawURL)
@@ -155,9 +159,13 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, _ domain.EngineOption
 			return domain.Document{}, &domain.FetchError{Kind: domain.KindBadResponse, Err: fmt.Errorf("parse item: %w", perr)}
 		}
 		meta := map[string]string{"id": t.id}
-		// Cap emitted comments (pre-order DFS, so the deepest/tail go first) to bound output.
-		if total := len(thread.Comments); total > maxThreadComments {
-			thread.Comments = thread.Comments[:maxThreadComments]
+		total := len(thread.Comments)
+		// Caps in structural order: whole threads first, then breadth inside each
+		// kept thread, then the absolute ceiling on the flat list.
+		capTopLevel(&thread, eo.HNMaxTopLevel)
+		capPerSubtree(&thread, eo.HNMaxPerSubtree)
+		capComments(&thread, commentCeiling(eo.HNMaxComments))
+		if len(thread.Comments) < total {
 			meta["truncated_from"] = strconv.Itoa(total)
 		}
 		meta["comments"] = strconv.Itoa(len(thread.Comments))
@@ -180,6 +188,17 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, _ domain.EngineOption
 		"feed":    t.feed,
 		"stories": strconv.Itoa(len(fp.Stories)),
 	})
+}
+
+// commentCeiling resolves the absolute cap on emitted comments: the caller's
+// max_comments when it asks for fewer, otherwise MaxThreadComments. The engine
+// ceiling always wins over a larger caller value — it exists so a megathread
+// can't blow the consumer's context no matter what was asked for.
+func commentCeiling(requested int) int {
+	if requested > 0 {
+		return min(requested, MaxThreadComments)
+	}
+	return MaxThreadComments
 }
 
 // get fetches an Algolia API URL and returns the raw JSON body.

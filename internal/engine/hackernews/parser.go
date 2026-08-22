@@ -119,3 +119,127 @@ func parseFrontPage(raw []byte, feed string) (FrontPage, error) {
 	}
 	return FrontPage{Feed: feed, Stories: stories}, nil
 }
+
+// subtreeIndex records, for every emitted comment, the top-level comment its
+// branch hangs under (root) and its depth below that root (the root is 0).
+type subtreeIndex struct {
+	root  map[int]int
+	depth map[int]int
+}
+
+// indexSubtrees builds the subtreeIndex for a flattened comment list. A comment
+// whose parent is not itself an emitted comment is its own root: that covers the
+// story's direct replies (their parent is the story) and live replies under a
+// skipped deleted parent, so no comment is ever left without a root.
+// flattenComments emits pre-order, so a single forward pass always sees a
+// parent before its children.
+func indexSubtrees(comments []Comment) subtreeIndex {
+	idx := subtreeIndex{
+		root:  make(map[int]int, len(comments)),
+		depth: make(map[int]int, len(comments)),
+	}
+	for _, c := range comments {
+		if r, ok := idx.root[c.ParentID]; ok {
+			idx.root[c.ID] = r
+			idx.depth[c.ID] = idx.depth[c.ParentID] + 1
+			continue
+		}
+		idx.root[c.ID] = c.ID
+		idx.depth[c.ID] = 0
+	}
+	return idx
+}
+
+// keepOnly drops every comment whose id is not in kept, preserving the original
+// document order of the survivors.
+func keepOnly(t *Thread, kept map[int]bool) {
+	filtered := t.Comments[:0]
+	for _, c := range t.Comments {
+		if kept[c.ID] {
+			filtered = append(filtered, c)
+		}
+	}
+	t.Comments = filtered
+}
+
+// capTopLevel keeps only the first n top-level threads (in the order HN returns
+// them) and every reply beneath them, dropping the rest (0 = unlimited).
+func capTopLevel(t *Thread, n int) {
+	if n <= 0 {
+		return
+	}
+	idx := indexSubtrees(t.Comments)
+	keptRoots := make(map[int]bool, n)
+	roots := 0
+	for _, c := range t.Comments {
+		if idx.root[c.ID] != c.ID {
+			continue
+		}
+		if roots < n {
+			keptRoots[c.ID] = true
+		}
+		roots++
+	}
+	if roots <= n {
+		return // fewer top-level threads than the cap — nothing to drop
+	}
+	kept := make(map[int]bool, len(t.Comments))
+	for _, c := range t.Comments {
+		if keptRoots[idx.root[c.ID]] {
+			kept[c.ID] = true
+		}
+	}
+	keepOnly(t, kept)
+}
+
+// capPerSubtree keeps at most n comments inside each top-level thread, counting
+// the thread's root comment, and drops the rest (0 = unlimited). This is the cap
+// that fits HN's mega-thread shape: subtree sizes are wildly skewed (one measured
+// thread ran 105, 55, 16, 13, … over 62 top-level threads), so a flat total cap
+// spends nearly the whole budget on the first branch, while a per-subtree cap
+// buys breadth across the discussion.
+//
+// Selection inside a subtree is breadth-first — the root and its shallow replies
+// before the deep tail — because depth-first would again pour the budget into one
+// branch. Depth carries no signal on HN (the most-cited comment in both measured
+// threads sat at depth 7), so this engine caps breadth and never depth.
+// Breadth-first also means a kept reply always has its ancestors kept, so the cut
+// cannot orphan a comment from its parent_id. Output order is untouched: the
+// survivors stay in the order HN returned them.
+func capPerSubtree(t *Thread, n int) {
+	if n <= 0 {
+		return
+	}
+	idx := indexSubtrees(t.Comments)
+	maxDepth := 0
+	for _, d := range idx.depth {
+		if d > maxDepth {
+			maxDepth = d
+		}
+	}
+	kept := make(map[int]bool, len(t.Comments))
+	perRoot := make(map[int]int, len(t.Comments))
+	for d := 0; d <= maxDepth; d++ {
+		for _, c := range t.Comments {
+			if idx.depth[c.ID] != d {
+				continue
+			}
+			r := idx.root[c.ID]
+			if perRoot[r] >= n {
+				continue
+			}
+			perRoot[r]++
+			kept[c.ID] = true
+		}
+	}
+	keepOnly(t, kept)
+}
+
+// capComments truncates the flat comment list to at most n entries, preserving
+// order. The list is pre-order, so ancestors precede their descendants and a
+// prefix cut never orphans a kept reply from a dropped parent.
+func capComments(t *Thread, n int) {
+	if n > 0 && len(t.Comments) > n {
+		t.Comments = t.Comments[:n]
+	}
+}

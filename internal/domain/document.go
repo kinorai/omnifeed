@@ -30,6 +30,13 @@ type EngineOptions struct {
 	RedditMaxComments int    // hard cap on total comments emitted (0 = unlimited)
 	RedditMaxTopLevel int    // hard cap on top-level threads (0 = unlimited)
 
+	// Hacker News-specific. The HN engine has no upstream size params to
+	// forward (Algolia serves the whole tree in one response), so these are all
+	// post-fetch caps on what gets emitted.
+	HNMaxComments   int // hard cap on total comments emitted (0 = engine default)
+	HNMaxTopLevel   int // hard cap on top-level threads (0 = unlimited)
+	HNMaxPerSubtree int // hard cap on comments kept within each top-level thread (0 = unlimited)
+
 	// Generic-crawl (crawl4ai fallback) knobs.
 	//
 	// ScanFullPage scrolls the whole page before extraction so append-style

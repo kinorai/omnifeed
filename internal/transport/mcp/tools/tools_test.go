@@ -274,3 +274,36 @@ func TestFetchURL_ScanFullPageArg(t *testing.T) {
 		t.Errorf("scan_full_page=false: ScanFullPage = %v, want false", got.ScanFullPage)
 	}
 }
+
+// The comment-cap arguments must reach BOTH engines: max_comments/max_top_level
+// are shared by Reddit and Hacker News, and max_per_subtree is HN-only. They
+// used to be forwarded to Reddit alone, so an HN fetch silently ignored them.
+func TestFetchURL_CommentCapArgs(t *testing.T) {
+	var got domain.EngineOptions
+	reg := engine.New().Fallback(optsCapturingEngine{got: &got})
+	tool := FetchURL(reg, reddit.Options{}, nil, 0)
+
+	if _, err := tool.Handle(context.Background(), map[string]any{
+		"url":             "https://news.ycombinator.com/item?id=1",
+		"max_comments":    float64(40),
+		"max_top_level":   float64(3),
+		"max_per_subtree": float64(12),
+	}); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if got.RedditMaxComments != 40 || got.HNMaxComments != 40 {
+		t.Errorf("max_comments: reddit=%d hn=%d, want 40/40", got.RedditMaxComments, got.HNMaxComments)
+	}
+	if got.RedditMaxTopLevel != 3 || got.HNMaxTopLevel != 3 {
+		t.Errorf("max_top_level: reddit=%d hn=%d, want 3/3", got.RedditMaxTopLevel, got.HNMaxTopLevel)
+	}
+	if got.HNMaxPerSubtree != 12 {
+		t.Errorf("max_per_subtree: hn=%d, want 12", got.HNMaxPerSubtree)
+	}
+
+	// max_per_subtree must be declared in the schema, or no caller can pass it.
+	props := tool.InputSchema["properties"].(map[string]any)
+	if _, ok := props["max_per_subtree"]; !ok {
+		t.Error("max_per_subtree missing from input schema")
+	}
+}
