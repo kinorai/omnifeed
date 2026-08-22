@@ -2,10 +2,12 @@ package hackernews
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -201,5 +203,79 @@ func TestCrawlParseError(t *testing.T) {
 	var fe *domain.FetchError
 	if !errors.As(err, &fe) || fe.Kind != domain.KindBadResponse {
 		t.Fatalf("want KindBadResponse, got %v", err)
+	}
+}
+
+// Crawl on an /item URL must honor the HN size caps in EngineOptions — the
+// params used to be silently ignored, which billed the caller for the whole
+// megathread while it asked for a slice.
+func TestCrawlItemHonorsCaps(t *testing.T) {
+	full := megaThread(megaThreadSizes) // 228 comments over 8 top-level threads
+	tree := make([]algoliaItem, 0, len(megaThreadSizes))
+	nextID := 2
+	for _, size := range megaThreadSizes {
+		tree = append(tree, buildBranch(&nextID, size).item())
+	}
+	body, err := json.Marshal(algoliaItem{ID: 1, Type: "story", Title: "megathread", Author: "pg", Children: tree})
+	if err != nil {
+		t.Fatalf("marshal fixture: %v", err)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(body)
+	}))
+	defer srv.Close()
+	e := New(Config{Client: httpx.New(nil), APIBase: srv.URL})
+
+	cases := []struct {
+		name string
+		opts domain.EngineOptions
+		want int
+	}{
+		{"uncapped", domain.EngineOptions{}, len(full.Comments)},
+		{"per_subtree_12", domain.EngineOptions{HNMaxPerSubtree: 12}, 87},
+		{"top_level_3", domain.EngineOptions{HNMaxTopLevel: 3}, 176},
+		{"max_comments_40", domain.EngineOptions{HNMaxComments: 40}, 40},
+		{"combined", domain.EngineOptions{HNMaxTopLevel: 3, HNMaxPerSubtree: 12, HNMaxComments: 30}, 30},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			doc, cerr := e.Crawl(context.Background(), "https://news.ycombinator.com/item?id=1", tc.opts)
+			if cerr != nil {
+				t.Fatalf("Crawl: %v", cerr)
+			}
+			if doc.Metadata["comments"] != strconv.Itoa(tc.want) {
+				t.Fatalf("comments = %q, want %d", doc.Metadata["comments"], tc.want)
+			}
+			wantTruncated := tc.want < len(full.Comments)
+			if got, has := doc.Metadata["truncated_from"]; has != wantTruncated ||
+				(has && got != strconv.Itoa(len(full.Comments))) {
+				t.Errorf("truncated_from = %q (present %v), want present=%v value %d",
+					got, has, wantTruncated, len(full.Comments))
+			}
+		})
+	}
+}
+
+// depth is Reddit-only: passing it on an HN URL must not shrink the tree (HN's
+// best comments are often deep, so this engine caps breadth, never depth).
+func TestCrawlItemIgnoresRedditDepth(t *testing.T) {
+	tree := []algoliaItem{buildBranch(new(int), 20).item()}
+	body, err := json.Marshal(algoliaItem{ID: 1, Type: "story", Title: "t", Children: tree})
+	if err != nil {
+		t.Fatalf("marshal fixture: %v", err)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(body)
+	}))
+	defer srv.Close()
+
+	e := New(Config{Client: httpx.New(nil), APIBase: srv.URL})
+	doc, err := e.Crawl(context.Background(), "https://news.ycombinator.com/item?id=1",
+		domain.EngineOptions{RedditDepth: 1, RedditMaxComments: 5})
+	if err != nil {
+		t.Fatalf("Crawl: %v", err)
+	}
+	if doc.Metadata["comments"] != "20" {
+		t.Fatalf("comments = %q, want 20 (Reddit params must not affect HN)", doc.Metadata["comments"])
 	}
 }
