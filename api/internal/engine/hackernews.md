@@ -12,11 +12,12 @@ Unlike the Reddit and generic engines, this engine fetches its upstream DIRECTLY
 
 ## Index
 
+- [Constants](<#constants>)
 - [type Comment](<#Comment>)
 - [type Config](<#Config>)
 - [type Engine](<#Engine>)
   - [func New\(cfg Config\) \*Engine](<#New>)
-  - [func \(e \*Engine\) Crawl\(ctx context.Context, rawURL string, \_ domain.EngineOptions\) \(domain.Document, error\)](<#Engine.Crawl>)
+  - [func \(e \*Engine\) Crawl\(ctx context.Context, rawURL string, eo domain.EngineOptions\) \(domain.Document, error\)](<#Engine.Crawl>)
   - [func \(\*Engine\) Matches\(rawURL string\) bool](<#Engine.Matches>)
   - [func \(\*Engine\) Name\(\) string](<#Engine.Name>)
 - [type FrontPage](<#FrontPage>)
@@ -24,6 +25,14 @@ Unlike the Reddit and generic engines, this engine fetches its upstream DIRECTLY
 - [type Story](<#Story>)
 - [type Thread](<#Thread>)
 
+
+## Constants
+
+<a name="MaxThreadComments"></a>MaxThreadComments is the ceiling on comments emitted for one thread, so a megathread can't blow the consumer's context. A caller's max\_comments can only lower it. Exported because the fetch\_url tool schema states the number.
+
+```go
+const MaxThreadComments = 500
+```
 
 <a name="Comment"></a>
 ## type Comment
@@ -79,7 +88,7 @@ New returns a Hacker News Engine configured per cfg.
 ### func \(\*Engine\) Crawl
 
 ```go
-func (e *Engine) Crawl(ctx context.Context, rawURL string, _ domain.EngineOptions) (domain.Document, error)
+func (e *Engine) Crawl(ctx context.Context, rawURL string, eo domain.EngineOptions) (domain.Document, error)
 ```
 
 Crawl fetches the HN item or feed behind rawURL from the Algolia API and returns it encoded as TOON.
