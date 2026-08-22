@@ -137,7 +137,13 @@ release-check: ## Validate .goreleaser.yaml without releasing
 
 .PHONY: install-tools
 install-tools: ## Install development tools (golangci-lint, govulncheck, gomarkdoc)
-	$(GO) install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+	# .golangci.yml declares `version: "2"`, so the v2 module path is required.
+	# The unversioned path resolves to the last v1 release, which then refuses
+	# the config with "you are using a configuration file for golangci-lint v2
+	# with golangci-lint v1" — a confusing failure a long way from its cause.
+	# Upstream does not recommend `go install` at all (the binary depends on the
+	# local Go version); CI uses golangci-lint-action, which downloads a build.
+	$(GO) install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
 	$(GO) install golang.org/x/vuln/cmd/govulncheck@latest
 	$(GO) install github.com/princjef/gomarkdoc/cmd/gomarkdoc@latest
 	$(GO) install github.com/goreleaser/goreleaser/v2@latest
