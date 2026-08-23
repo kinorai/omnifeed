@@ -20,7 +20,7 @@ jobs:
     if: github.actor != 'dependabot[bot]'
     steps:
       - name: Checkout code
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Setup Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -41,13 +41,13 @@ jobs:
       contents: read
     steps:
       - name: Checkout code
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Run gosec
         uses: securego/gosec@9e75c0576c9878035d4221392108d458abe10fc3 # v2.28.0
         with:
           args: '-no-fail -fmt sarif -out gosec.sarif ./...'
       - name: Upload SARIF
-        uses: github/codeql-action/upload-sarif@7188fc363630916deb702c7fdcf4e481b751f97a # v4.37.1
+        uses: github/codeql-action/upload-sarif@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
         with:
           sarif_file: gosec.sarif
           wait-for-processing: true
@@ -61,9 +61,9 @@ jobs:
       contents: read
     steps:
       - name: Checkout code
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@7188fc363630916deb702c7fdcf4e481b751f97a # v4.37.1
+        uses: github/codeql-action/init@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
         with:
           languages: go
       - name: Setup Go
@@ -72,9 +72,9 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: true
       - name: Autobuild
-        uses: github/codeql-action/autobuild@7188fc363630916deb702c7fdcf4e481b751f97a # v4.37.1
+        uses: github/codeql-action/autobuild@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
       - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@7188fc363630916deb702c7fdcf4e481b751f97a # v4.37.1
+        uses: github/codeql-action/analyze@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
 
   trivy-fs:
     name: Trivy Filesystem Scan
@@ -86,7 +86,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout code
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Run Trivy filesystem scan
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
@@ -96,7 +96,7 @@ jobs:
           output: 'trivy-fs-results.sarif'
           severity: 'CRITICAL,HIGH'
       - name: Upload SARIF
-        uses: github/codeql-action/upload-sarif@7188fc363630916deb702c7fdcf4e481b751f97a # v4.37.1
+        uses: github/codeql-action/upload-sarif@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
         if: always()
         with:
           sarif_file: 'trivy-fs-results.sarif'
@@ -115,9 +115,9 @@ jobs:
       contents: read
     steps:
       - name: Checkout code
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Login to Docker Hub
-        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -131,7 +131,7 @@ jobs:
           output: 'trivy-image-results.sarif'
           severity: 'CRITICAL,HIGH'
       - name: Upload SARIF
-        uses: github/codeql-action/upload-sarif@7188fc363630916deb702c7fdcf4e481b751f97a # v4.37.1
+        uses: github/codeql-action/upload-sarif@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
         if: always() && hashFiles('trivy-image-results.sarif') != ''
         with:
           sarif_file: 'trivy-image-results.sarif'
@@ -141,7 +141,7 @@ jobs:
       # and remediation recommendations. Runs on the same release/schedule
       # cadence as the Trivy image scan above.
       - name: Run Docker Scout
-        uses: docker/scout-action@2688993af7bafd6ba8c6a74ec652442be91dd82b # v1.23.1
+        uses: docker/scout-action@7c6b6c3f7844478ace1ffd4e7aef649053d1f87d # v1.24.0
         with:
           command: quickview,cves,recommendations
           image: kinorai/omnifeed:latest
