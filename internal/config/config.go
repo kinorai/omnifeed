@@ -104,6 +104,27 @@ type Config struct {
 	SearXNGQuota       int
 	SearXNGQuotaWindow time.Duration
 
+	// SearXNGConcurrency caps searches in flight across every replica. It exists
+	// because SearXNGDelay alone cannot: a nonzero delay serializes admissions
+	// cluster-wide, so without this the deployment runs one search at a time
+	// however many replicas it has. See internal/httpx/redislimit's package doc.
+	//
+	// Measured on this deployment's pool (2026-08-24): 16 concurrent searches
+	// ran clean from a cold start, and 24 blocked the strictest engine for the
+	// 1200s its suspension lasts. Leave margin — the cost of overshooting is a
+	// 20-minute engine outage, not a failed query.
+	//
+	// 0 keeps the pre-cap behaviour, where SearXNGDelay serializes.
+	SearXNGConcurrency int
+
+	// SearXNGMaxWait caps how long one query may sit in the pacing limiter
+	// before it gives up with a timeout. It is the knob behind the
+	// "context deadline exceeded" a fanned-out caller sees: the queue was
+	// longer than this, not the upstream slower. Raise it to trade latency for
+	// completions, lower it to push back on callers sooner. 0 uses the
+	// searcher's own default.
+	SearXNGMaxWait time.Duration
+
 	// SearchAudit controls the per-search audit log: "off", "summary" or
 	// "full". It is deliberately NOT a log level. A level answers "how bad is
 	// this?", while this stream answers "what did the pool return?" — putting it
@@ -272,6 +293,12 @@ func Load() (Config, error) {
 	if c.SearXNGQuota, err = envInt("OMNIFEED_SEARXNG_QUOTA", 0); err != nil {
 		return c, err
 	}
+	if c.SearXNGConcurrency, err = envInt("OMNIFEED_SEARXNG_CONCURRENCY", 0); err != nil {
+		return c, err
+	}
+	if c.SearXNGMaxWait, err = envDuration("OMNIFEED_SEARXNG_MAX_WAIT", 0); err != nil {
+		return c, err
+	}
 	if c.SearXNGQuotaWindow, err = envDuration("OMNIFEED_SEARXNG_QUOTA_WINDOW", 90*time.Second); err != nil {
 		return c, err
 	}
@@ -329,6 +356,12 @@ func Load() (Config, error) {
 	}
 	if c.SearXNGDelay < 0 {
 		return c, fmt.Errorf("OMNIFEED_SEARXNG_DELAY must be >= 0 (0 = no delay), got %s", c.SearXNGDelay)
+	}
+	if c.SearXNGMaxWait < 0 {
+		return c, fmt.Errorf("OMNIFEED_SEARXNG_MAX_WAIT must be >= 0 (0 = default), got %s", c.SearXNGMaxWait)
+	}
+	if c.SearXNGConcurrency < 0 {
+		return c, fmt.Errorf("OMNIFEED_SEARXNG_CONCURRENCY must be >= 0 (0 = serialize on delay), got %d", c.SearXNGConcurrency)
 	}
 	if c.SearXNGQuota < 0 {
 		return c, fmt.Errorf("OMNIFEED_SEARXNG_QUOTA must be >= 0 (0 = no quota), got %d", c.SearXNGQuota)

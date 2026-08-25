@@ -115,7 +115,7 @@ func TestParityWithTheInProcessLimiter(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			l, m, c := newFixture(t, tc.cfg)
 			const host = "example.com"
-			win, next := l.keys(host)
+			win, next, inflight := l.keys(host)
 			local := &localSlot{limit: tc.cfg.Quota, period: tc.cfg.Window}
 
 			for i, st := range tc.steps {
@@ -129,7 +129,7 @@ func TestParityWithTheInProcessLimiter(t *testing.T) {
 				// The Redis side is asked at the same instant; when it reports a
 				// wait it has NOT admitted, so advance the clock and ask again,
 				// exactly as Acquire's loop does.
-				gotRedis, err := l.book(context.Background(), win, next)
+				gotRedis, _, err := l.book(context.Background(), win, next, inflight)
 				if err != nil {
 					t.Fatalf("step %d: book: %v", i, err)
 				}
@@ -138,7 +138,7 @@ func TestParityWithTheInProcessLimiter(t *testing.T) {
 				}
 				if gotRedis > 0 {
 					c.advance(gotRedis)
-					again, err := l.book(context.Background(), win, next)
+					again, _, err := l.book(context.Background(), win, next, inflight)
 					if err != nil {
 						t.Fatalf("step %d: retry book: %v", i, err)
 					}
@@ -149,7 +149,7 @@ func TestParityWithTheInProcessLimiter(t *testing.T) {
 
 				c.advance(st.hold)
 				local.lastSend = c.now
-				l.release(next)
+				l.release(next, "", "")
 				assertTTLs(t, m)
 			}
 		})

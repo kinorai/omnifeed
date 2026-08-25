@@ -62,7 +62,7 @@ func TestAcquireAdmitsOnceTheWindowRolls(t *testing.T) {
 func TestAcquireCancelBooksNothing(t *testing.T) {
 	l, m, _ := newFixture(t, Config{MaxConcurrent: 4, Quota: 1, Window: time.Hour})
 	const url = "https://example.com/a"
-	win, _ := l.keys("example.com")
+	win, _, _ := l.keys("example.com")
 
 	release, err := l.Acquire(context.Background(), "crawl4ai", url)
 	if err != nil {
@@ -197,7 +197,7 @@ func TestAcquireSeparatesHosts(t *testing.T) {
 func TestPenalizeBumpsNextKey(t *testing.T) {
 	l, m, _ := newFixture(t, Config{MaxConcurrent: 1})
 	const url = "https://news.ycombinator.com/item?id=1"
-	_, nextKey := l.keys("news.ycombinator.com")
+	_, nextKey, _ := l.keys("news.ycombinator.com")
 
 	l.Penalize(url, 30*time.Second)
 
@@ -317,7 +317,7 @@ func TestAcquireDiscriminatesCallerCancellationFromBackendFailure(t *testing.T) 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			l, m, _ := newFixture(t, Config{MaxConcurrent: 4, MinDelay: time.Second})
-			win, next := l.keys("example.com")
+			win, next, _ := l.keys("example.com")
 
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
@@ -406,7 +406,7 @@ func TestCanceledCallerLeavesTheFallbackCircuitClosed(t *testing.T) {
 func TestKeysBraceTheHostForClusterSlots(t *testing.T) {
 	l, _, _ := newFixture(t, Config{})
 
-	win, next := l.keys("news.ycombinator.com")
+	win, next, _ := l.keys("news.ycombinator.com")
 	if win != "omnifeed:ratelimit:test:{news.ycombinator.com}:win" {
 		t.Fatalf("win key = %q", win)
 	}
@@ -422,7 +422,7 @@ func TestKeysBraceTheHostForClusterSlots(t *testing.T) {
 func TestAcquireFailsFastWhenWaitExceedsTheBudget(t *testing.T) {
 	l, m, _ := newFixture(t, Config{MaxConcurrent: 4, Quota: 1, Window: time.Hour})
 	const url = "https://example.com/a"
-	win, _ := l.keys("example.com")
+	win, _, _ := l.keys("example.com")
 
 	release, err := l.Acquire(context.Background(), "crawl4ai", url)
 	if err != nil {

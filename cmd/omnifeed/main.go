@@ -206,6 +206,7 @@ func run(cfg config.Config, logger *slog.Logger) error {
 			Metrics:     metrics,
 			SiteEngines: cfg.SearXNGSiteEngines,
 			Limiter:     searxngPacer,
+			MaxWait:     cfg.SearXNGMaxWait,
 			Audit:       cfg.SearchAudit,
 		})
 		if cfg.SearchAudit != "off" {
@@ -448,28 +449,79 @@ func retryAfterHook(p pacer, metrics *observability.Metrics) func(upstream, rawU
 // deployment behaves exactly as before. Unconfigured stays nil even with Redis
 // on: a shared backend has nothing to share when no limit is set.
 //
-// Concurrency is fixed at 1 rather than exposed as a knob: the point is to
-// space requests, and a second query in flight would step straight over the
-// delay the first one is serving.
+// OMNIFEED_SEARXNG_CONCURRENCY is the third control and the only one that
+// bounds requests in FLIGHT. Without it a nonzero delay serializes admissions
+// across the whole cluster, so the deployment runs one search at a time however
+// many replicas it has — see internal/httpx/redislimit's package doc.
 func searxngLimiter(cfg config.Config, rdb redis.UniversalClient, metrics *observability.Metrics, logger *slog.Logger) pacer {
-	if cfg.SearXNGDelay <= 0 && cfg.SearXNGQuota <= 0 {
-		logger.Info("searxng pacing disabled (OMNIFEED_SEARXNG_DELAY and OMNIFEED_SEARXNG_QUOTA unset)")
+	// Concurrency belongs in this gate: it is an independent control, so setting
+	// it alone is a reasonable request. Omitting it here returned a nil limiter
+	// and ran searches completely unpaced while logging "pacing disabled".
+	if cfg.SearXNGDelay <= 0 && cfg.SearXNGQuota <= 0 && cfg.SearXNGConcurrency <= 0 {
+		logger.Info("searxng pacing disabled (OMNIFEED_SEARXNG_DELAY, _QUOTA and _CONCURRENCY unset)")
 		return nil
+	}
+	// A cluster cap needs shared state to be a cluster cap. Without Redis the
+	// number below is per pod, so replicas × it is what the engines actually see.
+	// Warned rather than rejected: pacing still works, it is just not shared.
+	if cfg.SearXNGConcurrency > 0 && rdb == nil {
+		logger.Warn("OMNIFEED_SEARXNG_CONCURRENCY is set but OMNIFEED_REDIS_URL is not: "+
+			"the cap is per-pod, not cluster-wide, so the engines see replicas × this",
+			"concurrency", cfg.SearXNGConcurrency)
 	}
 	logger.Info("searxng pacing enabled",
 		"delay", cfg.SearXNGDelay,
 		"quota", cfg.SearXNGQuota,
-		"window", cfg.SearXNGQuotaWindow)
+		"window", cfg.SearXNGQuotaWindow,
+		"cluster_concurrency", cfg.SearXNGConcurrency)
 	return buildLimiter("searxng", rdb,
+		// The in-process fallback stays at concurrency 1, deliberately, even when
+		// the cluster cap is 8. DomainLimiter measures its delay from lastSend,
+		// which is the zero time on a cold pod, so every waiter computes wait=0
+		// and N goroutines are admitted at once (measured: 8 in 188µs). Tracking
+		// the cluster cap here would make a Redis blip emit the sharpest burst
+		// the deployment can produce — 16 simultaneous queries on 2 replicas —
+		// and the load shape measured safe was 16 in flight admitted 250ms
+		// apart, which is not the same thing. Degraded mode gets the old, slow,
+		// known-safe behaviour.
 		httpx.NewDomainQuotaLimiter(1, cfg.SearXNGDelay, cfg.SearXNGQuota, cfg.SearXNGQuotaWindow),
 		redislimit.Config{
-			Prefix:        cfg.RedisKeyPrefix,
-			MaxConcurrent: 1,
-			MinDelay:      cfg.SearXNGDelay,
-			Quota:         cfg.SearXNGQuota,
-			Window:        cfg.SearXNGQuotaWindow,
+			Prefix: cfg.RedisKeyPrefix,
+			// Per-pod, and left at 1 on purpose: redislimit's semFor raises the
+			// local semaphore to ClusterConcurrency, so the cluster cap is what
+			// binds while Redis is healthy.
+			MaxConcurrent:      1,
+			MinDelay:           cfg.SearXNGDelay,
+			Quota:              cfg.SearXNGQuota,
+			Window:             cfg.SearXNGQuotaWindow,
+			ClusterConcurrency: cfg.SearXNGConcurrency,
+			LeaseTTL:           searxngLeaseTTL(cfg.SearXNGTimeout),
 		},
 		metrics, logger)
+}
+
+// searxngLeaseTTL sizes the in-flight lease to the longest a single Acquire can
+// hold its slot. That is NOT the client timeout: the lease is booked before
+// DoRetry and released after it returns, and DoRetry re-issues the request up to
+// RetryConfig's default MaxAttempts with up to MaxDelay of backoff between
+// tries. Sizing it to one timeout lets the lease expire under a still-live
+// retrying request, whereupon the next acquire purges it and admits an extra
+// caller — the cap is exceeded silently, and on this pool the cost of that is a
+// 20-minute engine suspension.
+//
+// Both constants mirror httpx.RetryConfig.defaults(). They are duplicated rather
+// than exported because a lease that is too LONG only delays crash recovery,
+// while one that is too short breaks the cap: this must round up, and drifting
+// out of date rounds it up further.
+func searxngLeaseTTL(clientTimeout time.Duration) time.Duration {
+	const (
+		maxAttempts   = 3
+		maxBackoff    = 4 * time.Second
+		recoverySlack = 10 * time.Second
+	)
+	return time.Duration(maxAttempts)*clientTimeout +
+		time.Duration(maxAttempts-1)*maxBackoff +
+		recoverySlack
 }
 
 // buildLimiter wires one pacing scope ("domain" for crawling, "searxng" for

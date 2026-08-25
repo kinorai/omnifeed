@@ -45,8 +45,8 @@ func (c *clock) advance(d time.Duration) {
 // shared Redis this targets is a leak that eventually OOMs the instance.
 func book(t *testing.T, l *Limiter, m *miniredis.Miniredis, host string) time.Duration {
 	t.Helper()
-	win, next := l.keys(host)
-	wait, err := l.book(context.Background(), win, next)
+	win, next, inflight := l.keys(host)
+	wait, _, err := l.book(context.Background(), win, next, inflight)
 	if err != nil {
 		t.Fatalf("book: %v", err)
 	}
@@ -119,7 +119,7 @@ func TestAcquireScriptBoundsTheBurst(t *testing.T) {
 func TestAcquireScriptUsesTheQuotaRankedOpening(t *testing.T) {
 	l, m, c := newFixture(t, Config{Quota: 2, Window: 90 * time.Second})
 	const host = "example.com"
-	win, _ := l.keys(host)
+	win, _, _ := l.keys(host)
 
 	// Four admissions already in the window, one second apart.
 	for i := range 4 {
@@ -174,13 +174,13 @@ func TestAcquireScriptComposesDelayAndQuota(t *testing.T) {
 func TestReleaseScriptBumpsFromCompletion(t *testing.T) {
 	l, m, c := newFixture(t, Config{MinDelay: 2 * time.Second})
 	const host = "example.com"
-	_, next := l.keys(host)
+	_, next, _ := l.keys(host)
 
 	if wait := book(t, l, m, host); wait != 0 {
 		t.Fatalf("first admission: wait = %v, want 0", wait)
 	}
 	c.advance(time.Second) // the request itself takes a second
-	l.release(next)
+	l.release(next, "", "")
 	assertTTLs(t, m)
 
 	// Send-to-send spacing would answer 1s here; completion-based answers 2s.
@@ -192,13 +192,13 @@ func TestReleaseScriptBumpsFromCompletion(t *testing.T) {
 // release never shortens a gap another replica already reserved.
 func TestReleaseScriptNeverShortensTheGap(t *testing.T) {
 	l, m, c := newFixture(t, Config{MinDelay: 2 * time.Second})
-	_, next := l.keys("example.com")
+	_, next, _ := l.keys("example.com")
 
 	if err := l.cfg.Client.Set(context.Background(), next,
 		base.Add(time.Minute).UnixMilli(), time.Minute).Err(); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	l.release(next)
+	l.release(next, "", "")
 	assertTTLs(t, m)
 
 	c.advance(0)
@@ -212,7 +212,7 @@ func TestReleaseScriptNeverShortensTheGap(t *testing.T) {
 func TestAcquireScriptNonceKeepsSameMillisecondAdmissionsDistinct(t *testing.T) {
 	l, m, _ := newFixture(t, Config{Quota: 5, Window: time.Minute})
 	const host = "example.com"
-	win, _ := l.keys(host)
+	win, _, _ := l.keys(host)
 
 	for i := range 3 {
 		if wait := book(t, l, m, host); wait != 0 {
@@ -232,7 +232,7 @@ func TestAcquireScriptNonceKeepsSameMillisecondAdmissionsDistinct(t *testing.T) 
 // host cardinality only ever costs one short-lived key per host.
 func TestAcquireScriptWritesNoWindowWithoutQuota(t *testing.T) {
 	l, m, _ := newFixture(t, Config{MinDelay: time.Second})
-	win, _ := l.keys("example.com")
+	win, _, _ := l.keys("example.com")
 
 	if wait := book(t, l, m, "example.com"); wait != 0 {
 		t.Fatalf("wait = %v, want 0", wait)
@@ -245,7 +245,7 @@ func TestAcquireScriptWritesNoWindowWithoutQuota(t *testing.T) {
 // Neither key may outlive its meaning by more than the slack.
 func TestScriptTTLsAreBounded(t *testing.T) {
 	l, m, _ := newFixture(t, Config{MinDelay: 2 * time.Second, Quota: 2, Window: 30 * time.Second})
-	win, next := l.keys("example.com")
+	win, next, _ := l.keys("example.com")
 
 	if wait := book(t, l, m, "example.com"); wait != 0 {
 		t.Fatalf("wait = %v, want 0", wait)
