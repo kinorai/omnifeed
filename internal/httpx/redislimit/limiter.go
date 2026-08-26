@@ -149,6 +149,12 @@ type Limiter struct {
 	// operation that failed ("acquire", "release" or "penalize"). Release and
 	// penalize failures reach the caller no other way. Set once at wiring time.
 	OnError func(op string)
+
+	// OnErrorDetail, when non-nil, is called alongside OnError with the error
+	// itself. OnError carries only the op, which makes a rising release-failure
+	// counter undiagnosable: the operation is fire-and-forget, so the error
+	// reaches nothing else. Wire this to a logger. Set once at wiring time.
+	OnErrorDetail func(op string, err error)
 }
 
 var _ httpx.Limiter = (*Limiter)(nil)
@@ -203,7 +209,7 @@ func (l *Limiter) Acquire(ctx context.Context, engine, rawURL string) (func(), e
 				l.observeWait(engine, "canceled", start)
 				return nil, ctx.Err()
 			}
-			l.observeError("acquire")
+			l.observeError("acquire", err)
 			// Wrapped so FallbackLimiter recognizes it and paces in process
 			// instead: an unwrapped error here would fail the crawl.
 			return nil, fmt.Errorf("redislimit acquire: %w: %w", httpx.ErrLimiterUnavailable, err)
@@ -288,7 +294,7 @@ func (l *Limiter) freeLease(inflightKey, nonce string) {
 	ctx, cancel := context.WithTimeout(context.Background(), releaseCeiling)
 	defer cancel()
 	if err := freeLease.Run(ctx, l.cfg.Client, []string{inflightKey}, nonce).Err(); err != nil {
-		l.observeError("release")
+		l.observeError("release", err)
 	}
 }
 
@@ -319,7 +325,7 @@ func (l *Limiter) bump(nextKey string, d time.Duration, op string) {
 	defer cancel()
 	if err := release.Run(ctx, l.cfg.Client, []string{nextKey},
 		d.Milliseconds(), keyTTLSlack.Milliseconds()).Err(); err != nil {
-		l.observeError(op)
+		l.observeError(op, err)
 	}
 }
 
@@ -358,9 +364,12 @@ func (l *Limiter) observeWait(engine, outcome string, start time.Time) {
 	}
 }
 
-func (l *Limiter) observeError(op string) {
+func (l *Limiter) observeError(op string, err error) {
 	if l.OnError != nil {
 		l.OnError(op)
+	}
+	if l.OnErrorDetail != nil {
+		l.OnErrorDetail(op, err)
 	}
 }
 

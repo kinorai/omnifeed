@@ -554,6 +554,13 @@ func buildLimiter(scope string, rdb redis.UniversalClient, local *httpx.DomainLi
 	primary := redislimit.New(rcfg)
 	primary.OnWait = metrics.ObserveLimiterWait
 	primary.OnError = metrics.ObserveRatelimitBackendError
+	// The counter alone cannot be triaged: release and penalize are
+	// fire-and-forget, so their errors reach nothing else. WARN because pacing
+	// accuracy is degraded but retrieval is not.
+	primary.OnErrorDetail = func(op string, err error) {
+		logger.Warn("rate limiter backend operation failed",
+			"scope", scope, "op", op, "err", err)
+	}
 
 	return &httpx.FallbackLimiter{
 		Primary:  primary,
