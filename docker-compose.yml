@@ -45,7 +45,14 @@ services:
       # ships disabled by default. Enable it (token-gated, reachable by this stack only).
       CRAWL4AI_EXECUTE_JS_ENABLED: "true"
       CRAWL4AI_HOOKS_ENABLED: "false"
-      MAX_CONCURRENT_TASKS: "25"
+      # MAX_CONCURRENT_TASKS was here and did nothing: crawl4ai 0.9.2 reads it
+      # nowhere. The real concurrency bound is crawler.pool.max_pages, set in
+      # the config below.
+    volumes:
+      # Partial config, deep-merged onto crawl4ai's DEFAULT_CONFIG and NOT onto
+      # the config.yml it ships — read the file's header before editing it, the
+      # difference is load-bearing.
+      - ./crawl4ai/config.yml:/app/config.yml:ro
     healthcheck:
       # crawl4ai's /health only answers GET (HEAD → 405), so use a GET probe
       # (-O /dev/null) instead of wget --spider, which sends HEAD.

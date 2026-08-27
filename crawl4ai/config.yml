@@ -1,0 +1,79 @@
+# crawl4ai server config for this stack, mounted over /app/config.yml by both
+# scripts/container and docker-compose.yml.
+#
+# READ THIS BEFORE EDITING. crawl4ai's load_config() deep-merges this file onto
+# DEFAULT_CONFIG — the Python dict in /app/utils.py — and NOT onto the config.yml
+# the image ships. The two are not the same, and DEFAULT_CONFIG is the weaker of
+# them: the shipped YAML is where several hardening decisions live. Every key
+# the shipped YAML hardens and this file omits therefore reverts to the weaker
+# Python value, silently.
+#
+# Measured against unclecode/crawl4ai:0.9.2, the six keys that differ:
+#   app.host                       0.0.0.0  vs  127.0.0.1
+#   crawler.browser.extra_args     gains --allow-insecure-localhost and
+#                                  --ignore-certificate-errors
+#   limits                         absent — the whole DoS-governance section
+#   security.enabled               False  vs  True
+#   security.cors_allow_origins    absent
+#   redis.ssl_*                    absent (the shipped values are the literal
+#                                  string "None" and redis is unused here, so
+#                                  they are the one difference left alone)
+#
+# So this file restates the shipped values for all of them, and only then makes
+# its own three changes. Re-run the comparison after every crawl4ai bump — a new
+# release can harden another key in the YAML and this file would quietly undo it:
+#
+#   container run --rm unclecode/crawl4ai:<tag> python -c "import sys,yaml; \
+#     sys.path.insert(0,'/app'); from utils import DEFAULT_CONFIG; \
+#     print(DEFAULT_CONFIG); print(yaml.safe_load(open('/app/config.yml')))"
+
+# ---- restated from the image's shipped config.yml, NOT our choices ----------
+app:
+  # Loopback. Only read by the in-process auth guard; the real bind comes from
+  # GUNICORN_BIND. Left at the shipped value so the guard stays as strict as the
+  # image intends for anyone who runs this without a token.
+  host: "127.0.0.1"
+security:
+  enabled: true
+  cors_allow_origins: []
+limits:
+  max_body_bytes: 10485760
+  max_pages: 100
+  max_depth: 5
+  wall_clock_s: 0
+  queue:
+    maxsize: 1000
+    workers: 4
+    per_principal: 0
+
+# ---- our changes ------------------------------------------------------------
+crawler:
+  browser:
+    # Restated, and the reason this file exists at all in its current shape:
+    # omitting it hands the browser --allow-insecure-localhost and
+    # --ignore-certificate-errors, which the shipped YAML deletes on purpose
+    # ("they disabled TLS verification for every crawl (MITM /
+    # SSRF-to-internal-TLS)"). Request paths are scrubbed by enforce_egress, but
+    # the startup browser in lifespan's init_permanent() is not, so it would
+    # launch with them.
+    extra_args:
+      - "--no-sandbox"
+      - "--disable-dev-shm-usage"
+      - "--disable-gpu"
+      - "--disable-software-rasterizer"
+  # 25, not the image's 40. Each page is a Chromium tab, and this stack gives
+  # the container 4G by default (OMNIFEED_CRAWL4AI_MEMORY) where 40 tabs can
+  # exhaust it mid-crawl. 25 is the figure a 6G production deployment settled
+  # on, so it leaves real headroom here. Raise it with the memory, not alone.
+  pool:
+    max_pages: 25
+    # 10 min, not 5. The janitor kills idle browsers, and a cold start costs
+    # seconds on the next crawl. Interactive use comes in bursts with gaps
+    # longer than 5 minutes, so the shorter cutoff pays the cold start almost
+    # every time.
+    idle_ttl_sec: 600
+  # Apply backpressure at 85% rather than 95%. The threshold is measured against
+  # the container's memory, and Chromium can claim the last 10% faster than the
+  # check interval notices — on a 4G box that is an OOM kill instead of a
+  # queued crawl.
+  memory_threshold_percent: 85
