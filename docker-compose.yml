@@ -74,6 +74,14 @@ services:
       OMNIFEED_DEV_NO_AUTH: "true"
       OMNIFEED_LOG_LEVEL: info
       OMNIFEED_LOG_FORMAT: json
+      # Pace the search engines behind SearXNG. Off by default because the
+      # right numbers depend on your engine pool; these are a measured starting
+      # point. DELAY spaces sends, QUOTA bounds the burst over a rolling window,
+      # CONCURRENCY caps searches in flight so a fanned-out client is not
+      # serialized. All three work on this single-instance stack with no Redis.
+      # OMNIFEED_SEARXNG_DELAY: 1s
+      # OMNIFEED_SEARXNG_QUOTA: "10"
+      # OMNIFEED_SEARXNG_CONCURRENCY: "8"
       # Share the rate limiters' state through Redis so several replicas obey
       # one limit instead of one each. Uncomment together with the redis
       # service below (and start the stack with `--profile redis`); unset, each

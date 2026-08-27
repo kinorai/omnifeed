@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"io"
 	"log/slog"
 	"testing"
@@ -228,4 +229,56 @@ func gaugeVecSeries(t *testing.T, v *prometheus.GaugeVec) map[string]float64 {
 		out[labels[0].GetValue()] = dm.GetGauge().GetValue()
 	}
 	return out
+}
+
+// The concurrency cap must work without Redis: a single instance IS the
+// deployment, so the number the operator set is the number the engines see. The
+// limiter is checked by behaviour rather than by type, since both modes are a
+// *httpx.DomainLimiter.
+func TestSearxngLocalLimiterHonorsConcurrencyWithoutRedis(t *testing.T) {
+	cfg := config.Config{SearXNGDelay: time.Second, SearXNGConcurrency: 3}
+	limiter := searxngLocalLimiter(cfg, nil)
+
+	// Three callers arrive together and none releases. All three must be
+	// admitted, and the delay must space them rather than serialize them: the
+	// completion-spaced limiter would cap this at one.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	t.Cleanup(cancel)
+
+	admitted := make(chan struct{}, 3)
+	for range 3 {
+		go func() {
+			if _, err := limiter.Acquire(ctx, "searxng", "https://searxng.test/search"); err != nil {
+				return
+			}
+			admitted <- struct{}{}
+		}()
+	}
+	for i := range 3 {
+		select {
+		case <-admitted:
+		case <-ctx.Done():
+			t.Fatalf("only %d of 3 callers admitted before the deadline", i)
+		}
+	}
+}
+
+// With Redis on, the local limiter is the degraded-mode fallback and stays at
+// concurrency 1 on purpose: a blip must not release the whole cluster cap at
+// once from every replica.
+func TestSearxngLocalLimiterStaysSerialAsTheRedisFallback(t *testing.T) {
+	rdb := redis.NewClient(&redis.Options{Addr: "127.0.0.1:0"})
+	t.Cleanup(func() { _ = rdb.Close() })
+
+	cfg := config.Config{SearXNGDelay: time.Second, SearXNGConcurrency: 8}
+	limiter := searxngLocalLimiter(cfg, rdb)
+
+	if _, err := limiter.Acquire(context.Background(), "searxng", "https://searxng.test/search"); err != nil {
+		t.Fatalf("first Acquire: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if _, err := limiter.Acquire(ctx, "searxng", "https://searxng.test/search"); err == nil {
+		t.Fatal("second Acquire succeeded, want it held behind the single fallback slot")
+	}
 }
