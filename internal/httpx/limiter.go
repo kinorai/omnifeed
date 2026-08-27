@@ -18,6 +18,7 @@ type DomainLimiter struct {
 	minDelay      time.Duration
 	quota         int           // 0 disables the rolling-window cap
 	quotaWindow   time.Duration // width of that window
+	spaceSends    bool          // measure the delay from admission, not completion
 	limits        sync.Map      // host → *domainSlot
 
 	// OnWait, when non-nil, is called on every Acquire exit with the engine
@@ -33,9 +34,21 @@ type DomainLimiter struct {
 }
 
 type domainSlot struct {
-	sem      chan struct{}
-	mu       sync.Mutex
+	sem chan struct{}
+	mu  sync.Mutex
+	// lastSend is the completion instant of the previous request. Read only in
+	// completion-spaced mode (spaceSends false), where the delay is measured
+	// from it.
 	lastSend time.Time
+	// booked holds the send instants reserve has handed out and that can still
+	// constrain a new caller, oldest first. Read only in send-spaced mode
+	// (spaceSends true), which is the mode that lets minDelay and a concurrency
+	// cap above 1 compose: the next caller spaces itself from the last entry
+	// rather than from a completion. A set rather than a high-water mark so a
+	// caller that gives up can withdraw its own instant whatever order the
+	// cancellations land in — see unbook.
+	booked     []time.Time
+	spaceSends bool
 	// notBefore holds this domain back until an instant an upstream itself
 	// asked for (a Retry-After on a 429/503, applied via Penalize). Zero when
 	// no upstream has asked, which is the only state Acquire ever sees unless
@@ -70,12 +83,43 @@ func NewDomainQuotaLimiter(maxConcurrent int, minDelay time.Duration, quota int,
 	}
 }
 
+// NewSpacedDomainQuotaLimiter returns a limiter that spaces SENDS instead of
+// gaps: minDelay is measured from the previous caller's admission rather than
+// from its completion, so N callers are admitted minDelay apart and up to
+// maxConcurrent of them run at once.
+//
+// The distinction only matters above maxConcurrent 1, and there it is the
+// difference between working and not. NewDomainQuotaLimiter measures from
+// lastSend, which is written on Release, so on an idle slot every waiting
+// goroutine reads the same stale instant, computes wait 0 and sends together —
+// maxConcurrent 8 emits an 8-wide burst rather than eight sends 8×minDelay
+// apart. That is why every search limiter built on the completion-spaced
+// constructor passes maxConcurrent 1.
+//
+// The crawl limiter is the exception and does NOT: it is built completion-spaced
+// with OMNIFEED_PER_DOMAIN_CONCURRENCY (default 2) and a 1500ms delay, so two
+// requests can reach a cold domain at once despite that gap. Left alone on
+// purpose — the gap it protects was measured against the completion-spaced
+// shape, and moving it is a change to crawl politeness that needs its own
+// measurement, not a side effect of this one.
+//
+// This mirrors redislimit's ClusterConcurrency > 0 mode, one process instead of
+// a cluster. Prefer it for an upstream that counts requests in a window (search
+// engines do); prefer the completion-spaced limiter for one that punishes short
+// gaps, since serialized spacing is the politer shape.
+func NewSpacedDomainQuotaLimiter(maxConcurrent int, minDelay time.Duration, quota int, window time.Duration) *DomainLimiter {
+	l := NewDomainQuotaLimiter(maxConcurrent, minDelay, quota, window)
+	l.spaceSends = true
+	return l
+}
+
 func (d *DomainLimiter) slotFor(rawURL string) *domainSlot {
 	u, _ := url.Parse(rawURL)
 	host := u.Hostname()
 	val, _ := d.limits.LoadOrStore(host, &domainSlot{
-		sem:    make(chan struct{}, d.maxConcurrent),
-		window: quotaWindow{limit: d.quota, period: d.quotaWindow},
+		sem:        make(chan struct{}, d.maxConcurrent),
+		window:     quotaWindow{limit: d.quota, period: d.quotaWindow},
+		spaceSends: d.spaceSends,
 	})
 	return val.(*domainSlot)
 }
@@ -109,7 +153,7 @@ func (d *DomainLimiter) Acquire(ctx context.Context, engine, rawURL string) (fun
 	// queues as before.
 	if budget, hasBudget := RemainingBudget(ctx); hasBudget && wait > budget {
 		s.mu.Lock()
-		s.window.forget(admitAt)
+		s.unbook(admitAt, d.minDelay)
 		s.mu.Unlock()
 		<-s.sem
 		d.observeWait(engine, "budget_exceeded", start)
@@ -121,10 +165,10 @@ func (d *DomainLimiter) Acquire(ctx context.Context, engine, rawURL string) (fun
 		case <-t.C:
 		case <-ctx.Done():
 			t.Stop()
-			// Give the window slot back: a caller that never sent must not
-			// consume quota, or repeated cancellations starve the domain.
+			// Give the booking back: a caller that never sent must not consume
+			// quota, or repeated cancellations starve the domain.
 			s.mu.Lock()
-			s.window.forget(admitAt)
+			s.unbook(admitAt, d.minDelay)
 			s.mu.Unlock()
 			<-s.sem
 			d.observeWait(engine, "canceled", start)
@@ -135,7 +179,13 @@ func (d *DomainLimiter) Acquire(ctx context.Context, engine, rawURL string) (fun
 	d.observeWait(engine, "acquired", start)
 	return func() {
 		s.mu.Lock()
-		s.lastSend = time.Now()
+		// In send-spaced mode the next admission was already booked from this
+		// one's, so completion says nothing about when the next caller may go.
+		// Writing lastSend here would leave a plausible but unread instant
+		// behind for the next reader of this struct.
+		if !s.spaceSends {
+			s.lastSend = time.Now()
+		}
 		s.mu.Unlock()
 		<-s.sem
 	}, nil
@@ -174,18 +224,33 @@ func (d *DomainLimiter) observeWait(engine, outcome string, start time.Time) {
 //
 // The two controls compose: the minimum delay is measured from the previous
 // request's completion (lastSend), then the window is consulted at the instant
-// that delay would let us send.
+// that delay would let us send. In send-spaced mode the delay is measured from
+// the previous caller's booked admission (nextSend) instead, which is what lets
+// a concurrency cap above 1 coexist with a nonzero delay — see
+// NewSpacedDomainQuotaLimiter.
 //
-// Jitter is applied last, after the booking. Booked instants must stay
-// monotonic across concurrent callers — both evict (a prefix scan that stops at
-// the first live entry) and the sent[n-limit] lookup assume oldest-first — and
-// jittering before the booking lets two callers a microsecond apart book
-// descending instants, which would let the window admit more than its limit.
-// Sending marginally later than booked only ever under-uses the window, which
-// is the safe direction for a politeness control.
+// Jitter is applied last, after the booking, and ONLY in completion-spaced
+// mode. Booked instants must stay monotonic across concurrent callers — both
+// evict (a prefix scan that stops at the first live entry) and the
+// sent[n-limit] lookup assume oldest-first — and jittering before the booking
+// lets two callers a microsecond apart book descending instants, which would
+// let the window admit more than its limit. Sending marginally later than
+// booked only ever under-uses the window, which is the safe direction for a
+// politeness control.
+//
+// Send-spaced mode takes no jitter at all, and must not. Jitter exists so
+// goroutines released together do not re-synchronize on the next send, which is
+// a hazard only when they were all admitted at once — exactly what this mode
+// removes by construction, since it staggers admissions itself. Adding it here
+// would also make sends land CLOSER than minDelay rather than further apart:
+// the spacing is measured between booked instants, so a caller that draws 480ms
+// followed by one that draws 10ms sends 530ms after it, half the configured
+// gap, against upstreams that answer an overshoot with a 20-minute suspension.
 func (s *domainSlot) reserve(now time.Time, minDelay time.Duration) (time.Duration, time.Time) {
 	var wait time.Duration
-	if since := now.Sub(s.lastSend); since < minDelay {
+	if s.spaceSends {
+		wait = s.spacedFrom(now, minDelay).Sub(now)
+	} else if since := now.Sub(s.lastSend); since < minDelay {
 		wait = minDelay - since
 	}
 	// An upstream's own Retry-After and our politeness delay are two lower
@@ -197,17 +262,66 @@ func (s *domainSlot) reserve(now time.Time, minDelay time.Duration) (time.Durati
 	bookWait := s.window.book(booked)
 	booked = booked.Add(bookWait)
 	wait += bookWait
+	if s.spaceSends {
+		// Record the instant this caller will actually send, quota wait
+		// included, so a full window spaces the callers behind it too.
+		s.booked = append(s.booked, booked)
+		return wait, booked
+	}
 
 	if wait > 0 {
-		// Scheduling noise, not a secret: the jitter exists so goroutines that
-		// were released together do not re-synchronize on the next send. Nothing
-		// downstream is authenticated, keyed or made unguessable by it, and an
-		// attacker who could predict it would learn only when a politeness delay
-		// ends. crypto/rand would be slower, can fail, and would buy nothing.
+		// Scheduling noise, not a secret. Nothing downstream is authenticated,
+		// keyed or made unguessable by it, and an attacker who could predict it
+		// would learn only when a politeness delay ends. crypto/rand would be
+		// slower, can fail, and would buy nothing.
 		// #nosec G404 -- non-cryptographic timing jitter
 		wait += time.Duration(rand.Intn(500)) * time.Millisecond
 	}
 	return wait, booked
+}
+
+// spacedFrom returns the earliest instant a new caller may send: minDelay past
+// the latest booking that still constrains it, or `now` when none does. It
+// prunes the bookings that no longer can, which is what keeps the set bounded
+// by the callers actually in flight. Callers must hold s.mu.
+//
+// The cutoff is now-minDelay, not now: a caller that sent a moment ago still
+// owes the next one its gap, and dropping it would admit an immediate send.
+func (s *domainSlot) spacedFrom(now time.Time, minDelay time.Duration) time.Time {
+	cutoff := now.Add(-minDelay)
+	i := 0
+	for i < len(s.booked) && !s.booked[i].After(cutoff) {
+		i++
+	}
+	s.booked = s.booked[i:]
+	if len(s.booked) == 0 {
+		return now
+	}
+	// Bookings are appended in order, so the last one is the latest.
+	return s.booked[len(s.booked)-1].Add(minDelay)
+}
+
+// unbook withdraws the reservation reserve made at `booked`, for a caller that
+// gave up before sending. Callers must hold s.mu.
+//
+// Withdrawing by value, not by rewinding a high-water mark, because the shape
+// this has to survive is a fanned-out client whose shared ctx dies: every
+// booking is abandoned at once and in arbitrary order. A mark can only be wound
+// back by whoever booked last, so all but one of those withdrawals would be
+// lost and the slot would hold a phantom wait of up to maxConcurrent × minDelay
+// with nothing in flight — the next search would queue behind callers that no
+// longer exist, or be refused outright on its wait budget.
+func (s *domainSlot) unbook(booked time.Time, minDelay time.Duration) {
+	s.window.forget(booked)
+	if !s.spaceSends {
+		return
+	}
+	for i, at := range s.booked {
+		if at.Equal(booked) {
+			s.booked = append(s.booked[:i], s.booked[i+1:]...)
+			return
+		}
+	}
 }
 
 // quotaWindow admits at most limit requests in any rolling period. It keeps the

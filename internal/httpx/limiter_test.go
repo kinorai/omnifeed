@@ -402,3 +402,222 @@ func TestAcquireWithoutADeadlineStillQueues(t *testing.T) {
 		t.Fatalf("outcomes = %v, want [acquired acquired]", outcomes)
 	}
 }
+
+// Send-spaced mode is the whole reason NewSpacedDomainQuotaLimiter exists:
+// callers that arrive together are booked minDelay apart instead of all reading
+// the same stale lastSend and computing wait 0.
+func TestSpacedReserveSpacesSimultaneousCallers(t *testing.T) {
+	const minDelay = time.Second
+	s := &domainSlot{spaceSends: true}
+	now := time.Unix(1_000_000, 0)
+
+	var booked []time.Time
+	var waits []time.Duration
+	for range 8 {
+		wait, at := s.reserve(now, minDelay)
+		booked = append(booked, at)
+		waits = append(waits, wait)
+	}
+
+	for i, at := range booked {
+		want := now.Add(time.Duration(i) * minDelay)
+		if !at.Equal(want) {
+			t.Fatalf("caller %d booked %v, want %v — admissions are not spaced", i, at, want)
+		}
+		// The wait must be the booked gap EXACTLY. Jitter here would move the
+		// send off its booking, and since the spacing is measured between
+		// bookings, two neighbours drawing far apart would send closer together
+		// than minDelay — the one thing this mode exists to prevent.
+		if waits[i] != time.Duration(i)*minDelay {
+			t.Fatalf("caller %d waited %v, want exactly %v — jitter leaked into send-spaced mode",
+				i, waits[i], time.Duration(i)*minDelay)
+		}
+	}
+}
+
+// The companion to the test above, pinning the behaviour that forces the
+// completion-spaced limiter to stay at concurrency 1: on a cold slot every
+// caller measures from the zero lastSend, so eight of them send at once.
+func TestCompletionSpacedReserveBurstsOnAColdSlot(t *testing.T) {
+	s := &domainSlot{}
+	now := time.Unix(1_000_000, 0)
+
+	for i := range 8 {
+		if wait, _ := s.reserve(now, time.Second); wait != 0 {
+			t.Fatalf("caller %d waited %v, want 0 — the burst this mode cannot avoid", i, wait)
+		}
+	}
+}
+
+// A slot that has been quiet longer than minDelay must admit at once: nextSend
+// is monotonic, so it sits in the past and the wait clamps to zero rather than
+// going negative.
+func TestSpacedReserveAdmitsAfterAQuietSpell(t *testing.T) {
+	const minDelay = time.Second
+	s := &domainSlot{spaceSends: true}
+	now := time.Unix(1_000_000, 0)
+
+	s.reserve(now, minDelay)
+
+	wait, at := s.reserve(now.Add(time.Hour), minDelay)
+	if wait != 0 {
+		t.Fatalf("wait = %v after an hour idle, want 0", wait)
+	}
+	if !at.Equal(now.Add(time.Hour)) {
+		t.Fatalf("booked %v, want the arrival instant %v", at, now.Add(time.Hour))
+	}
+}
+
+// The quota's own wait must push nextSend too, or the callers queued behind a
+// full window would space themselves from an instant nobody sends at.
+func TestSpacedReserveSpacesFromTheQuotaWait(t *testing.T) {
+	const minDelay = time.Second
+	s := &domainSlot{spaceSends: true, window: quotaWindow{limit: 2, period: time.Minute}}
+	now := time.Unix(1_000_000, 0)
+
+	s.reserve(now, minDelay)             // sends at now
+	s.reserve(now, minDelay)             // sends at now+1s
+	_, third := s.reserve(now, minDelay) // window full: waits out the period
+	if !third.Equal(now.Add(time.Minute)) {
+		t.Fatalf("third booked %v, want %v — the quota did not hold it", third, now.Add(time.Minute))
+	}
+
+	// The fourth spaces itself from where the third will actually send, not
+	// from where the third asked to send.
+	_, fourth := s.reserve(now, minDelay)
+	if !fourth.Equal(third.Add(minDelay)) {
+		t.Fatalf("fourth booked %v, want %v — spacing lost behind the quota",
+			fourth, third.Add(minDelay))
+	}
+}
+
+// An upstream's Retry-After outranks the spacing mark, exactly as it does in
+// completion-spaced mode.
+func TestSpacedReserveHonorsNotBefore(t *testing.T) {
+	s := &domainSlot{spaceSends: true}
+	now := time.Unix(1_000_000, 0)
+	s.notBefore = now.Add(30 * time.Second)
+
+	wait, at := s.reserve(now, time.Second)
+	if wait < 30*time.Second {
+		t.Fatalf("wait = %v, want at least the 30s penalty", wait)
+	}
+	if !at.Equal(now.Add(30 * time.Second)) {
+		t.Fatalf("booked %v, want the penalized instant %v", at, now.Add(30*time.Second))
+	}
+}
+
+// A caller that gives up while it is the last booker hands its spacing slot
+// back, or a run of cancellations would push nextSend out forever.
+func TestSpacedUnbookRewindsTheLastBooking(t *testing.T) {
+	const minDelay = time.Second
+	s := &domainSlot{spaceSends: true}
+	now := time.Unix(1_000_000, 0)
+
+	s.reserve(now, minDelay)
+	_, second := s.reserve(now, minDelay)
+	s.unbook(second, minDelay)
+
+	_, retry := s.reserve(now, minDelay)
+	if !retry.Equal(second) {
+		t.Fatalf("booked %v after the rollback, want the freed slot %v", retry, second)
+	}
+}
+
+// Withdrawing a booking that is NOT the last one frees that instant, but must
+// not pull the callers behind it forward: they already spaced themselves from
+// the LAST booking, and sending closer than minDelay is the failure this mode
+// exists to prevent.
+func TestSpacedUnbookKeepsTheSpacingBehindIt(t *testing.T) {
+	const minDelay = time.Second
+	s := &domainSlot{spaceSends: true}
+	now := time.Unix(1_000_000, 0)
+
+	_, first := s.reserve(now, minDelay)
+	_, second := s.reserve(now, minDelay)
+	s.unbook(first, minDelay)
+
+	_, third := s.reserve(now, minDelay)
+	if !third.Equal(second.Add(minDelay)) {
+		t.Fatalf("booked %v, want %v — the rollback moved the mark under a live booking",
+			third, second.Add(minDelay))
+	}
+}
+
+// Completion-spaced mode must be untouched by the booking machinery: lastSend
+// is its clock, and keeping a parallel set of instants would be a silent mode
+// leak.
+func TestUnbookLeavesCompletionSpacedModeAlone(t *testing.T) {
+	s := &domainSlot{window: quotaWindow{limit: 4, period: time.Minute}}
+	now := time.Unix(1_000_000, 0)
+
+	_, booked := s.reserve(now, time.Second)
+	s.unbook(booked, time.Second)
+
+	if len(s.booked) != 0 {
+		t.Fatalf("booked = %v, want empty in completion-spaced mode", s.booked)
+	}
+	if len(s.window.sent) != 0 {
+		t.Fatalf("window holds %d bookings, want 0", len(s.window.sent))
+	}
+}
+
+// The shape a high-water mark cannot survive: a fanned-out client whose shared
+// ctx dies abandons every booking at once, in arbitrary order. All of them must
+// be withdrawn, or the slot keeps a phantom wait with nothing in flight and the
+// next search queues behind callers that no longer exist.
+func TestSpacedUnbookClearsAnAbandonedFanOut(t *testing.T) {
+	const minDelay = time.Second
+	s := &domainSlot{spaceSends: true}
+	now := time.Unix(1_000_000, 0)
+
+	var booked []time.Time
+	for range 8 {
+		_, at := s.reserve(now, minDelay)
+		booked = append(booked, at)
+	}
+	// Out of order, the way concurrent cancellations land.
+	for _, i := range []int{3, 0, 7, 1, 6, 2, 5, 4} {
+		s.unbook(booked[i], minDelay)
+	}
+
+	wait, at := s.reserve(now, minDelay)
+	if wait != 0 {
+		t.Fatalf("wait = %v after every booking was withdrawn, want 0", wait)
+	}
+	if !at.Equal(now) {
+		t.Fatalf("booked %v, want the arrival instant %v", at, now)
+	}
+}
+
+// End to end: the spaced limiter runs maxConcurrent requests at once, which is
+// the property the cluster cap buys and the completion-spaced limiter at
+// concurrency 1 cannot offer.
+func TestSpacedLimiterRunsCallersConcurrently(t *testing.T) {
+	d := NewSpacedDomainQuotaLimiter(4, 0, 0, 0)
+
+	var releases []func()
+	for i := range 4 {
+		release, err := d.Acquire(context.Background(), "searxng", "https://searxng.test/search")
+		if err != nil {
+			t.Fatalf("Acquire %d: %v", i, err)
+		}
+		releases = append(releases, release)
+	}
+
+	// A fifth must block: the cap is 4, and nothing has been released.
+	blocked := make(chan struct{})
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		defer cancel()
+		if _, err := d.Acquire(ctx, "searxng", "https://searxng.test/search"); err == nil {
+			t.Error("fifth Acquire succeeded, want it held by the concurrency cap")
+		}
+		close(blocked)
+	}()
+	<-blocked
+
+	for _, release := range releases {
+		release()
+	}
+}
