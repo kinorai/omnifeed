@@ -8,9 +8,15 @@ import "github.com/kinorai/omnifeed/internal/httpx/redislimit"
 
 Package redislimit paces outbound requests with the pacing state held in Redis, so every replica of a deployment counts against one limit instead of one limit each. It implements httpx.Limiter and mirrors \*httpx.DomainLimiter: the minimum delay is measured from the previous request's COMPLETION, the rolling\-window quota keeps the admission instants still inside the window \(not a token bucket, so a burst cannot be spent all at once\), and a nonzero wait carries jitter.
 
-Two things stay per pod on purpose. The concurrency semaphore does: a distributed one needs TTL leases and heartbeats to survive a crawl that runs for minutes, which is heavy machinery for a bound that replicas × N already keeps small. And a caller that abandons its wait books nothing at all, so cancellation needs no cleanup — the price is that cross\-pod queueing is jittered retry rather than the local limiter's future\-booked FIFO order.
+A caller that abandons its wait books nothing at all, so cancellation needs no cleanup — the price is that cross\-pod queueing is jittered retry rather than the local limiter's future\-booked FIFO order.
 
-The third divergence is the one MinDelay buys. The acquire script sets the next\-allowed\-at at admission and release bumps it again from completion, so with MinDelay \> 0 admissions to one host are strictly serialized across the whole cluster: same\-host concurrency collapses to 1 however many MaxConcurrent slots each pod holds. That is politer than the in\-process limiter's N concurrent requests, and slower — deliberate for a politeness control, and crash\-safe, since a pod that dies mid\-request leaves correct spacing behind.
+The divergence MinDelay buys depends on ClusterConcurrency.
+
+With ClusterConcurrency 0 \(the default\) the acquire script sets the next\-allowed\-at at admission and release bumps it again from completion, so with MinDelay \> 0 admissions to one host are strictly serialized across the whole cluster: same\-host concurrency collapses to 1 however many MaxConcurrent slots each pod holds. That is politer than the in\-process limiter's N concurrent requests, and slower — deliberate for a politeness control, and crash\-safe, since a pod that dies mid\-request leaves correct spacing behind.
+
+With ClusterConcurrency \> 0 that serialization is the thing being escaped, and the two controls split apart. MinDelay then spaces SENDS: the acquire script still books next\-allowed\-at at admission, but release no longer bumps it, so admissions leave MinDelay apart while up to N requests run at once. The N itself moves into Redis as a ZSET of leases scored by deadline, which is the TTL\-lease machinery the per\-pod semaphore existed to avoid. It needs no heartbeat: a lease is purged when its deadline passes, so a pod that dies mid\-request returns its slot at LeaseTTL instead of never. Set LeaseTTL from the caller's own request timeout — too short frees a slot a live request still holds, too long strands one after a crash.
+
+Choose by what the upstream punishes. Serialized spacing suits an upstream that counts gaps between hits. A cap with spaced sends suits one that counts requests in a window, which is what search engines do, and it is the only mode that turns N replicas into N times the throughput.
 
 Both scripts take the clock from Redis' TIME rather than from the pod. That was gated on a question about the test double: redis.call\('TIME'\) inside miniredis' EVAL does honour miniredis.SetTime \(verified\), so tests drive the same server\-clock path production uses. Note that miniredis.FastForward expires keys WITHOUT moving that clock, so a test that advances time must call both.
 
@@ -44,6 +50,28 @@ type Config struct {
     MinDelay      time.Duration // minimum gap between completion and next send
     Quota         int           // 0 disables the rolling-window cap
     Window        time.Duration // width of that window
+
+    // ClusterConcurrency caps requests in flight to one host across every
+    // replica. 0 keeps the pre-cap behaviour: no lease bookkeeping, and MinDelay
+    // serializes admissions cluster-wide. Above 0 it becomes the authoritative
+    // bound and MinDelay spaces sends instead of gaps. See the package doc.
+    //
+    // It also raises the per-pod semaphore when MaxConcurrent is smaller, since
+    // a pod that admits fewer than the cluster allows would bottleneck the cap
+    // and make it look broken.
+    ClusterConcurrency int
+
+    // LeaseTTL is how long one in-flight slot stays booked without a release.
+    // Only read when ClusterConcurrency > 0. It is a crash-recovery bound, not a
+    // request timeout: the request's own ctx already bounds the happy path.
+    // Defaults to defaultLeaseTTL.
+    LeaseTTL time.Duration
+
+    // ConcurrencyRetry is how long a caller waits before re-attempting when the
+    // in-flight cap is full. Only read when ClusterConcurrency > 0. Short,
+    // because a slot frees on release and the script cannot predict when.
+    // Defaults to defaultConcurrencyRetry.
+    ConcurrencyRetry time.Duration
 }
 ```
 
@@ -70,6 +98,12 @@ type Limiter struct {
     // operation that failed ("acquire", "release" or "penalize"). Release and
     // penalize failures reach the caller no other way. Set once at wiring time.
     OnError func(op string)
+
+    // OnErrorDetail, when non-nil, is called alongside OnError with the error
+    // itself. OnError carries only the op, which makes a rising release-failure
+    // counter undiagnosable: the operation is fire-and-forget, so the error
+    // reaches nothing else. Wire this to a logger. Set once at wiring time.
+    OnErrorDetail func(op string, err error)
     // contains filtered or unexported fields
 }
 ```

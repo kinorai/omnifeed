@@ -24,6 +24,7 @@ Package httpx provides HTTP utilities shared across engines: a retrying HTTP cli
 - [type DomainLimiter](<#DomainLimiter>)
   - [func NewDomainLimiter\(maxConcurrent int, minDelay time.Duration\) \*DomainLimiter](<#NewDomainLimiter>)
   - [func NewDomainQuotaLimiter\(maxConcurrent int, minDelay time.Duration, quota int, window time.Duration\) \*DomainLimiter](<#NewDomainQuotaLimiter>)
+  - [func NewSpacedDomainQuotaLimiter\(maxConcurrent int, minDelay time.Duration, quota int, window time.Duration\) \*DomainLimiter](<#NewSpacedDomainQuotaLimiter>)
   - [func \(d \*DomainLimiter\) Acquire\(ctx context.Context, engine, rawURL string\) \(func\(\), error\)](<#DomainLimiter.Acquire>)
   - [func \(d \*DomainLimiter\) Penalize\(rawURL string, dur time.Duration\)](<#DomainLimiter.Penalize>)
 - [type FallbackLimiter](<#FallbackLimiter>)
@@ -213,6 +214,21 @@ func NewDomainQuotaLimiter(maxConcurrent int, minDelay time.Duration, quota int,
 NewDomainQuotaLimiter returns a limiter that also admits at most \`quota\` requests per domain within any rolling \`window\`. quota \<= 0 disables that cap, making this identical to NewDomainLimiter.
 
 A minimum delay alone cannot express the limit some upstreams actually enforce. Measured against this deployment's search pool on 2026\-08\-17: one engine kept answering at a 3s spacing from a quiet start, yet blocked after \~20 requests in \~85s — it counts requests in a window, not the gap between them. A 3s delay run continuously sends 30 requests per 90s and trips it, so the two controls are complementary: the delay shapes the gap, the quota bounds the burst.
+
+<a name="NewSpacedDomainQuotaLimiter"></a>
+### func NewSpacedDomainQuotaLimiter
+
+```go
+func NewSpacedDomainQuotaLimiter(maxConcurrent int, minDelay time.Duration, quota int, window time.Duration) *DomainLimiter
+```
+
+NewSpacedDomainQuotaLimiter returns a limiter that spaces SENDS instead of gaps: minDelay is measured from the previous caller's admission rather than from its completion, so N callers are admitted minDelay apart and up to maxConcurrent of them run at once.
+
+The distinction only matters above maxConcurrent 1, and there it is the difference between working and not. NewDomainQuotaLimiter measures from lastSend, which is written on Release, so on an idle slot every waiting goroutine reads the same stale instant, computes wait 0 and sends together — maxConcurrent 8 emits an 8\-wide burst rather than eight sends 8×minDelay apart. That is why every search limiter built on the completion\-spaced constructor passes maxConcurrent 1.
+
+The crawl limiter is the exception and does NOT: it is built completion\-spaced with OMNIFEED\_PER\_DOMAIN\_CONCURRENCY \(default 2\) and a 1500ms delay, so two requests can reach a cold domain at once despite that gap. Left alone on purpose — the gap it protects was measured against the completion\-spaced shape, and moving it is a change to crawl politeness that needs its own measurement, not a side effect of this one.
+
+This mirrors redislimit's ClusterConcurrency \> 0 mode, one process instead of a cluster. Prefer it for an upstream that counts requests in a window \(search engines do\); prefer the completion\-spaced limiter for one that punishes short gaps, since serialized spacing is the politer shape.
 
 <a name="DomainLimiter.Acquire"></a>
 ### func \(\*DomainLimiter\) Acquire
