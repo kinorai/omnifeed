@@ -464,9 +464,13 @@ func searxngLimiter(cfg config.Config, rdb redis.UniversalClient, metrics *obser
 	// A cluster cap needs shared state to be a cluster cap. Without Redis the
 	// number below is per pod, so replicas × it is what the engines actually see.
 	// Warned rather than rejected: pacing still works, it is just not shared.
+	// The cap itself is honoured (the local limiter below is built send-spaced
+	// for this case), so a single instance needs no Redis at all — the warning
+	// is about the arithmetic on replica two.
 	if cfg.SearXNGConcurrency > 0 && rdb == nil {
 		logger.Warn("OMNIFEED_SEARXNG_CONCURRENCY is set but OMNIFEED_REDIS_URL is not: "+
-			"the cap is per-pod, not cluster-wide, so the engines see replicas × this",
+			"the cap is per-process, not cluster-wide, so the engines see instances × this. "+
+			"Correct for a single instance; set OMNIFEED_REDIS_URL to share it across replicas",
 			"concurrency", cfg.SearXNGConcurrency)
 	}
 	logger.Info("searxng pacing enabled",
@@ -475,16 +479,7 @@ func searxngLimiter(cfg config.Config, rdb redis.UniversalClient, metrics *obser
 		"window", cfg.SearXNGQuotaWindow,
 		"cluster_concurrency", cfg.SearXNGConcurrency)
 	return buildLimiter("searxng", rdb,
-		// The in-process fallback stays at concurrency 1, deliberately, even when
-		// the cluster cap is 8. DomainLimiter measures its delay from lastSend,
-		// which is the zero time on a cold pod, so every waiter computes wait=0
-		// and N goroutines are admitted at once (measured: 8 in 188µs). Tracking
-		// the cluster cap here would make a Redis blip emit the sharpest burst
-		// the deployment can produce — 16 simultaneous queries on 2 replicas —
-		// and the load shape measured safe was 16 in flight admitted 250ms
-		// apart, which is not the same thing. Degraded mode gets the old, slow,
-		// known-safe behaviour.
-		httpx.NewDomainQuotaLimiter(1, cfg.SearXNGDelay, cfg.SearXNGQuota, cfg.SearXNGQuotaWindow),
+		searxngLocalLimiter(cfg, rdb),
 		redislimit.Config{
 			Prefix: cfg.RedisKeyPrefix,
 			// Per-pod, and left at 1 on purpose: redislimit's semFor raises the
@@ -498,6 +493,32 @@ func searxngLimiter(cfg config.Config, rdb redis.UniversalClient, metrics *obser
 			LeaseTTL:           searxngLeaseTTL(cfg.SearXNGTimeout),
 		},
 		metrics, logger)
+}
+
+// searxngLocalLimiter builds the in-process searxng limiter. It is the whole
+// limiter when Redis is off, and the degraded-mode fallback when Redis is on —
+// two different jobs, which is why the concurrency cap applies to only one of
+// them.
+//
+// Redis OFF: the process IS the deployment, so OMNIFEED_SEARXNG_CONCURRENCY is
+// exactly honoured. It needs the send-spaced limiter: the completion-spaced one
+// measures its delay from lastSend, the zero time on a cold slot, so every
+// waiter computes wait=0 and N goroutines are admitted at once (measured: 8 in
+// 188µs). Send-spaced admits them minDelay apart, which is the load shape the
+// cap was measured safe at.
+//
+// Redis ON: this is what a Redis outage falls back to, and it stays at
+// concurrency 1 deliberately. Tracking the cluster cap here would make a blip
+// emit the sharpest burst the deployment can produce — 16 simultaneous queries
+// on 2 replicas, since neither replica can see the other's — where the shape
+// measured safe was 16 in flight admitted 250ms apart. Degraded mode gets the
+// old, slow, known-safe behaviour.
+func searxngLocalLimiter(cfg config.Config, rdb redis.UniversalClient) *httpx.DomainLimiter {
+	if rdb == nil && cfg.SearXNGConcurrency > 0 {
+		return httpx.NewSpacedDomainQuotaLimiter(cfg.SearXNGConcurrency,
+			cfg.SearXNGDelay, cfg.SearXNGQuota, cfg.SearXNGQuotaWindow)
+	}
+	return httpx.NewDomainQuotaLimiter(1, cfg.SearXNGDelay, cfg.SearXNGQuota, cfg.SearXNGQuotaWindow)
 }
 
 // searxngLeaseTTL sizes the in-flight lease to the longest a single Acquire can
