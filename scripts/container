@@ -65,7 +65,7 @@ load_env_file "$REPO/.env"
 # its API on it, and the Reddit engine needs POST /execute_js enabled — so up()
 # generates a shared token, hands it to both sides, and turns on execute_js. Every
 # image is overridable; `--platform` below fails fast if a tag lacks arm64.
-SEARXNG_IMAGE="${SEARXNG_IMAGE:-searxng/searxng:2026.8.3-0734ee6c7}"
+SEARXNG_IMAGE="${SEARXNG_IMAGE:-searxng/searxng:2026.8.22-9fea41204}"
 CRAWL4AI_IMAGE="${CRAWL4AI_IMAGE:-unclecode/crawl4ai:0.9.2}"
 OMNIFEED_IMAGE="${OMNIFEED_IMAGE:-kinorai/omnifeed:latest}"
 PLATFORM="${OMNIFEED_PLATFORM:-linux/arm64}"
@@ -85,6 +85,12 @@ PORT_MCP="${OMNIFEED_PORT_MCP:-8081}"         # MCP HTTP/SSE
 PORT_METRICS="${OMNIFEED_PORT_METRICS:-9090}" # Prometheus + /livez /readyz
 CRAWL4AI_PORT="${OMNIFEED_CRAWL4AI_PORT:-11235}"
 CRAWL4AI_MEMORY="${OMNIFEED_CRAWL4AI_MEMORY:-4G}"  # headless Chromium; 1G default OOMs
+
+# Server config mounted over /app/config.yml. Partial, and deep-merged onto
+# crawl4ai's DEFAULT_CONFIG rather than onto the config.yml it ships — read the
+# file's header before editing it, the difference is load-bearing. Point
+# CRAWL4AI_CONFIG at your own to override the pool sizing.
+CRAWL4AI_CONFIG="${CRAWL4AI_CONFIG:-$REPO/crawl4ai/config.yml}"
 
 # settings.yml mounted into searxng. Swapped for a rendered, gitignored runtime
 # copy when a Brave Search API key or a Google Programmable Search engine id is
@@ -345,6 +351,13 @@ up() {
   # truth (it is reused, not recreated); recreate it only when the token must change.
   local token current
   token="${OMNIFEED_CRAWL4AI_TOKEN:-}"
+  # Mounts only apply on create, same trap as searxng above: an existing
+  # crawl4ai from before the config mount would keep the image defaults and the
+  # pool sizing would silently not apply.
+  if exists "$CRAWL4AI" \
+     && [ "$(mount_src_of "$CRAWL4AI" /app/config.yml)" != "$CRAWL4AI_CONFIG" ]; then
+    log "crawl4ai config changed — recreating it"; rm_one "$CRAWL4AI"
+  fi
   if exists "$CRAWL4AI"; then
     current="$(token_of "$CRAWL4AI")"
     if [ -n "$token" ] && [ "$token" != "$current" ]; then
@@ -357,13 +370,16 @@ up() {
   fi
   [ -n "$token" ] || token="$(gen_token)"
 
+  # MAX_CONCURRENT_TASKS is NOT passed: it is read nowhere in crawl4ai 0.9.2
+  # (verified against the image), so it only looked like a concurrency cap. The
+  # real one is crawler.pool.max_pages in the mounted config.
   run_or_start "$CRAWL4AI" \
     -p "${CRAWL4AI_PORT}:11235" \
     -m "$CRAWL4AI_MEMORY" \
     -e "CRAWL4AI_API_TOKEN=${token}" \
     -e CRAWL4AI_EXECUTE_JS_ENABLED=true \
     -e CRAWL4AI_HOOKS_ENABLED=false \
-    -e MAX_CONCURRENT_TASKS=25 \
+    -v "$CRAWL4AI_CONFIG:/app/config.yml" \
     "$CRAWL4AI_IMAGE"
 
   log "waiting for crawl4ai (headless browser, ~30s first boot)…"
