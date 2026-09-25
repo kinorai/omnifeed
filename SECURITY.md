@@ -2,7 +2,7 @@
 
 ## Reporting a vulnerability
 
-Do not open a public issue. Open a [private security advisory](https://github.com/kinorai/omnifeed/security/advisories/new) instead, with:
+**Do not open a public issue.** Open a [private security advisory](https://github.com/kinorai/omnifeed/security/advisories/new) instead, with:
 
 - The vulnerability and its impact
 - Steps to reproduce, or a proof of concept

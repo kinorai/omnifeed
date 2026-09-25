@@ -4,7 +4,7 @@
 </p>
 
 <p align="center">
-  <img src="https://readme-typing-svg.demolab.com?font=Fira+Code&weight=700&size=28&color=FF4500&center=true&vCenter=true&multiline=true&repeat=false&duration=1500&pause=500&width=860&height=110&lines=Self-hosted+web+search+%2B+fetch+MCP;with+a+dedicated+Reddit+engine" alt="Self-hosted web search + fetch MCP, with a dedicated Reddit engine"/>
+  <img src="https://readme-typing-svg.demolab.com?font=Fira+Code&weight=700&size=28&color=FF4500&center=true&vCenter=true&multiline=true&repeat=false&duration=1500&pause=500&width=860&height=110&lines=Self-hosted+web+search+%2B+fetch+MCP;with+a+dedicated+Reddit+engine+%E2%80%94+and+more" alt="Self-hosted web search + fetch MCP, with a dedicated Reddit engine — and more"/>
 </p>
 
 <p align="center">
@@ -14,10 +14,10 @@
 </p>
 
 <p align="center">
-omnifeed lets an AI agent search the web and read the results, on self-hosted
+omnifeed gives an AI agent the full research loop, <b>search → URLs → content</b>, on self-hosted
 <a href="https://github.com/searxng/searxng">SearXNG</a> and <a href="https://github.com/unclecode/crawl4ai">crawl4ai</a>.
-Its Reddit engine returns full comment trees as <a href="https://github.com/toon-format/toon">TOON</a>,
-lossless and about 40% fewer tokens than JSON, with no Reddit API key. Hacker News, GitHub, Bluesky and Discourse
+Its <b>Reddit engine</b> returns full comment trees as <a href="https://github.com/toon-format/toon">TOON</a>,
+lossless and about 40% fewer tokens than JSON, with <b>no Reddit API key</b>. Hacker News, GitHub, Bluesky and Discourse
 get their own engines too.
 </p>
 
@@ -26,7 +26,7 @@ get their own engines too.
 
 <img src="https://user-images.githubusercontent.com/74038190/212284100-561aa473-3905-4a80-b561-0d28506553ee.gif" width="100%">
 
-## Why omnifeed
+## <img src="https://raw.githubusercontent.com/Tarikul-Islam-Anik/Animated-Fluent-Emojis/master/Emojis/Activities/Sparkles.png" width="26" height="26" /> Why omnifeed
 
 | | omnifeed | Cloud web MCPs and other Reddit MCPs |
 |---|---|---|
@@ -39,7 +39,7 @@ get their own engines too.
 
 <img src="https://user-images.githubusercontent.com/74038190/212284100-561aa473-3905-4a80-b561-0d28506553ee.gif" width="100%">
 
-## Quick start
+## <img src="https://raw.githubusercontent.com/Tarikul-Islam-Anik/Animated-Fluent-Emojis/master/Emojis/Travel%20and%20places/Rocket.png" width="26" height="26" /> Quick start
 
 ```bash
 # Fetch the compose file and SearXNG settings, then start:
@@ -48,13 +48,13 @@ curl -fsSL --create-dirs https://raw.githubusercontent.com/kinorai/omnifeed/main
 docker compose up
 ```
 
-This starts omnifeed, SearXNG and crawl4ai with auth off, because the compose file sets `OMNIFEED_DEV_NO_AUTH=true`. `searxng/settings.yml` enables the `json` format that `web_search` needs. For Open WebUI, set `WEB_LOADER_ENGINE=external` and point it at `http://localhost:8080`. To require a token, see [Authentication](#authentication).
+This starts omnifeed, SearXNG and crawl4ai, <b>tokenless out of the box</b>, because the compose file sets `OMNIFEED_DEV_NO_AUTH=true`. `searxng/settings.yml` enables the `json` format that `web_search` needs. For Open WebUI, set `WEB_LOADER_ENGINE=external` and point it at `http://localhost:8080`. To require a token, see **Authentication** below.
 
-On Apple Silicon you can skip Docker and use Apple's native [`container`](https://github.com/apple/container) runtime. See [docs/apple-container.md](docs/apple-container.md).
+**On Apple Silicon** you can skip Docker and use Apple's native [`container`](https://github.com/apple/container) runtime. See **[docs/apple-container.md](docs/apple-container.md)**.
 
-### As an MCP server
+### <img src="https://raw.githubusercontent.com/Tarikul-Islam-Anik/Animated-Fluent-Emojis/master/Emojis/Objects/Electric%20Plug.png" width="22" height="22" /> As an MCP server
 
-Works with any MCP client, including Claude Code, Cursor, Codex, Gemini CLI, OpenCode, Windsurf and Pi. One endpoint serves the stateless MCP protocol and the older initialize-era revisions. Stateless requests get the spec's HTTP statuses, 400 for header or version violations and 404 for unknown methods. Initialize-era responses stay 200. omnifeed rejects cross-origin browser requests unless [`OMNIFEED_ALLOWED_ORIGINS`](docs/configuration.md) lists them.
+Works with any MCP client, including **Claude Code, Cursor, Codex, Gemini CLI, OpenCode, Windsurf and Pi**. One endpoint serves the stateless MCP protocol and the older initialize-era revisions. Stateless requests get the spec's HTTP statuses, 400 for header or version violations and 404 for unknown methods. Initialize-era responses stay 200. omnifeed rejects cross-origin browser requests unless [`OMNIFEED_ALLOWED_ORIGINS`](docs/configuration.md) lists them.
 
 **HTTP, recommended.** `docker compose up` already serves MCP on `:8081`. Point your client at it:
 
@@ -101,33 +101,33 @@ Spawn the container and tell it where crawl4ai and SearXNG are. omnifeed exits a
 On Linux, add `"--add-host=host.docker.internal:host-gateway"` to the args.
 </details>
 
-`fetch_url` is always available. `web_search` appears only when `OMNIFEED_SEARXNG_URL` is set. The agent calls `web_search`, picks URLs, then calls `fetch_url`.
+**`fetch_url`** is always available. **`web_search`** appears only when `OMNIFEED_SEARXNG_URL` is set. The agent calls `web_search`, picks URLs, then calls `fetch_url`.
 
 `/crawl` returns `[{"page_content": "...", "metadata": {...}}]`, the shape of a LangChain or LlamaIndex `Document`, so a custom document loader takes a few lines.
 
-### Authentication
+### <img src="https://raw.githubusercontent.com/Tarikul-Islam-Anik/Animated-Fluent-Emojis/master/Emojis/Objects/Locked%20with%20Key.png" width="22" height="22" /> Authentication
 
-The compose stack runs with auth off. To require a bearer token, generate one:
+The compose stack runs **tokenless** for local use. To require a bearer token, generate one:
 
 ```bash
 openssl rand -hex 32
 ```
 
-Set `OMNIFEED_API_KEY` to it in `docker-compose.yml` and remove `OMNIFEED_DEV_NO_AUTH`. Clients send it as `Authorization: Bearer <token>`. With neither variable set, omnifeed refuses to start, so it can't be left open by accident. Stdio MCP needs no token. It inherits the trust of the process that spawned it.
+Set `OMNIFEED_API_KEY` to it in `docker-compose.yml` and remove `OMNIFEED_DEV_NO_AUTH`. Clients send it as `Authorization: Bearer <token>`. With neither variable set, omnifeed **refuses to start**, so it can't be left open by accident. Stdio MCP needs no token. It inherits the trust of the process that spawned it.
 
 <img src="https://user-images.githubusercontent.com/74038190/212284100-561aa473-3905-4a80-b561-0d28506553ee.gif" width="100%">
 
-## Configuration
+## <img src="https://raw.githubusercontent.com/Tarikul-Islam-Anik/Animated-Fluent-Emojis/master/Emojis/Objects/Gear.png" width="26" height="26" /> Configuration
 
-omnifeed reads `OMNIFEED_`-prefixed environment variables. You usually set only `OMNIFEED_API_KEY`, `OMNIFEED_CRAWL4AI_URL` and, for search, `OMNIFEED_SEARXNG_URL`.
+omnifeed reads `OMNIFEED_`-prefixed environment variables. You usually **set only three**: `OMNIFEED_API_KEY`, `OMNIFEED_CRAWL4AI_URL` and, for search, `OMNIFEED_SEARXNG_URL`.
 
-[docs/configuration.md](docs/configuration.md) lists every variable, plus fetch truncation (`max_chars` and `start_char`), infinite-scroll fetching, Reddit size limits and Prometheus metrics.
+**[docs/configuration.md](docs/configuration.md)** lists every variable, plus fetch truncation (`max_chars` and `start_char`), infinite-scroll fetching, Reddit size limits and Prometheus metrics.
 
 **Running more than one replica?** Set `OMNIFEED_REDIS_URL` so the rate limiters share state and the deployment obeys one limit. Without it, N replicas send N times the configured rate, which upstream search engines notice. If Redis goes down, the limiters fall back to per-process pacing and crawls keep working.
 
 <img src="https://user-images.githubusercontent.com/74038190/212284100-561aa473-3905-4a80-b561-0d28506553ee.gif" width="100%">
 
-## Architecture
+## <img src="https://raw.githubusercontent.com/Tarikul-Islam-Anik/Animated-Fluent-Emojis/master/Emojis/Travel%20and%20places/Building%20Construction.png" width="26" height="26" /> Architecture
 
 ```mermaid
 %%{init: {"theme":"base","themeVariables":{"background":"transparent","mainBkg":"#161b22","primaryColor":"#161b22","primaryTextColor":"#e6edf3","primaryBorderColor":"#FF4500","lineColor":"#8b949e","secondaryColor":"#161b22","tertiaryColor":"#161b22"},"flowchart":{"curve":"basis","htmlLabels":false}}}%%
@@ -162,22 +162,22 @@ flowchart TB
   class e1,e2,e3,e4,e5,e6,e7,e8,e9,e10,e11,e12,e13,e14,e15,e16,e17 animate;
 ```
 
-### Reddit anti-bot handling
+### <img src="https://raw.githubusercontent.com/Tarikul-Islam-Anik/Animated-Fluent-Emojis/master/Emojis/Objects/Shield.png" width="22" height="22" /> Reddit anti-bot handling
 
-Reddit 403-blocks non-browser HTTP clients. The Reddit engine drives a real headless browser to a `www.reddit.com` page and fetches Reddit's JSON from inside it, with no auth, cookies or API key. Sustained scraping can still raise your IP's risk score, so slow down if fetches return the block page. [Details and tuning](docs/configuration.md#reddit-anti-bot-handling).
+Reddit 403-blocks non-browser HTTP clients. The Reddit engine drives a **real headless browser** to a `www.reddit.com` page and fetches Reddit's JSON from inside it, with no auth, cookies or API key. Sustained scraping can still raise your IP's risk score, so slow down if fetches return the block page. [Details and tuning](docs/configuration.md#reddit-anti-bot-handling).
 
-### Extending it
+### <img src="https://raw.githubusercontent.com/Tarikul-Islam-Anik/Animated-Fluent-Emojis/master/Emojis/Activities/Puzzle%20Piece.png" width="22" height="22" /> Extending it
 
-Engines, searchers, MCP tools and transports each plug into one small port. [AGENTS.md, Adding things](AGENTS.md#adding-things) has the steps.
+Engines, searchers, MCP tools and transports each plug into one small port. **[AGENTS.md, Adding things](AGENTS.md#adding-things)** has the steps.
 
 <img src="https://user-images.githubusercontent.com/74038190/212284100-561aa473-3905-4a80-b561-0d28506553ee.gif" width="100%">
 
-## Development
+## <img src="https://raw.githubusercontent.com/Tarikul-Islam-Anik/Animated-Fluent-Emojis/master/Emojis/Objects/Hammer%20and%20Wrench.png" width="26" height="26" /> Development
 
 ```bash
 git clone https://github.com/kinorai/omnifeed.git && cd omnifeed
 make check        # vet + lint + test, hermetic: no upstreams or token needed
-docker compose up # full stack, auth off, ports 8080 / 8081 / 9090
+docker compose up # full stack, tokenless, ports 8080 / 8081 / 9090
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the workflow and [SECURITY.md](SECURITY.md) to report a vulnerability. Coding agents read [AGENTS.md](AGENTS.md).
@@ -186,21 +186,21 @@ Prometheus metrics are on `:9090/metrics`. [docs/configuration.md](docs/configur
 
 <img src="https://user-images.githubusercontent.com/74038190/212284100-561aa473-3905-4a80-b561-0d28506553ee.gif" width="100%">
 
-## Contributing
+## <img src="https://raw.githubusercontent.com/Tarikul-Islam-Anik/Animated-Fluent-Emojis/master/Emojis/Hand%20gestures/Handshake.png" width="26" height="26" /> Contributing
 
 <div align="center">
 
 **If omnifeed is useful, star it so others find it.**
 
-[![Star](https://img.shields.io/badge/Star_omnifeed-FF4500?style=for-the-badge)](https://github.com/kinorai/omnifeed)
-[![Open an issue](https://img.shields.io/badge/Open_an_issue-161b22?style=for-the-badge)](https://github.com/kinorai/omnifeed/issues/new)
-[![Submit a PR](https://img.shields.io/badge/Submit_a_PR-7C3AED?style=for-the-badge)](https://github.com/kinorai/omnifeed/pulls)
+[![Star](https://img.shields.io/badge/⭐_Star_omnifeed-FF4500?style=for-the-badge)](https://github.com/kinorai/omnifeed)
+[![Open an issue](https://img.shields.io/badge/🐛_Open_an_Issue-161b22?style=for-the-badge)](https://github.com/kinorai/omnifeed/issues/new)
+[![Submit a PR](https://img.shields.io/badge/🔧_Submit_a_PR-7C3AED?style=for-the-badge)](https://github.com/kinorai/omnifeed/pulls)
 
 </div>
 
 New engines, searchers, MCP tools and transports are welcome. Start with [AGENTS.md](AGENTS.md#adding-things) and [CONTRIBUTING.md](CONTRIBUTING.md).
 
-## License
+## <img src="https://raw.githubusercontent.com/Tarikul-Islam-Anik/Animated-Fluent-Emojis/master/Emojis/Objects/Page%20Facing%20Up.png" width="26" height="26" /> License
 
 [MIT](LICENSE) © kinorai
 
