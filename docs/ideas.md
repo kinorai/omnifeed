@@ -1,6 +1,6 @@
 # Ideas and parked work
 
-Ideas considered for omnifeed that are not in the code, and why. One entry per idea,
+Ideas considered for omnifeed that are **not** in the code, and why. One entry per idea,
 newest first.
 
 A rejected idea should stay rejected for a reason, and a good idea that came at the
@@ -41,7 +41,7 @@ Measured 2026-08-21 on three Hacker News front-page URLs:
 | `md.dhr.wtf/?url=` | fail | fail (401) | fail |
 | `archive.is/newest/{url}` | CAPTCHA | CAPTCHA | CAPTCHA |
 
-The WSJ soft-fail decides it. `r.jina.ai` returned HTTP 200 with an empty body, so a
+The WSJ soft-fail decides it. `r.jina.ai` returned **HTTP 200** with an empty body, so a
 caller-side "on failure, try the proxy" rule never fires, and the caller summarizes an
 empty article. omnifeed already classifies this: `internal/antibot` detects block and
 CAPTCHA pages, and it correctly turned the direct WSJ attempt into a 500.
@@ -98,7 +98,7 @@ and use it only as a fallback, never the primary path.
 
 The Hacker News engine builds its tree from Algolia `/items/{id}`, which returns nested
 `children`. Algolia leaves dead (flagged) comments out of that tree, and because the
-tree is nested, dropping a node drops its whole subtree, live replies included.
+tree is nested, dropping a node **drops its whole subtree**, live replies included.
 
 The fix builds from the flat endpoint,
 `/search?tags=comment,story_<id>&hitsPerPage=1000`, and rebuilds the hierarchy from
@@ -123,7 +123,7 @@ whole thread.
 
 ### Why it is parked
 
-The caller who asked wanted the flagged comment itself, not its replies. Neither
+The caller who asked wanted the **flagged comment itself**, not its replies. Neither
 Algolia endpoint returns it, because comment search also excludes the dead node.
 Firebase returns `dead: True` with the text `[flagged]`. That leaves HN's own HTML,
 where that thread has 73 `noshow` rows that may carry the real text. That is
@@ -169,7 +169,7 @@ port) and Bluesky (`app.bsky.feed.searchPosts`).
 ### Why it was removed
 
 The code was tested and worked. The problem it solved turned out to be one
-deployment's engine pool configuration, and fixing that made the verticals redundant
+deployment's engine pool **configuration**, and fixing that made the verticals redundant
 there.
 
 Measured 2026-08-18, four queries, `site=reddit.com`:
