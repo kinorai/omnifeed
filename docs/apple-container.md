@@ -8,8 +8,8 @@ git clone https://github.com/kinorai/omnifeed.git && cd omnifeed
 ./scripts/container up        # or: make container-up
 ```
 
-You get the same stack as `docker compose up`, SearXNG, crawl4ai and omnifeed with auth
-off. omnifeed serves `/crawl` and `/search` on `http://localhost:8080`, MCP on
+You get the same stack as `docker compose up`, SearXNG, crawl4ai and omnifeed, **tokenless
+out of the box**. omnifeed serves `/crawl` and `/search` on `http://localhost:8080`, MCP on
 `:8081/mcp`, and health and metrics on `:9090`.
 
 | Command | Does |
@@ -67,9 +67,9 @@ to `json`, and your values override both.
 
 `up` names its containers `searxng`, `crawl4ai` and `omnifeed`, and publishes host
 ports `8080`, `8081`, `9090` and `11235`. Run it with those defaults from a second
-clone and it adopts the running `searxng` and `crawl4ai`, then removes and recreates
-the running `omnifeed`. The Docker Compose stack publishes the same four ports, so the
-two collide too.
+clone and it does **not** start a second stack. It adopts the running `searxng` and
+`crawl4ai`, then removes and recreates the running `omnifeed`. The Docker Compose
+stack publishes the same four ports, so the two collide too.
 
 Give the second copy its own name prefix and ports:
 
