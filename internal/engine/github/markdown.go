@@ -41,14 +41,15 @@ var (
 	imageOnlyLineRE = regexp.MustCompile(`^\s*((\[\s*)?!\[[^\]]*\]\([^)]*\)(\s*\]\([^)]*\))?\s*)+$`)
 	// Link destinations: inline "](dest" and reference definitions "[x]: dest".
 	inlineLinkRE = regexp.MustCompile(`\]\(\s*(<[^>]*>|[^()\s]+)`)
-	refDefRE     = regexp.MustCompile(`(?m)^( {0,3}\[[^\]]+\]:\s*)(<[^>]*>|\S+)`)
-	htmlAttrRE   = regexp.MustCompile(`(?i)\b(href|src)\s*=\s*"([^"]*)"`)
-	schemeRE     = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9+.-]*:`)
-	fenceRE      = regexp.MustCompile("^ {0,3}(```+|~~~+)")
-	headingRE    = regexp.MustCompile(`^(#{1,6})(\s)`)
-	blankRunRE   = regexp.MustCompile(`\n{3,}`)
-	spaceRunRE   = regexp.MustCompile(`\s+`)
-	imageExtRE   = regexp.MustCompile(`(?i)\.(png|jpe?g|gif|svg|webp|avif|bmp|ico)$`)
+	// Footnote definitions ("[^1]: text") are not links and are skipped.
+	refDefRE   = regexp.MustCompile(`(?m)^( {0,3}\[[^\]^][^\]]*\]:\s*)(<[^>]*>|\S+)`)
+	htmlAttrRE = regexp.MustCompile(`(?i)\b(href|src)\s*=\s*"([^"]*)"`)
+	schemeRE   = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9+.-]*:`)
+	fenceRE    = regexp.MustCompile("^ {0,3}(```+|~~~+)")
+	headingRE  = regexp.MustCompile(`^(#{1,6})(\s)`)
+	blankRunRE = regexp.MustCompile(`\n{3,}`)
+	spaceRunRE = regexp.MustCompile(`\s+`)
+	imageExtRE = regexp.MustCompile(`(?i)\.(png|jpe?g|gif|svg|webp|avif|bmp|ico)$`)
 )
 
 // cleanMarkdown turns a repository markdown file (README and friends) into

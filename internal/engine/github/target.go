@@ -67,8 +67,9 @@ var (
 )
 
 // reservedOwners are first path segments of github.com that are site pages, not
-// accounts, so /{segment}/{x} is never a repository (e.g. /topics/go,
-// /orgs/kinorai). Claiming them would cost an API 404 and a fallback.
+// accounts, so /{segment}/{x}/… is never a repository (e.g. /topics/go,
+// /orgs/kinorai, /orgs/kinorai/discussions/1). Claiming them would cost an API
+// 404 and a fallback.
 var reservedOwners = map[string]bool{
 	"about": true, "account": true, "advisories": true, "apps": true, "codespaces": true,
 	"collections": true, "contact": true, "copilot": true, "customer-stories": true,
@@ -101,6 +102,9 @@ func parseTarget(rawURL string) (target, bool) {
 		// Other subdomains (docs., api., skills., …) are not repository hosts.
 		return target{}, false
 	}
+	if owner, _, _ := strings.Cut(strings.TrimPrefix(p, "/"), "/"); reservedOwners[strings.ToLower(owner)] {
+		return target{}, false
+	}
 
 	if m := issuePullRE.FindStringSubmatch(p); m != nil {
 		t := target{kind: kindIssue, owner: m[1], repo: m[2], number: m[4], pull: m[3] == "pull"}
@@ -110,9 +114,6 @@ func parseTarget(rawURL string) (target, bool) {
 		return t, true
 	}
 	if m := repoRE.FindStringSubmatch(p); m != nil {
-		if reservedOwners[strings.ToLower(m[1])] {
-			return target{}, false
-		}
 		return target{kind: kindRepo, owner: m[1], repo: m[2]}, true
 	}
 	if m := blobTreeRE.FindStringSubmatch(p); m != nil {

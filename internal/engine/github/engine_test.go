@@ -70,6 +70,7 @@ func TestMatches(t *testing.T) {
 		"https://github.com/search",                                    // site page
 		"https://github.com/topics/go",                                 // reserved owner
 		"https://github.com/orgs/kinorai",                              // reserved owner
+		"https://github.com/orgs/kinorai/discussions/1",                // org discussion, not a repo
 		"https://github.com/settings/profile",                          // reserved owner
 		"https://gist.github.com/kinorai",                              // gist user page
 		"https://gist.github.com/abc",                                  // short bare segment

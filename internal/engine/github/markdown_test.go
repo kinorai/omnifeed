@@ -38,6 +38,7 @@ func TestCleanMarkdown(t *testing.T) {
 		`* Tool: [![Report](https://goreportcard.com/badge/x)](https://goreportcard.com/report/x) see [ref][r]`,
 		``, ``, ``,
 		`[r]: CONTRIBUTING.md`,
+		`[^1]: A footnote.`,
 		"```html",
 		`<p><img src="kept.png"></p> [kept](kept.md)`,
 		"```",
@@ -49,6 +50,7 @@ func TestCleanMarkdown(t *testing.T) {
 		"![shot](https://raw.githubusercontent.com/o/r/main/shot.png)", // a screenshot, not a badge
 		"* Tool:  see [ref][r]",
 		"[r]: https://github.com/o/r/blob/main/CONTRIBUTING.md",
+		"[^1]: A footnote.",                                           // a footnote, not a link definition
 		"```html\n<p><img src=\"kept.png\"></p> [kept](kept.md)\n```", // code untouched
 	} {
 		if !strings.Contains(got, want) {
@@ -106,5 +108,19 @@ func TestCodeLang(t *testing.T) {
 		if got := codeLang(name); got != want {
 			t.Errorf("codeLang(%q) = %q, want %q", name, got, want)
 		}
+	}
+}
+
+// A multi-byte character split by the binary-sniff window is still text.
+func TestIsBinary(t *testing.T) {
+	text := []byte(strings.Repeat("a", binarySniff-1) + "é") // é straddles the window
+	if isBinary(text) {
+		t.Error("UTF-8 text split at the sniff window reported binary")
+	}
+	if !isBinary([]byte("PNG\x00data")) {
+		t.Error("NUL byte not reported binary")
+	}
+	if !isBinary([]byte{0xff, 0xfe, 'a'}) {
+		t.Error("invalid UTF-8 not reported binary")
 	}
 }
