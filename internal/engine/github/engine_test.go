@@ -16,8 +16,9 @@ import (
 	"github.com/kinorai/omnifeed/internal/httpx"
 )
 
-// Matches must claim issue and pull-request pages only; every other github.com
-// URL falls through to the generic crawl4ai fallback.
+// Matches must claim exactly the page kinds this engine renders; every other
+// github.com URL falls through to the generic crawl4ai fallback. parseTarget's
+// own table (target_test.go) checks what each claimed URL resolves to.
 func TestMatches(t *testing.T) {
 	e := &Engine{}
 
@@ -27,9 +28,21 @@ func TestMatches(t *testing.T) {
 		"https://github.com/kinorai/omnifeed/issues/12/",                 // trailing slash
 		"https://github.com/kinorai/omnifeed/issues/12#issuecomment-999", // fragment
 		"https://github.com/kinorai/omnifeed/pull/3?w=1",                 // query
-		"https://www.github.com/kinorai/omnifeed/issues/12",              // subdomain
+		"https://www.github.com/kinorai/omnifeed/issues/12",              // www
 		"https://github.com/unclecode/crawl4ai/pull/2111",
 		"https://github.com/some-org/repo.name_x/issues/1", // name charset
+		"https://github.com/kinorai/omnifeed",              // repo root
+		"https://github.com/kinorai/omnifeed/",
+		"https://github.com/kinorai/omnifeed/blob/main/README.md",
+		"https://github.com/kinorai/omnifeed/tree/main/internal",
+		"https://github.com/kinorai/omnifeed/tree/main",
+		"https://github.com/kinorai/omnifeed/releases",
+		"https://github.com/kinorai/omnifeed/releases/latest",
+		"https://github.com/kinorai/omnifeed/releases/tag/v0.14.0",
+		"https://github.com/kinorai/omnifeed/commit/06c08d2",
+		"https://github.com/kinorai/omnifeed/pull/3/commits/06c08d2f65a43b5d4146446ed86bb35ac4d0d467",
+		"https://gist.github.com/kinorai/deadbeef",
+		"https://gist.github.com/aa5a315d61ae9438b18d0123456789ab",
 	}
 	for _, u := range claim {
 		if !e.Matches(u) {
@@ -38,19 +51,29 @@ func TestMatches(t *testing.T) {
 	}
 
 	fallThrough := []string{
-		"https://github.com/kinorai/omnifeed",                          // repo root
 		"https://github.com/some.owner/repo/issues/1",                  // dot in an owner name
 		"https://github.com/kinorai",                                   // owner
 		"https://github.com/kinorai/omnifeed/issues",                   // issue list
 		"https://github.com/kinorai/omnifeed/pulls",                    // PR list
 		"https://github.com/kinorai/omnifeed/issues/abc",               // non-numeric
 		"https://github.com/kinorai/omnifeed/pull/3/files",             // sub-page
-		"https://github.com/kinorai/omnifeed/blob/main/README.md",      // blob
-		"https://github.com/kinorai/omnifeed/tree/main/internal",       // tree
+		"https://github.com/kinorai/omnifeed/blob/main",                // blob without a path
 		"https://github.com/kinorai/omnifeed/actions",                  // actions
-		"https://github.com/kinorai/omnifeed/releases/tag/v0.14.0",     // releases
-		"https://github.com/kinorai/omnifeed/discussions/7",            // discussions
-		"https://gist.github.com/kinorai/deadbeef",                     // gist
+		"https://github.com/kinorai/omnifeed/actions/runs/1",           // actions run
+		"https://github.com/kinorai/omnifeed/wiki",                     // wiki
+		"https://github.com/kinorai/omnifeed/compare/v1...v2",          // compare
+		"https://github.com/kinorai/omnifeed/settings",                 // settings
+		"https://github.com/kinorai/omnifeed/commits/main",             // commit list
+		"https://github.com/kinorai/omnifeed/commit/xyz",               // not a sha
+		"https://github.com/kinorai/omnifeed/discussions/7",            // discussions need a token
+		"https://github.com/kinorai/omnifeed/discussions",              // discussion list
+		"https://github.com/search",                                    // site page
+		"https://github.com/topics/go",                                 // reserved owner
+		"https://github.com/orgs/kinorai",                              // reserved owner
+		"https://github.com/settings/profile",                          // reserved owner
+		"https://gist.github.com/kinorai",                              // gist user page
+		"https://gist.github.com/abc",                                  // short bare segment
+		"https://docs.github.com/en/rest/repos",                        // other subdomain
 		"https://example.com/kinorai/omnifeed/issues/12",               // not GitHub
 		"https://github.com.evil.com/kinorai/omnifeed/issues/12",       // lookalike host
 		"https://raw.githubusercontent.com/kinorai/omnifeed/issues/12", // not github.com
@@ -59,6 +82,19 @@ func TestMatches(t *testing.T) {
 		if e.Matches(u) {
 			t.Errorf("Matches(%q) = true, want false (should fall through)", u)
 		}
+	}
+}
+
+// Discussions are read through GraphQL, which rejects anonymous callers: they
+// are claimed only when a token is configured, so without one the generic
+// engine renders them instead of the GitHub engine failing.
+func TestMatchesDiscussionNeedsToken(t *testing.T) {
+	u := "https://github.com/kinorai/omnifeed/discussions/7"
+	if (&Engine{}).Matches(u) {
+		t.Errorf("anonymous engine claimed %q", u)
+	}
+	if !(&Engine{token: "t"}).Matches(u) {
+		t.Errorf("engine with a token did not claim %q", u)
 	}
 }
 
@@ -98,6 +134,10 @@ func TestCrawlIssuePaginatesComments(t *testing.T) {
 	}
 	if doc.Metadata["comments"] != "2" {
 		t.Fatalf("comments = %q, want 2\n%s", doc.Metadata["comments"], doc.PageContent)
+	}
+	// The title heads the document as a markdown H1, ahead of the TOON body.
+	if !strings.HasPrefix(doc.PageContent, "# Crash on startup\n\nissue:\n") {
+		t.Errorf("document does not start with the title heading:\n%s", doc.PageContent)
 	}
 	if got := doc.Metadata[domain.ContentTypeKey]; got != domain.ContentTypeTOON {
 		t.Fatalf("content_type = %q, want %q", got, domain.ContentTypeTOON)
@@ -204,6 +244,9 @@ func TestCrawlPullRequest(t *testing.T) {
 	}
 	if got := doc.Metadata[domain.ContentTypeKey]; got != domain.ContentTypeTOON {
 		t.Fatalf("content_type = %q, want %q", got, domain.ContentTypeTOON)
+	}
+	if !strings.HasPrefix(doc.PageContent, "# Add engine\n\npr:\n") {
+		t.Errorf("document does not start with the title heading:\n%s", doc.PageContent)
 	}
 	if doc.Metadata["comments"] != "1" {
 		t.Errorf("comments = %q, want 1", doc.Metadata["comments"])

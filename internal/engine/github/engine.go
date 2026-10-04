@@ -3,11 +3,11 @@ package github
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -28,18 +28,11 @@ const (
 	userAgent      = "omnifeed"       // GitHub rejects requests without a User-Agent
 )
 
-// hostMatcher matches github.com and its subdomains.
-var hostMatcher = httpx.HostMatcher("github.com")
-
-// targetRE claims exactly the two page kinds this engine renders. Owner names are
-// [A-Za-z0-9-]; repository names additionally allow "." and "_".
-var targetRE = regexp.MustCompile(`^/([A-Za-z0-9-]+)/([A-Za-z0-9._-]+)/(issues|pull)/([0-9]+)$`)
-
 // linkNextRE extracts the rel="next" URL from a Link response header.
 var linkNextRE = regexp.MustCompile(`<([^>]+)>\s*;\s*rel="next"`)
 
-// Engine implements domain.Engine for GitHub issue and pull-request URLs via the
-// REST API.
+// Engine implements domain.Engine for github.com and gist.github.com pages via
+// the GitHub REST API (and GraphQL for discussions).
 type Engine struct {
 	client  *httpx.Client
 	limiter httpx.Limiter
@@ -83,42 +76,23 @@ func New(cfg Config) *Engine {
 // Name returns the engine identifier ("github").
 func (*Engine) Name() string { return "github" }
 
-// Matches claims only the github.com URLs this engine renders: issue and pull
-// request pages. Everything else on the host (blob/tree/actions/releases/
-// discussions, repo roots, …) falls through to the generic fallback, which
-// renders the page through crawl4ai.
-func (*Engine) Matches(rawURL string) bool {
-	_, ok := parseTarget(rawURL)
+// Matches claims only the GitHub URLs this engine renders: repository roots,
+// files (blob), directories (tree), issues, pull requests, commits, releases,
+// discussions, and gists. Everything else on the host (actions, wiki, compare,
+// issue lists, settings, search, …) falls through to the generic fallback,
+// which renders the page through crawl4ai. Discussions need GraphQL, which
+// requires a token, so without one they fall through too.
+func (e *Engine) Matches(rawURL string) bool {
+	t, ok := parseTarget(rawURL)
+	if ok && t.kind == kindDiscussion && e.token == "" {
+		return false
+	}
 	return ok
 }
 
-// target is the resolved fetch plan for a GitHub URL.
-type target struct {
-	owner  string
-	repo   string
-	number string
-	pull   bool // /pull/{n} rather than /issues/{n}
-}
-
-// parseTarget classifies a GitHub URL into a fetch plan. ok is false for any
-// github.com URL this engine doesn't render (so it falls through).
-func parseTarget(rawURL string) (target, bool) {
-	u, err := url.Parse(rawURL)
-	if err != nil || !hostMatcher.MatchString(u.Hostname()) {
-		return target{}, false
-	}
-	// url.Parse already split off the query and fragment; normalize a trailing
-	// slash so /issues/12/ matches like /issues/12.
-	p := strings.TrimSuffix(u.Path, "/")
-	m := targetRE.FindStringSubmatch(p)
-	if m == nil {
-		return target{}, false
-	}
-	return target{owner: m[1], repo: m[2], number: m[4], pull: m[3] == "pull"}, true
-}
-
-// Crawl fetches the issue or pull request behind rawURL from the GitHub REST API
-// and returns it encoded as TOON.
+// Crawl fetches the page behind rawURL from the GitHub API. Issues and pull
+// requests are returned as TOON (headed by a markdown title line); every other
+// kind as markdown, which the transports may truncate to max_chars.
 func (e *Engine) Crawl(ctx context.Context, rawURL string, _ domain.EngineOptions) (domain.Document, error) {
 	t, ok := parseTarget(rawURL)
 	if !ok {
@@ -145,10 +119,29 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, _ domain.EngineOption
 		defer release()
 	}
 
-	if t.pull {
+	switch t.kind {
+	case kindPull:
 		return e.crawlPull(ctx, rawURL, t)
+	case kindIssue:
+		return e.crawlIssue(ctx, rawURL, t)
+	case kindRepo:
+		return e.crawlRepo(ctx, rawURL, t)
+	case kindBlob:
+		return e.crawlBlob(ctx, rawURL, t)
+	case kindTree:
+		return e.crawlTree(ctx, rawURL, t)
+	case kindReleases:
+		return e.crawlReleases(ctx, rawURL, t)
+	case kindRelease, kindLatestRelease:
+		return e.crawlRelease(ctx, rawURL, t)
+	case kindDiscussion:
+		return e.crawlDiscussion(ctx, rawURL, t)
+	case kindCommit:
+		return e.crawlCommit(ctx, rawURL, t)
+	case kindGist:
+		return e.crawlGist(ctx, rawURL, t)
 	}
-	return e.crawlIssue(ctx, rawURL, t)
+	return domain.Document{}, fmt.Errorf("unsupported github url: %s", rawURL)
 }
 
 // crawlIssue fetches the issue plus its (paginated) conversation comments.
@@ -184,7 +177,7 @@ func (e *Engine) crawlIssue(ctx context.Context, rawURL string, t target) (domai
 		meta["truncated_from"] = strconv.Itoa(from)
 		th.Note = fmt.Sprintf("comment list truncated: showing %d of %d comments", len(comments), from)
 	}
-	return e.document(th, rawURL, meta)
+	return e.document(th, ai.Title, rawURL, meta)
 }
 
 // crawlPull fetches the PR plus its conversation comments, reviews, inline review
@@ -315,7 +308,7 @@ func (e *Engine) crawlPull(ctx context.Context, rawURL string, t target) (domain
 		Reviews:        reviews,
 		InlineComments: inline,
 		Files:          files,
-	}, rawURL, meta)
+	}, ap.Title, rawURL, meta)
 }
 
 // runAll runs the given functions concurrently and waits for all of them; the
@@ -409,22 +402,42 @@ func budgetFiles(af []apiFile) ([]File, bool) {
 	return files, truncated
 }
 
-// repoURL builds an API URL under /repos/{owner}/{repo}/.
+// repoURL builds an API URL under /repos/{owner}/{repo}; an empty suffix is
+// the repository itself.
 func (e *Engine) repoURL(t target, suffix string) string {
-	return e.apiBase + "/repos/" + t.owner + "/" + t.repo + "/" + suffix
+	u := e.apiBase + "/repos/" + t.owner + "/" + t.repo
+	if suffix != "" {
+		u += "/" + suffix
+	}
+	return u
 }
 
 // get fetches a GitHub API URL and returns the raw JSON body and the response
 // headers (the caller needs Link for pagination).
 func (e *Engine) get(ctx context.Context, apiURL string) ([]byte, http.Header, error) {
+	return e.do(ctx, http.MethodGet, apiURL, nil, "application/vnd.github+json")
+}
+
+// getRaw fetches a file's raw bytes from the contents API.
+func (e *Engine) getRaw(ctx context.Context, apiURL string) ([]byte, error) {
+	body, _, err := e.do(ctx, http.MethodGet, apiURL, nil, "application/vnd.github.raw+json")
+	return body, err
+}
+
+// do sends one API request with the headers GitHub requires (and the token, if
+// configured) and returns the body of a 200 response.
+func (e *Engine) do(ctx context.Context, method, apiURL string, reqBody []byte, accept string) ([]byte, http.Header, error) {
 	headers := map[string]string{
-		"Accept":     "application/vnd.github+json",
+		"Accept":     accept,
 		"User-Agent": userAgent,
 	}
 	if e.token != "" {
 		headers["Authorization"] = "Bearer " + e.token
 	}
-	resp, err := e.client.DoRetry(ctx, http.MethodGet, apiURL, nil, headers, httpx.RetryConfig{})
+	if reqBody != nil {
+		headers["Content-Type"] = "application/json"
+	}
+	resp, err := e.client.DoRetry(ctx, method, apiURL, reqBody, headers, httpx.RetryConfig{})
 	if err != nil {
 		return nil, nil, httpx.ClassifyClientError(err, domain.KindUpstreamError)
 	}
@@ -442,6 +455,13 @@ func (e *Engine) get(ctx context.Context, apiURL string) ([]byte, http.Header, e
 		}
 	}
 	return body, resp.Header, nil
+}
+
+// isNotFound reports whether err is an API 404 — an optional resource (README,
+// latest release) that simply doesn't exist, or a wrong ref/path split.
+func isNotFound(err error) bool {
+	var fe *domain.FetchError
+	return errors.As(err, &fe) && fe.StatusCode == http.StatusNotFound
 }
 
 // nextLink returns the rel="next" URL of a Link response header, or "".
@@ -465,21 +485,36 @@ func labelNames(labels []apiLabel) []string {
 	return out
 }
 
-// document encodes v as TOON and wraps it in a Document with standard metadata.
-func (e *Engine) document(v any, source string, extra map[string]string) (domain.Document, error) {
+// document encodes v as TOON, heads it with a "# title" markdown line (so a
+// reader, human or program, gets the page title without parsing the TOON), and
+// wraps it in a Document with standard metadata.
+func (e *Engine) document(v any, title, source string, extra map[string]string) (domain.Document, error) {
 	encoded, err := toon.Marshal(v, toon.WithLengthMarkers(true))
 	if err != nil {
 		return domain.Document{}, fmt.Errorf("encode: %w", err)
 	}
+	content := string(encoded)
+	if title = oneLine(title); title != "" {
+		content = "# " + title + "\n\n" + content
+	}
+	return e.finish(content, domain.ContentTypeTOON, source, extra), nil
+}
+
+// markdownDocument wraps rendered markdown in a Document with standard metadata.
+func (e *Engine) markdownDocument(content, source string, extra map[string]string) domain.Document {
+	return e.finish(strings.TrimSpace(content)+"\n", domain.ContentTypeMarkdown, source, extra)
+}
+
+func (e *Engine) finish(content, contentType, source string, extra map[string]string) domain.Document {
 	meta := map[string]string{
 		"source":              source,
 		"engine":              "github",
 		"status_code":         "200",
-		domain.ContentTypeKey: domain.ContentTypeTOON,
+		domain.ContentTypeKey: contentType,
 	}
 	for k, val := range extra {
 		meta[k] = val
 	}
-	e.logger.Info("github crawl complete", "source", source, "bytes", len(encoded))
-	return domain.Document{PageContent: string(encoded), Metadata: meta}, nil
+	e.logger.Info("github crawl complete", "source", source, "bytes", len(content))
+	return domain.Document{PageContent: content, Metadata: meta}
 }

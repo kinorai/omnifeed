@@ -1,0 +1,47 @@
+[
+ {
+  "name": ".helmignore",
+  "size": 333,
+  "type": "file"
+ },
+ {
+  "name": "Chart.yaml",
+  "size": 872,
+  "type": "file"
+ },
+ {
+  "name": "README.md",
+  "size": 65069,
+  "type": "file"
+ },
+ {
+  "name": "README.md.gotmpl",
+  "size": 11934,
+  "type": "file"
+ },
+ {
+  "name": "app-readme.md",
+  "size": 793,
+  "type": "file"
+ },
+ {
+  "name": "ocp-readme.md",
+  "size": 6601,
+  "type": "file"
+ },
+ {
+  "name": "questions.yaml",
+  "size": 79754,
+  "type": "file"
+ },
+ {
+  "name": "templates",
+  "size": 0,
+  "type": "dir"
+ },
+ {
+  "name": "values.yaml",
+  "size": 58336,
+  "type": "file"
+ }
+]

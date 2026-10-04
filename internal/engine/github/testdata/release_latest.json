@@ -1,0 +1,24 @@
+{
+ "assets": [
+  {
+   "download_count": 11,
+   "name": "changelog.md",
+   "size": 182199
+  },
+  {
+   "download_count": 10,
+   "name": "charts.tar.gz",
+   "size": 933740
+  }
+ ],
+ "author": {
+  "login": "derekbit"
+ },
+ "body": "# Longhorn v1.13.0 Release Notes\r\n\r\nThe Longhorn team is excited to announce the release of Longhorn v1.13.0. This feature release brings **live upgrade** to the **V2 Data Engine**, which reached general availability in v1.12.0. V2 volumes can now stay attached while Longhorn is upgraded, as long as your cluster meets the [live upgrade prerequisites](https://longhorn.io/docs/1.13.0/deploy/upgrade/v2-instance-upgrade/#prerequisites).\r\n\r\nLonghorn v1.13.0 also introduces full interrupt mode for the V2 Data Engine, volume group snapshots, age-based retention for recurring jobs, topology-constrained replica scheduling, a scheduler extender, and the `longhorn-global-manager` Deployment that lowers control-plane overhead in large clusters.\r\n\r\nFor terminology and background on Longhorn releases, see [Releases](https://github.com/longhorn/longhorn#releases).\r\n\r\n## Breaking Changes\r\n\r\n### Kubernetes v1.34 Minimum Version\r\n\r\nBecause the CSI external-provisioner is upgraded to v6.3.0, all clusters must be running Kubernetes v1.34 or later before installing or upgrading to Longhorn v1.13.0.\r\n\r\n### Legacy V2 Linked-Clone Volumes\r\n\r\nSince v1.12.1, V2 linked-clone volumes created in Longhorn v1.12.0 or earlier **can only be detached or deleted**. To replace one, create a new linked clone from the same source volume; no data copy is required.\r\n\r\n[GitHub Issue #12552](https://github.com/longhorn/longhorn/issues/12552)\r\n\r\n## Primary Highlights\r\n\r\n### V2 Data Engine\r\n\r\nThe V2 Data Engine became generally available in Longhorn v1.12.0. Longhorn v1.13.0 adds live upgrade and full interrupt mode, and enables CPU isolation by default for new installations.\r\n\r\n> [!IMPORTANT]\r\n> **V2 Volume Attach Latency at Scale:**\r\n>\r\n> In clusters with many attached V2 volumes, attaching additional volumes takes longer. The root cause is under investigation. For follow-up status, see [Issue #13241](https://github.com/longhorn/longhorn/issues/13241).\r\n>\r\n> **ARM64 NVMe-backed Block-Type Node Disk Limitation:**\r\n>\r\n> On ARM64 systems, V2 volumes may experience stuck I/O when SPDK is configured with two or more CPU cores and node disks use the NVMe driver. The root cause is under investigation. As a workaround, use [AIO-backed node disks](https://longhorn.io/docs/1.13.0/nodes-and-volumes/nodes/multidisk/#using-aio-disks) instead of [NVMe-backed node disks](https://longhorn.io/docs/1.13.0/nodes-and-volumes/nodes/multidisk/#using-nvme-disks) on ARM64 systems. For follow-up status, see [Issue #13243](https://github.com/longhorn/longhorn/issues/13243).\r\n>\r\n> **UBLK Frontend Kernel Limitation:**\r\n>\r\n",
+ "draft": false,
+ "html_url": "https://github.com/longhorn/longhorn/releases/tag/v1.13.0",
+ "name": "Longhorn v1.13.0",
+ "prerelease": false,
+ "published_at": "2026-09-29T09:13:24Z",
+ "tag_name": "v1.13.0"
+}

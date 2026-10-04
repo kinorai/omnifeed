@@ -1,0 +1,25 @@
+{
+ "archived": false,
+ "default_branch": "master",
+ "description": "Cloud-Native distributed storage built on and for Kubernetes",
+ "forks_count": 739,
+ "full_name": "longhorn/longhorn",
+ "homepage": "https://longhorn.io",
+ "language": "Shell",
+ "license": {
+  "name": "Apache License 2.0",
+  "spdx_id": "Apache-2.0"
+ },
+ "open_issues_count": 1929,
+ "pushed_at": "2026-10-04T02:11:39Z",
+ "stargazers_count": 8017,
+ "topics": [
+  "cncf",
+  "distributed-systems",
+  "high-availability",
+  "k8s-sig-storage",
+  "kubernetes",
+  "longhorn",
+  "storage"
+ ]
+}

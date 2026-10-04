@@ -1,0 +1,17 @@
+{
+ "created_at": "2008-07-15T18:17:13Z",
+ "description": "the meaning of gist",
+ "files": {
+  "gistfile1.txt": {
+   "content": "This is gist. \nThere are many like it, but this one is mine. \nIt is my life. \nI must master it as I must master my life. \nWithout me gist is useless. \nWithout gist, I am useless.",
+   "language": "Text",
+   "raw_url": "https://gist.githubusercontent.com/schacon/1/raw/9b2ac7c792209f19e157ddaf00f8946edc306a6b/gistfile1.txt",
+   "size": 178,
+   "truncated": false
+  }
+ },
+ "owner": {
+  "login": "schacon"
+ },
+ "updated_at": "2026-09-10T05:54:49Z"
+}

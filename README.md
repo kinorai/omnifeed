@@ -22,7 +22,7 @@ get their own engines too.
 </p>
 
 - **`web_search`** queries SearXNG (Google, Bing, DDG, Reddit included) and returns ranked URLs with titles and snippets. Pass `site` to scope results to one hostname. Naming the site in the query text fails, because engines read it as a topic word.
-- **`fetch_url`** returns any URL as clean markdown through crawl4ai. Dedicated engines return TOON instead: Reddit threads and `/r/{sub}` listings through a real browser (listings honor the URL's `?t=` and `?limit=`), plus Hacker News, GitHub issues and pull requests, Bluesky posts and profiles, and Discourse topics from their public APIs.
+- **`fetch_url`** returns any URL as clean markdown through crawl4ai. Dedicated engines return TOON instead: Reddit threads and `/r/{sub}` listings through a real browser (listings honor the URL's `?t=` and `?limit=`), plus Hacker News, GitHub issues and pull requests, Bluesky posts and profiles, and Discourse topics from their public APIs. The GitHub engine also returns compact markdown for repository roots (metadata, latest release, README), files, directories, releases, commits, gists and, with a token, discussions.
 
 <img src="https://user-images.githubusercontent.com/74038190/212284100-561aa473-3905-4a80-b561-0d28506553ee.gif" width="100%">
 
@@ -144,13 +144,13 @@ flowchart TB
 
   reg e7@--> reddit["Reddit engine<br/>(TOON)"]
   reg e12@--> hn["Hacker News engine<br/>(TOON)"]
-  reg e14@--> gh["GitHub engine<br/>(TOON)"]
+  reg e14@--> gh["GitHub engine<br/>(TOON + markdown)"]
   reg e16@--> disc["Discourse engine<br/>(TOON)"]
   reg e8@--> generic["Generic fallback<br/>(markdown)"]
   reddit e9@--> c4["crawl4ai upstream<br/>(headless browser)"]
   generic e10@--> c4
   hn e13@--> algolia["Algolia HN API<br/>(hn.algolia.com)"]
-  gh e15@--> ghapi["GitHub REST API<br/>(api.github.com)"]
+  gh e15@--> ghapi["GitHub REST + GraphQL API<br/>(api.github.com)"]
   disc e17@--> discapi["Discourse topic JSON<br/>(allowlisted forums)"]
   searcher e11@--> sx["SearXNG upstream<br/>(Google / Bing / DDG)"]
 
