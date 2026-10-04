@@ -6,9 +6,13 @@
 import "github.com/kinorai/omnifeed/internal/engine/github"
 ```
 
-Package github implements the GitHub engine. It reads the public GitHub REST API \(api.github.com\) and renders an issue URL as issue \+ comments and a pull request URL as PR \+ conversation comments \+ reviews \+ inline review comments \+ changed files with patches \(TOON\) — mirroring the Hacker News engine's shape.
+Package github implements the GitHub engine. It reads the GitHub REST API \(api.github.com\) and renders:
 
-Like the Hacker News engine \(and unlike Reddit and the generic engine\), this engine fetches its upstream DIRECTLY over HTTP rather than through crawl4ai: the REST API is a public JSON API with no bot wall, and a browser render of a GitHub issue is both slower and lossy \(comments are lazily paginated in the DOM\). It does require omnifeed to have outbound access to api.github.com.
+- issues and pull requests as TOON \(issue/PR \+ comments; a PR adds reviews, inline review comments, and changed files with patches\), headed by a "\# title" line;
+- repository roots, files \(blob\), directories \(tree\), releases, commits, and gists as compact markdown;
+- discussions as markdown via the GraphQL API, which needs a token.
+
+Like the Hacker News engine \(and unlike Reddit and the generic engine\), this engine fetches its upstream DIRECTLY over HTTP rather than through crawl4ai: the API is public JSON with no bot wall, and a browser render of a GitHub page is slower and full of UI chrome \(comments are lazily paginated in the DOM\). It does require omnifeed to have outbound access to api.github.com.
 
 ## Index
 
@@ -17,7 +21,7 @@ Like the Hacker News engine \(and unlike Reddit and the generic engine\), this e
 - [type Engine](<#Engine>)
   - [func New\(cfg Config\) \*Engine](<#New>)
   - [func \(e \*Engine\) Crawl\(ctx context.Context, rawURL string, \_ domain.EngineOptions\) \(domain.Document, error\)](<#Engine.Crawl>)
-  - [func \(\*Engine\) Matches\(rawURL string\) bool](<#Engine.Matches>)
+  - [func \(e \*Engine\) Matches\(rawURL string\) bool](<#Engine.Matches>)
   - [func \(\*Engine\) Name\(\) string](<#Engine.Name>)
 - [type File](<#File>)
 - [type InlineComment](<#InlineComment>)
@@ -60,7 +64,7 @@ type Config struct {
 <a name="Engine"></a>
 ## type Engine
 
-Engine implements domain.Engine for GitHub issue and pull\-request URLs via the REST API.
+Engine implements domain.Engine for github.com and gist.github.com pages via the GitHub REST API \(and GraphQL for discussions\).
 
 ```go
 type Engine struct {
@@ -84,16 +88,16 @@ New returns a GitHub Engine configured per cfg.
 func (e *Engine) Crawl(ctx context.Context, rawURL string, _ domain.EngineOptions) (domain.Document, error)
 ```
 
-Crawl fetches the issue or pull request behind rawURL from the GitHub REST API and returns it encoded as TOON.
+Crawl fetches the page behind rawURL from the GitHub API. Issues and pull requests are returned as TOON \(headed by a markdown title line\); every other kind as markdown, which the transports may truncate to max\_chars.
 
 <a name="Engine.Matches"></a>
 ### func \(\*Engine\) Matches
 
 ```go
-func (*Engine) Matches(rawURL string) bool
+func (e *Engine) Matches(rawURL string) bool
 ```
 
-Matches claims only the github.com URLs this engine renders: issue and pull request pages. Everything else on the host \(blob/tree/actions/releases/ discussions, repo roots, …\) falls through to the generic fallback, which renders the page through crawl4ai.
+Matches claims only the GitHub URLs this engine renders: repository roots, files \(blob\), directories \(tree\), issues, pull requests, commits, releases, discussions, and gists. Everything else on the host \(actions, wiki, compare, issue lists, settings, search, …\) falls through to the generic fallback, which renders the page through crawl4ai. Discussions need GraphQL, which requires a token, so without one they fall through too.
 
 <a name="Engine.Name"></a>
 ### func \(\*Engine\) Name
