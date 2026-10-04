@@ -23,9 +23,10 @@ import (
 
 // reply is one canned API response: a testdata fixture file or an inline body.
 type reply struct {
-	status  int    // 0 = 200
-	fixture string // file under testdata/
-	body    string
+	status      int    // 0 = 200
+	fixture     string // file under testdata/
+	body        string
+	contentType string // "" = sniffed by net/http
 }
 
 // apiFake serves routes keyed by "METHOD /path" (query ignored) and records
@@ -48,6 +49,9 @@ func (f *apiFake) start(t *testing.T, routes map[string]reply) *httptest.Server 
 		if !ok {
 			http.Error(w, `{"message":"Not Found"}`, http.StatusNotFound)
 			return
+		}
+		if rp.contentType != "" {
+			w.Header().Set("Content-Type", rp.contentType)
 		}
 		if rp.status != 0 {
 			w.WriteHeader(rp.status)
@@ -235,6 +239,19 @@ func TestCrawlBlobBinary(t *testing.T) {
 	}
 	assertContains(t, doc.PageContent, "Binary file, not shown.")
 	assertNotContains(t, doc.PageContent, "PNG")
+}
+
+// A blob URL naming a directory (GitHub redirects it to the tree view) gets
+// the JSON entry list despite the raw media type, and renders as a tree.
+func TestCrawlBlobDirectory(t *testing.T) {
+	doc, _, err := crawl(t, "https://github.com/longhorn/longhorn/blob/master/chart", "", map[string]reply{
+		"GET /repos/longhorn/longhorn/contents/chart": {fixture: "dir_chart.json", contentType: "application/json; charset=utf-8"},
+	})
+	if err != nil {
+		t.Fatalf("Crawl: %v", err)
+	}
+	assertMarkdown(t, doc, "tree", "longhorn/longhorn: chart")
+	assertContains(t, doc.PageContent, "## Entries (9)", "- templates/\n")
 }
 
 // A file that exists under no ref/path split is an error (a 404 the registry
