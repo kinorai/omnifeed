@@ -418,10 +418,15 @@ func (e *Engine) get(ctx context.Context, apiURL string) ([]byte, http.Header, e
 	return e.do(ctx, http.MethodGet, apiURL, nil, "application/vnd.github+json")
 }
 
-// getRaw fetches a file's raw bytes from the contents API.
-func (e *Engine) getRaw(ctx context.Context, apiURL string) ([]byte, error) {
-	body, _, err := e.do(ctx, http.MethodGet, apiURL, nil, "application/vnd.github.raw+json")
-	return body, err
+// getRaw fetches a file's raw bytes from the contents API. isDir reports that
+// the path is a directory: the API then ignores the raw media type and answers
+// with the JSON entry list instead.
+func (e *Engine) getRaw(ctx context.Context, apiURL string) (body []byte, isDir bool, err error) {
+	body, hdr, err := e.do(ctx, http.MethodGet, apiURL, nil, "application/vnd.github.raw+json")
+	if err != nil {
+		return nil, false, err
+	}
+	return body, strings.HasPrefix(hdr.Get("Content-Type"), "application/json"), nil
 }
 
 // do sends one API request with the headers GitHub requires (and the token, if

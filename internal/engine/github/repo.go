@@ -128,13 +128,19 @@ func releaseHeading(hashes, label string, r *apiRelease) string {
 func (e *Engine) crawlBlob(ctx context.Context, rawURL string, t target) (domain.Document, error) {
 	var lastErr error = &domain.FetchError{Kind: domain.KindError, Err: errors.New("blob url has no file path")}
 	for _, rp := range refSplits(t.rest, true) {
-		body, err := e.getRaw(ctx, e.contentsURL(t, rp))
+		body, isDir, err := e.getRaw(ctx, e.contentsURL(t, rp))
 		if isNotFound(err) {
 			lastErr = err
 			continue
 		}
 		if err != nil {
 			return domain.Document{}, fmt.Errorf("fetch file: %w", err)
+		}
+		if isDir {
+			// A blob URL naming a directory (GitHub redirects it to the tree
+			// view, and cleanMarkdown links directories this way): list it.
+			t.kind = kindTree
+			return e.crawlTree(ctx, rawURL, t)
 		}
 		return e.markdownDocument(renderFile(t, rp, body), rawURL, map[string]string{
 			"github_kind": kindNames[t.kind], "ref": rp.ref, "path": rp.path,
@@ -149,7 +155,7 @@ func renderFile(t target, rp refPath, body []byte) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# %s/%s: %s\n\n", t.owner, t.repo, rp.path)
 	fmt.Fprintf(&b, "- Ref: %s\n- Size: %d bytes\n\n", rp.ref, len(body))
-	if bytes.IndexByte(body[:min(len(body), 8000)], 0) >= 0 || !utf8.Valid(body[:min(len(body), 8000)]) {
+	if isBinary(body) {
 		b.WriteString("Binary file, not shown.\n")
 		return b.String()
 	}
@@ -173,6 +179,32 @@ func renderFile(t target, rp refPath, body []byte) string {
 	}
 	b.WriteString(note)
 	return b.String()
+}
+
+// binarySniff is how many leading bytes of a file are inspected for binary
+// content.
+const binarySniff = 8000
+
+// isBinary reports whether body looks like a binary file: a NUL byte or invalid
+// UTF-8 in its first binarySniff bytes. A multi-byte character cut by the
+// sniff window is not counted as invalid.
+func isBinary(body []byte) bool {
+	head := body[:min(len(body), binarySniff)]
+	if bytes.IndexByte(head, 0) >= 0 {
+		return true
+	}
+	if len(head) < len(body) {
+		// Drop the last rune if the window split it.
+		for i := len(head) - 1; i >= 0 && i >= len(head)-utf8.UTFMax; i-- {
+			if utf8.RuneStart(head[i]) {
+				if !utf8.FullRune(head[i:]) {
+					head = head[:i]
+				}
+				break
+			}
+		}
+	}
+	return !utf8.Valid(head)
 }
 
 // crawlTree renders a directory listing plus the directory's README, if any.
