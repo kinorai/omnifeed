@@ -1,0 +1,26 @@
+[
+ {
+  "author": {
+   "login": "github-actions[bot]"
+  },
+  "body": "## omnifeed v0.29.0\n\nSelf-hosted web search (SearXNG) + LLM-friendly crawling with a dedicated Reddit engine — MCP server, Open WebUI compatible.\n\n## Changelog\n### 🎉 Features\n* 54ac073037b00b9cf1c88958c3dc0149fd628043 feat(httpx): honour the search concurrency cap without Redis\n### Other changes\n* a292776624a20b8b4cba00f86439d9b7a3481097 chore(release): v0.29.0 [skip ci]\n* bf6acdb375d7b28255bfce448b645902aab5fcf3 chore(stack): size the crawl4ai pool and drop a dead env var\n\n## Docker\n\n```\ndocker pull kinorai/omnifeed:0.29.0\n```\n\n## Verify\n\nThe `checksums.txt` file contains SHA-256 hashes for every artifact in this release.\n\n",
+  "draft": false,
+  "html_url": "https://github.com/kinorai/omnifeed/releases/tag/v0.29.0",
+  "name": "v0.29.0",
+  "prerelease": false,
+  "published_at": "2026-08-27T13:58:18Z",
+  "tag_name": "v0.29.0"
+ },
+ {
+  "author": {
+   "login": "github-actions[bot]"
+  },
+  "body": "## omnifeed v0.28.0\n\nSelf-hosted web search (SearXNG) + LLM-friendly crawling with a dedicated Reddit engine — MCP server, Open WebUI compatible.\n\n## Changelog\n### 🎉 Features\n* 636f42be16e7bdb31ce794f199b753621b0659ed feat(ratelimit): cap in-flight searches cluster-wide so spacing and concurrency compose\n* d0fffb397ccae5d60b7c23c46a81e78ac94a89d9 feat(ratelimit): log the error behind a backend-operation failure\n### Other changes\n* eacf7fce18ac116ee49d133e2ca96dc35d2ced3e build(makefile): install golangci-lint from the v2 module path\n* 2195a6f24a1d42c6420d9e962dfa61ab8ccb32fb chore(release): v0.28.0 [skip ci]\n\n## Docker\n\n```\ndocker pull kinorai/omnifeed:0.28.0\n```\n\n## Verify\n\nThe `checksums.txt` file contains SHA-256 hashes for every artifact in this release.\n\n",
+  "draft": false,
+  "html_url": "https://github.com/kinorai/omnifeed/releases/tag/v0.28.0",
+  "name": "v0.28.0",
+  "prerelease": false,
+  "published_at": "2026-08-26T18:00:28Z",
+  "tag_name": "v0.28.0"
+ }
+]

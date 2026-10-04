@@ -1,0 +1,37 @@
+{
+ "author": {
+  "login": "kinorai"
+ },
+ "commit": {
+  "author": {
+   "date": "2026-09-25T16:50:36Z",
+   "name": "kinorai"
+  },
+  "committer": {
+   "date": "2026-09-25T16:51:55Z",
+   "name": "kinorai"
+  },
+  "message": "docs: restore README animations, tagline and bold emphasis\n\nCo-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
+ },
+ "files": [
+  {
+   "additions": 29,
+   "deletions": 29,
+   "filename": "README.md",
+   "patch": "@@ -4,7 +4,7 @@\n </p>\n \n <p align=\"center\">\n-  <img src=\"https://readme-typing-svg.demolab.com?font=Fira+Code&weight=700&size=28&color=FF4500&center=true&vCenter=true&multiline=true&repeat=false&duration=1500&pause=500&width=860&height=110&lines=Self-hosted+web+search+%2B+fetch+MCP;with+a+dedicated+Reddit+engine\" alt=\"Self-hosted web search + fetch MCP, with a dedicated Reddit engine\"/>\n+  <img sr",
+   "status": "modified"
+  },
+  {
+   "additions": 1,
+   "deletions": 1,
+   "filename": "SECURITY.md",
+   "patch": "@@ -2,7 +2,7 @@\n \n ## Reporting a vulnerability\n \n-Do not open a public issue. Open a [private security advisory](https://github.com/kinorai/omnifeed/security/advisories/new) instead, with:\n+**Do not open a public issue.** Open a [private security advisory](https://github.com/kinorai/omnifeed/security/advisories/new) instead, with:\n \n - The vulnerability and its impact\n - Steps to reproduce, or a ",
+   "status": "modified"
+  }
+ ],
+ "sha": "06c08d2f65a43b5d4146446ed86bb35ac4d0d467",
+ "stats": {
+  "additions": 74,
+  "deletions": 74
+ }
+}
