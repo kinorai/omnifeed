@@ -153,7 +153,7 @@ func run(cfg config.Config, logger *slog.Logger) error {
 		Logger:  logger,
 	})
 	// Anonymous GitHub access works (60 req/h/IP); OMNIFEED_GITHUB_TOKEN raises
-	// the quota to 5000/h.
+	// the quota to 5000/h and enables discussions (GraphQL needs a token).
 	gitHubEngine := github.New(github.Config{
 		Client:  httpClient,
 		Limiter: limiter,

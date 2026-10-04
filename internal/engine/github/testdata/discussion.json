@@ -1,0 +1,73 @@
+{
+ "data": {
+  "repository": {
+   "discussion": {
+    "title": "Recreate existing cluster",
+    "body": "I'm currently using a k3s v1.20 cluster in integrated etcd mode and like to recreate it in mysql / mariadb mode.\r\nI'm using nfs for longhorn volume backup.\r\nI can recreate all my infrastructure by simply applying my terraform configurations.\r\n\r\nWhats the best way to recreate the longhorn cluster and volumes in a new k3s cluster with existing `/var/lib/longhorn` directory?\r\nWhere do i find the longhorn cluster configuration to reapply to the new cluster?\r\n\r\nA downtime of the k3s cluster is no problem.",
+    "createdAt": "2021-01-17T11:58:30Z",
+    "upvoteCount": 1,
+    "author": {
+     "login": "viceice"
+    },
+    "category": {
+     "name": "General"
+    },
+    "answer": {
+     "id": "MDE3OkRpc2N1c3Npb25Db21tZW50MzEzMTY5"
+    },
+    "comments": {
+     "totalCount": 3,
+     "nodes": [
+      {
+       "id": "MDE3OkRpc2N1c3Npb25Db21tZW50Mjg4NjQ0",
+       "body": "cc @shuo-wu @meldafrawi",
+       "createdAt": "2021-01-17T12:35:37Z",
+       "upvoteCount": 1,
+       "author": {
+        "login": "joshimoo"
+       },
+       "replies": {
+        "totalCount": 0,
+        "nodes": []
+       }
+      },
+      {
+       "id": "MDE3OkRpc2N1c3Npb25Db21tZW50MzAxMTY4",
+       "body": "Right now there is no convenient way to snapshot and backup the whole Longhorn system configuration as well as building a volume based on an existing data directory. I know Rancher can do snapshots and restorations for the whole cluster including Longhorn but it's not controlled by Longhorn itself. And we have a way to start a volume manually based on a replica directory but it's tricky: https://github.com/longhorn/longhorn-engine#running-a-controller-with-multiple-replicas\r\n\r\n@yasker Do we have plans for this?",
+       "createdAt": "2021-01-22T03:00:09Z",
+       "upvoteCount": 1,
+       "author": {
+        "login": "shuo-wu"
+       },
+       "replies": {
+        "totalCount": 1,
+        "nodes": [
+         {
+          "body": "For me it would be enough to know what rancher will backup and restore, so i can to this maually too",
+          "createdAt": "2021-01-22T05:22:29Z",
+          "author": {
+           "login": "viceice"
+          }
+         }
+        ]
+       }
+      },
+      {
+       "id": "MDE3OkRpc2N1c3Npb25Db21tZW50MzEzMTY5",
+       "body": "We have an issue tracking the effort to backup the longhorn system at https://github.com/longhorn/longhorn/issues/1455 . Currently scheduling for v1.2.0 release.",
+       "createdAt": "2021-01-27T02:09:37Z",
+       "upvoteCount": 1,
+       "author": {
+        "login": "yasker"
+       },
+       "replies": {
+        "totalCount": 0,
+        "nodes": []
+       }
+      }
+     ]
+    }
+   }
+  }
+ }
+}
