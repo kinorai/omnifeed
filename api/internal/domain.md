@@ -25,6 +25,9 @@ Package domain holds the core types exchanged between transports and engines. It
 - [type FetchError](<#FetchError>)
   - [func \(e \*FetchError\) Error\(\) string](<#FetchError.Error>)
   - [func \(e \*FetchError\) Unwrap\(\) error](<#FetchError.Unwrap>)
+- [type InvalidRequestError](<#InvalidRequestError>)
+  - [func \(e \*InvalidRequestError\) Error\(\) string](<#InvalidRequestError.Error>)
+  - [func \(e \*InvalidRequestError\) Unwrap\(\) error](<#InvalidRequestError.Unwrap>)
 - [type SameHostEngine](<#SameHostEngine>)
 - [type SearchOptions](<#SearchOptions>)
 - [type SearchResult](<#SearchResult>)
@@ -271,6 +274,33 @@ func (e *FetchError) Unwrap() error
 ```
 
 Unwrap exposes the underlying error to errors.Is / errors.As.
+
+<a name="InvalidRequestError"></a>
+## type InvalidRequestError
+
+InvalidRequestError marks a failure as the caller's mistake \(a URL that is malformed, uses a forbidden scheme, or targets a private address\) rather than anything upstream. Transports map it to the invalid\_request error code via errors.As; Error\(\) is the wrapped cause verbatim, so wrapping changes no message and no metric label.
+
+```go
+type InvalidRequestError struct{ Err error }
+```
+
+<a name="InvalidRequestError.Error"></a>
+### func \(\*InvalidRequestError\) Error
+
+```go
+func (e *InvalidRequestError) Error() string
+```
+
+
+
+<a name="InvalidRequestError.Unwrap"></a>
+### func \(\*InvalidRequestError\) Unwrap
+
+```go
+func (e *InvalidRequestError) Unwrap() error
+```
+
+Unwrap exposes the cause to errors.Is / errors.As.
 
 <a name="SameHostEngine"></a>
 ## type SameHostEngine

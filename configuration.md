@@ -174,8 +174,10 @@ A fallback result is marked. `_meta` (or the loader's `metadata`) carries
 and the body starts with one line:
 `> Note: the dedicated reddit engine failed (timeout); this is the generic page render instead.`
 
-Errors reach MCP callers as `fetch_url failed: <reason> (HTTP <status>): <cause>`,
-with ` (retry_after_s=N)` appended when the error says how long to back off.
+Errors reach MCP callers as a tool result with `isError: true` whose text is
+`fetch_url failed: <reason> (HTTP <status>): <cause> [<code>] Retryable after Ns.`
+(the back-off is stated once; `retry_after_s` is also in `structuredContent`).
+See [errors.md](errors.md).
 
 ## Reddit anti-bot handling
 

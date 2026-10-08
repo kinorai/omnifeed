@@ -15,6 +15,11 @@ Package observability wires structured logging, Prometheus metrics, and Kubernet
 - [func Reason\(err error\) string](<#Reason>)
 - [func RegisterPprof\(mux \*http.ServeMux\)](<#RegisterPprof>)
 - [func StatusOf\(err error\) string](<#StatusOf>)
+- [type ErrorCode](<#ErrorCode>)
+- [type Failure](<#Failure>)
+  - [func Classify\(err error\) Failure](<#Classify>)
+  - [func \(f Failure\) Fields\(\) map\[string\]any](<#Failure.Fields>)
+  - [func \(f Failure\) RetryAfterSeconds\(\) int](<#Failure.RetryAfterSeconds>)
 - [type Health](<#Health>)
   - [func NewHealth\(cacheTTL time.Duration, checks ...ReadyCheck\) \*Health](<#NewHealth>)
   - [func \(h \*Health\) MarkShuttingDown\(\)](<#Health.MarkShuttingDown>)
@@ -48,7 +53,7 @@ Package observability wires structured logging, Prometheus metrics, and Kubernet
 func Explain(err error) string
 ```
 
-Explain renders a failed crawl/search error as a short, caller\-safe explanation: the classified reason, the upstream HTTP status when the error carries one, the root cause with internal endpoints redacted, and a trailing "\(retry\_after\_s=N\)" when the error says how long to back off. Transports prefix their own context \("fetch\_url failed: " \+ Explain\(err\)\) so an MCP or HTTP client sees what metrics already know instead of an opaque failure. Returns "" only when err is nil.
+Explain renders a failed crawl/search error as a short, caller\-safe explanation: the classified reason, the upstream HTTP status when the error carries one, and the root cause with internal endpoints redacted. The back\-off \(FetchError.RetryAfter\) is not repeated here: each transport reports it once, from Classify \(MCP: "Retryable after Ns." plus retry\_after\_s in structuredContent; loader/REST: retry\_after\_s fields\). Transports prefix their own context \("fetch\_url failed: " \+ Explain\(err\)\) so an MCP or HTTP client sees what metrics already know instead of an opaque failure. Returns "" only when err is nil.
 
 <a name="NewLogger"></a>
 ## func NewLogger
@@ -85,6 +90,76 @@ func StatusOf(err error) string
 ```
 
 StatusOf reports the coarse request status recorded alongside Reason on the crawl/search metrics: "ok" when err is nil, "error" otherwise.
+
+<a name="ErrorCode"></a>
+## type ErrorCode
+
+ErrorCode is the stable, caller\-facing error code every transport reports for a failed fetch/search \(MCP structuredContent.code, the Open WebUI loader's error metadata, the REST error body\). It is deliberately coarser than FailureKind: FailureKind is the metric taxonomy and may grow, while these codes are a contract clients branch on. Documented in docs/errors.md.
+
+```go
+type ErrorCode string
+```
+
+<a name="CodeRateLimited"></a>The complete set of caller\-facing error codes.
+
+```go
+const (
+    CodeRateLimited    ErrorCode = "rate_limited"
+    CodeBlocked        ErrorCode = "blocked"
+    CodeCaptcha        ErrorCode = "captcha"
+    CodeTimeout        ErrorCode = "timeout"
+    CodeThinContent    ErrorCode = "thin_content"
+    CodeUpstreamError  ErrorCode = "upstream_error"
+    CodeQuotaExhausted ErrorCode = "quota_exhausted"
+    CodeInvalidRequest ErrorCode = "invalid_request"
+)
+```
+
+<a name="Failure"></a>
+## type Failure
+
+Failure is the caller\-facing classification of a failed call.
+
+```go
+type Failure struct {
+    Code ErrorCode
+    // Retryable says whether the same call may succeed if repeated later
+    // (after RetryAfter, when set). False means retrying is wasted work.
+    Retryable bool
+    // RetryAfter is the back-off the upstream or omnifeed's own pacing asked
+    // for; 0 when unknown.
+    RetryAfter time.Duration
+    // UpstreamStatus is the upstream HTTP status, 0 when none applies.
+    UpstreamStatus int
+}
+```
+
+<a name="Classify"></a>
+### func Classify
+
+```go
+func Classify(err error) Failure
+```
+
+Classify maps a failed call's error onto the caller\-facing Failure. A domain.InvalidRequestError anywhere in the chain is the caller's own mistake \(invalid\_request, not retryable\); otherwise the FailureKind \(see Reason\) decides. Returns the zero Failure for a nil err.
+
+<a name="Failure.Fields"></a>
+### func \(Failure\) Fields
+
+```go
+func (f Failure) Fields() map[string]any
+```
+
+Fields renders the Failure as the machine\-readable object transports embed in an error response: code and retryable always, retry\_after\_s and upstream\_status only when known. Callers add their own context \(url, …\).
+
+<a name="Failure.RetryAfterSeconds"></a>
+### func \(Failure\) RetryAfterSeconds
+
+```go
+func (f Failure) RetryAfterSeconds() int
+```
+
+RetryAfterSeconds renders RetryAfter as whole seconds, rounded UP \(a caller told "retry in 12s" for a 12.4s wait would be refused again\); 0 when unknown.
 
 <a name="Health"></a>
 ## type Health
