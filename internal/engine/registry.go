@@ -86,15 +86,14 @@ func (r *Registry) Crawl(ctx context.Context, rawURL string, opts domain.EngineO
 			continue
 		}
 		doc, err := e.Crawl(ctx, rawURL, opts)
-		// A dedicated engine failing on a TRANSIENT fault (timeout, upstream
-		// 5xx) must not hard-fail a URL the generic browser fallback can still
-		// render — before dedicated engines existed, these URLs worked. Every
-		// other failure is returned as-is (see fallbackRefused). Skipped when
-		// the caller is already gone: the fallback would only burn a browser
-		// render on a dead request.
+		// A dedicated engine failing (rate limit, API change, upstream hiccup)
+		// must not hard-fail a URL the generic browser fallback can still
+		// render — before dedicated engines existed, these URLs worked. The
+		// exceptions are in fallbackRefused. Skipped when the caller is already
+		// gone: the fallback would only burn a browser render on a dead request.
 		if err != nil && r.fallback != nil && ctx.Err() == nil {
 			reason := observability.Reason(err)
-			if why := fallbackRefused(opts, reason); why != "" {
+			if why := fallbackRefused(e, opts, reason); why != "" {
 				r.logger.Warn("engine failed, not falling back to generic crawl",
 					"engine", e.Name(), "url", rawURL, "reason", reason, "why", why, "err", err)
 				return doc, err
@@ -128,20 +127,29 @@ func (r *Registry) Crawl(ctx context.Context, rawURL string, opts domain.EngineO
 // Two callers read the reply. An engine client (format=json|toon) parses it:
 // the fallback's markdown under the same success shape is a parse error at
 // best, so an explicit structured format always gets the engine's own error.
-// An AI agent reads text, so a page render still beats nothing — but only for a
-// transient fault. A block or rate verdict (429, 403, CAPTCHA, bot wall) or our
-// own spent quota means the browser would hit the very host that just refused
-// us and prolong the block; observed on Reddit 2026-10-08, where the fallback
-// returned "[ Skip to main content ](…)" to a JSON caller and kept the IP
-// blocked.
-func fallbackRefused(opts domain.EngineOptions, reason string) string {
+// An AI agent reads text, so a page render still beats nothing — except after
+// a block or rate verdict (429, 403, CAPTCHA, bot wall, our own spent quota)
+// from an engine that fetches the page's own host (domain.SameHostEngine): the
+// browser would hit the very host that just refused us and prolong the block.
+// Observed on Reddit 2026-10-08, where the fallback returned
+// "[ Skip to main content ](…)" to a JSON caller and kept the IP blocked. A
+// separate-host engine's block is about its API host, not the page host, so
+// the render still follows it.
+func fallbackRefused(e domain.Engine, opts domain.EngineOptions, reason string) string {
 	if opts.FormatExplicit {
 		return "explicit structured format requested"
 	}
-	if !domain.FallbackEligible(domain.FailureKind(reason)) {
-		return "failure kind is not transient"
+	if domain.IsBlockKind(domain.FailureKind(reason)) && sameHostAsPage(e) {
+		return "block or rate verdict from the page's own host"
 	}
 	return ""
+}
+
+// sameHostAsPage reads the optional domain.SameHostEngine capability; an
+// engine without it is separate-host.
+func sameHostAsPage(e domain.Engine) bool {
+	sh, ok := e.(domain.SameHostEngine)
+	return ok && sh.SameHostAsPage()
 }
 
 // FallbackNotice is the first line of a document the generic fallback

@@ -65,6 +65,11 @@ func New(cfg Config) *Engine {
 // Name returns the engine identifier.
 func (*Engine) Name() string { return "reddit" }
 
+// SameHostAsPage reports true: the engine's JSON comes from www.reddit.com,
+// the page's own host, so a Reddit block must not be followed by a browser
+// render of the same host (domain.SameHostEngine).
+func (*Engine) SameHostAsPage() bool { return true }
+
 // Matches claims only the reddit.com URLs this engine can actually render: a
 // comments permalink, or a share link (/r/{sub}/s/{code}) that resolves to one.
 // Other reddit.com URLs — profiles, wikis, search pages, /dev/api — fall through
