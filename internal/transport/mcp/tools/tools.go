@@ -92,9 +92,12 @@ func FetchURL(reg *engine.Registry, defaults reddit.Options, metrics *observabil
 				},
 				"max_comments": map[string]any{
 					"type": "integer",
-					"description": "Reddit and Hacker News threads: hard cap on total comments emitted (0 = engine default; " +
-						"Reddit unlimited, Hacker News " + strconv.Itoa(hackernews.MaxThreadComments) + "). Applied last, after the " +
-						"structural caps below.",
+					"description": "Reddit and Hacker News threads: hard cap on total comments emitted (0 or omitted = engine " +
+						"default; Reddit unlimited, Hacker News " + strconv.Itoa(hackernews.DefaultThreadComments) + "; Hacker News " +
+						"accepts up to " + strconv.Itoa(hackernews.AbsoluteMaxThreadComments) + "). Applied last, after the structural " +
+						"caps below. The cut is breadth-first: every top-level comment first, then their replies, then the next " +
+						"depth, so later top-level threads survive and a reply is never kept without its parent; output keeps the " +
+						"original order. The thread header (HN `story`, Reddit `post`) states `total_comments` and `truncated`.",
 				},
 				"max_top_level": map[string]any{
 					"type": "integer",
@@ -107,7 +110,7 @@ func FetchURL(reg *engine.Registry, defaults reddit.Options, metrics *observabil
 						"counting that thread's own root comment (0 = unlimited). Selection is breadth-first per thread — root and " +
 						"shallow replies before the deep tail — and output keeps HN's original order. This is the knob to reach for " +
 						"on a big HN thread: 12 measured at ~50% of the full-tree bytes while keeping most of the substantive " +
-						"comments, whereas max_comments alone spends the whole budget on the first branch.",
+						"comments, whereas max_comments alone is one breadth-first cut over the whole thread that can stop at a shallow depth everywhere.",
 				},
 				"max_chars": map[string]any{
 					"type": "integer",
