@@ -114,9 +114,18 @@ func run(cfg config.Config, logger *slog.Logger) error {
 	// The Reddit engine fetches through a real browser because Reddit's edge
 	// blocks non-browser HTTP clients — see reddit.Fetcher.
 	crawl4aiBrowser := browsercrawl4ai.New(httpClient, cfg.Crawl4AIURL, cfg.Crawl4AIToken)
+	// Reddit's 429 never reaches the retry client (the fetch runs inside the
+	// browser, and crawl4ai answers 200), so the engine reports Reddit's own
+	// back-off and it is fed to the crawl limiter here, through the same hook
+	// and cap as any other upstream's Retry-After.
+	redditPenalty := retryAfterHook(limiter, metrics)
 	redditEngine := reddit.New(reddit.Config{
 		Fetcher: reddit.NewFetcher(reddit.FetcherConfig{
 			Browser: crawl4aiBrowser,
+			Quota:   redditQuota(cfg, rdb, metrics, logger),
+			Penalize: func(rawURL string, d time.Duration) {
+				redditPenalty("reddit", rawURL, d)
+			},
 		}),
 		Limiter:     limiter,
 		Timeout:     cfg.RedditTimeout,
@@ -442,6 +451,37 @@ func retryAfterHook(p pacer, metrics *observability.Metrics) func(upstream, rawU
 		}
 		metrics.ObserveRatelimitPenalty(upstream)
 	}
+}
+
+// redditQuota builds the per-request Reddit quota limiter, or returns nil when
+// OMNIFEED_REDDIT_QUOTA is 0 — opt-in, so an unconfigured deployment behaves
+// exactly as before. It is its own "reddit" scope rather than a setting on the
+// crawl limiter: that one admits a whole crawl (up to 40 morechildren rounds)
+// as one request, while Reddit counts every request. No delay and no cluster
+// concurrency of its own — the crawl limiter already shapes the gaps and the
+// concurrency; this only bounds the count per window.
+//
+// The returned value is a nil interface, never a typed nil pointer, when off:
+// the fetcher checks Quota == nil.
+func redditQuota(cfg config.Config, rdb redis.UniversalClient, metrics *observability.Metrics, logger *slog.Logger) httpx.Limiter {
+	if cfg.RedditQuota <= 0 {
+		return nil
+	}
+	logger.Info("reddit request quota enabled",
+		"quota", cfg.RedditQuota, "window", cfg.RedditQuotaWindow, "shared", rdb != nil)
+	// Concurrency matches the crawl limiter's: every Reddit request is made
+	// while a crawl-limiter slot for www.reddit.com is held, so no more than
+	// that many can be in flight anyway; a lower cap here would only queue
+	// requests behind each other inside an already-admitted crawl.
+	return buildLimiter("reddit", rdb,
+		httpx.NewDomainQuotaLimiter(cfg.PerDomainConcurrency, 0, cfg.RedditQuota, cfg.RedditQuotaWindow),
+		redislimit.Config{
+			Prefix:        cfg.RedisKeyPrefix,
+			MaxConcurrent: cfg.PerDomainConcurrency,
+			Quota:         cfg.RedditQuota,
+			Window:        cfg.RedditQuotaWindow,
+		},
+		metrics, logger)
 }
 
 // searxngLimiter builds the pacing limiter for search queries, or returns nil

@@ -306,3 +306,32 @@ func TestLoad_RedisKeyPrefix(t *testing.T) {
 		t.Errorf("RedisKeyPrefix: got %q, want staging:omnifeed:rl", cfg.RedisKeyPrefix)
 	}
 }
+
+// The Reddit quota is opt-in (0 = off) with a one-minute default window;
+// negative values and a quota without a window are rejected.
+func TestLoad_RedditQuota(t *testing.T) {
+	cfg, err := loadWith(t, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.RedditQuota != 0 || cfg.RedditQuotaWindow != time.Minute {
+		t.Fatalf("defaults: quota=%d window=%s, want 0/1m", cfg.RedditQuota, cfg.RedditQuotaWindow)
+	}
+
+	t.Setenv("OMNIFEED_REDDIT_QUOTA_WINDOW", "5m")
+	cfg, err = loadWith(t, "OMNIFEED_REDDIT_QUOTA", "30")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.RedditQuota != 30 || cfg.RedditQuotaWindow != 5*time.Minute {
+		t.Fatalf("set: quota=%d window=%s, want 30/5m", cfg.RedditQuota, cfg.RedditQuotaWindow)
+	}
+
+	if _, err := loadWith(t, "OMNIFEED_REDDIT_QUOTA", "-1"); err == nil {
+		t.Error("negative OMNIFEED_REDDIT_QUOTA accepted")
+	}
+	t.Setenv("OMNIFEED_REDDIT_QUOTA_WINDOW", "0s")
+	if _, err := loadWith(t, "OMNIFEED_REDDIT_QUOTA", "10"); err == nil {
+		t.Error("OMNIFEED_REDDIT_QUOTA with a zero window accepted")
+	}
+}

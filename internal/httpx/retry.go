@@ -301,8 +301,9 @@ func ClassifyClientError(err error, fallback domain.FailureKind) *domain.FetchEr
 		// message is what an AI agent reads, so it carries the actionable part:
 		// how long to leave before retrying.
 		return &domain.FetchError{
-			Kind: domain.KindQuotaExhausted,
-			Err:  fmt.Errorf("pacing quota exhausted; retry in %ds", retryAfterSeconds(wbe.RetryAfter)),
+			Kind:       domain.KindQuotaExhausted,
+			Err:        fmt.Errorf("pacing quota exhausted; retry in %ds", retryAfterSeconds(wbe.RetryAfter)),
+			RetryAfter: wbe.RetryAfter,
 		}
 	case errors.As(err, &se):
 		// A 5xx after retry exhaustion is ambiguous (infra fault vs. an anti-bot

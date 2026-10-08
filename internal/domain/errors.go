@@ -3,6 +3,7 @@ package domain
 import (
 	"fmt"
 	"net/http"
+	"time"
 )
 
 // FailureKind is a bounded classification of why a crawl/fetch failed. It is
@@ -48,6 +49,10 @@ type FetchError struct {
 	StatusCode int
 	Marker     string // matched anti-bot marker, set when Kind == KindCaptcha
 	Err        error  // underlying error, if any
+	// RetryAfter is how long the upstream (or omnifeed's own pacing) asked the
+	// caller to wait before trying again; 0 when nobody said. Transports render
+	// it as retry_after_s so a caller can back off instead of hammering.
+	RetryAfter time.Duration
 }
 
 func (e *FetchError) Error() string {
@@ -63,6 +68,18 @@ func (e *FetchError) Error() string {
 
 // Unwrap exposes the underlying error to errors.Is / errors.As.
 func (e *FetchError) Unwrap() error { return e.Err }
+
+// FallbackEligible reports whether a dedicated engine failing with kind may be
+// re-crawled by the generic browser fallback. Only transient faults qualify: a
+// timeout or an upstream 5xx/unreachable says nothing about whether the site
+// would serve the page to a browser a moment later. Everything else is refused —
+// above all the block and rate kinds (http_429, http_403, captcha, bot_block)
+// and omnifeed's own quota_exhausted, where a browser render would hit the
+// host that just refused us (or that our own pacing is holding back) and
+// prolong the block.
+func FallbackEligible(kind FailureKind) bool {
+	return kind == KindTimeout || kind == KindUpstreamError
+}
 
 // KindForStatus maps an HTTP status code to the matching FailureKind.
 func KindForStatus(code int) FailureKind {

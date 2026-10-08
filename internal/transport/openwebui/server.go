@@ -192,6 +192,7 @@ func (s *Server) buildEngineOptions(r *http.Request) domain.EngineOptions {
 	}
 	if f := q.Get("format"); f == "json" || f == "toon" {
 		opts.RedditFormat = f
+		opts.FormatExplicit = true
 	}
 	if q.Get("depth") == "1" {
 		opts.RedditKeepDepth = true

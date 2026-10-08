@@ -86,19 +86,29 @@ func (r *Registry) Crawl(ctx context.Context, rawURL string, opts domain.EngineO
 			continue
 		}
 		doc, err := e.Crawl(ctx, rawURL, opts)
-		// A dedicated engine failing (rate limit, API change, upstream hiccup)
-		// must not hard-fail a URL the generic browser fallback can still
-		// render — before dedicated engines existed, these URLs worked. Skipped
-		// when the caller is already gone: the fallback would only burn a
-		// browser render on a dead request.
+		// A dedicated engine failing on a TRANSIENT fault (timeout, upstream
+		// 5xx) must not hard-fail a URL the generic browser fallback can still
+		// render — before dedicated engines existed, these URLs worked. Every
+		// other failure is returned as-is (see fallbackRefused). Skipped when
+		// the caller is already gone: the fallback would only burn a browser
+		// render on a dead request.
 		if err != nil && r.fallback != nil && ctx.Err() == nil {
+			reason := observability.Reason(err)
+			if why := fallbackRefused(opts, reason); why != "" {
+				r.logger.Warn("engine failed, not falling back to generic crawl",
+					"engine", e.Name(), "url", rawURL, "reason", reason, "why", why, "err", err)
+				return doc, err
+			}
 			r.logger.Warn("engine failed, falling back to generic crawl",
 				"engine", e.Name(), "url", rawURL, "err", err)
 			if r.metrics != nil {
-				r.metrics.ObserveFallback(e.Name(), observability.Reason(err))
+				r.metrics.ObserveFallback(e.Name(), reason)
 			}
 			doc, err = r.fallback.Crawl(ctx, rawURL, opts)
 			r.observeChars(r.fallback, doc, err)
+			if err == nil {
+				doc = markFallback(doc, e.Name(), reason)
+			}
 			return doc, err
 		}
 		r.observeChars(e, doc, err)
@@ -110,6 +120,49 @@ func (r *Registry) Crawl(ctx context.Context, rawURL string, opts domain.EngineO
 	doc, err := r.fallback.Crawl(ctx, rawURL, opts)
 	r.observeChars(r.fallback, doc, err)
 	return doc, err
+}
+
+// fallbackRefused reports why a failed dedicated engine must NOT hand over to
+// the generic fallback, or "" when it may.
+//
+// Two callers read the reply. An engine client (format=json|toon) parses it:
+// the fallback's markdown under the same success shape is a parse error at
+// best, so an explicit structured format always gets the engine's own error.
+// An AI agent reads text, so a page render still beats nothing — but only for a
+// transient fault. A block or rate verdict (429, 403, CAPTCHA, bot wall) or our
+// own spent quota means the browser would hit the very host that just refused
+// us and prolong the block; observed on Reddit 2026-10-08, where the fallback
+// returned "[ Skip to main content ](…)" to a JSON caller and kept the IP
+// blocked.
+func fallbackRefused(opts domain.EngineOptions, reason string) string {
+	if opts.FormatExplicit {
+		return "explicit structured format requested"
+	}
+	if !domain.FallbackEligible(domain.FailureKind(reason)) {
+		return "failure kind is not transient"
+	}
+	return ""
+}
+
+// FallbackNotice is the first line of a document the generic fallback
+// rendered for a URL a dedicated engine claimed, so a reader of the text alone
+// (an AI agent over MCP) knows it is not looking at the engine's output.
+const FallbackNotice = "> Note: the dedicated %s engine failed (%s); this is the generic page render instead.\n\n"
+
+// markFallback labels a fallback-rendered document: _meta fallback_from /
+// fallback_reason for clients that read metadata, and FallbackNotice on top of
+// the body for those that only read text. The metadata map is copied, never
+// mutated in place — the fallback engine owns it.
+func markFallback(doc domain.Document, from, reason string) domain.Document {
+	meta := make(map[string]string, len(doc.Metadata)+2)
+	for k, v := range doc.Metadata {
+		meta[k] = v
+	}
+	meta["fallback_from"] = from
+	meta["fallback_reason"] = reason
+	doc.Metadata = meta
+	doc.PageContent = fmt.Sprintf(FallbackNotice, from, reason) + doc.PageContent
+	return doc
 }
 
 // observeChars records the extracted content length of a successful crawl
