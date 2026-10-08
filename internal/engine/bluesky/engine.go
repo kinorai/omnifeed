@@ -140,7 +140,9 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, _ domain.EngineOption
 	if e.limiter != nil {
 		release, lerr := e.limiter.Acquire(ctx, e.Name(), e.apiBase)
 		if lerr != nil {
-			return domain.Document{}, lerr
+			// Classified so a pacing refusal reaches the caller as quota_exhausted
+			// with its retry_after_s, not as an opaque "error".
+			return domain.Document{}, httpx.ClassifyClientError(lerr, domain.KindError)
 		}
 		defer release()
 	}
