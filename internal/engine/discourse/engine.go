@@ -397,7 +397,7 @@ func (e *Engine) get(ctx context.Context, apiURL string) ([]byte, error) {
 
 // document encodes v as TOON and wraps it in a Document with standard metadata.
 func (e *Engine) document(v any, source string, extra map[string]string) (domain.Document, error) {
-	encoded, err := toon.Marshal(v, toon.WithLengthMarkers(true))
+	encoded, err := toon.Marshal(v)
 	if err != nil {
 		return domain.Document{}, fmt.Errorf("encode: %w", err)
 	}
