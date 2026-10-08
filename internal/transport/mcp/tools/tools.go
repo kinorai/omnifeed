@@ -33,13 +33,16 @@ const MaxFetchChars = 500000
 
 // FetchURL returns the `fetch_url` tool: URL → LLM-friendly content via the
 // engine registry (Reddit engine for reddit.com, Hacker News engine for
-// news.ycombinator.com, crawl4ai fallback for the rest).
+// news.ycombinator.com, Twitter engine for X posts, crawl4ai fallback for the
+// rest).
 // defaultMaxChars caps markdown content when the caller omits `max_chars`
 // (0 = unlimited); it comes from OMNIFEED_FETCH_MAX_CHARS.
 func FetchURL(reg *engine.Registry, defaults reddit.Options, metrics *observability.Metrics, defaultMaxChars int) mcp.Tool {
 	return mcp.Tool{
-		Name:        "fetch_url",
-		Description: "Fetch any URL and return LLM-friendly content. You MUST use it for Reddit and Hacker News URLs.",
+		Name: "fetch_url",
+		Description: "Fetch any URL and return LLM-friendly content. You MUST use it for Reddit and Hacker News URLs. " +
+			"X/Twitter post links (x.com, twitter.com, fxtwitter/fixupx/vxtwitter/fixvx, t.co) return the full post with " +
+			"its quote, media alt text, community note, the author's thread and top replies.",
 		// Read-only and open-world: fetches external pages without mutating
 		// anything, so clients can auto-approve it.
 		Annotations: map[string]any{
@@ -63,7 +66,7 @@ func FetchURL(reg *engine.Registry, defaults reddit.Options, metrics *observabil
 				},
 				"format": map[string]any{
 					"type": "string",
-					"description": "Reddit output format: 'toon' (default, token-efficient) or 'json'; other engines ignore the value. " +
+					"description": "Output format for Reddit ('toon' default, token-efficient) and X/Twitter posts (markdown unless this is passed); 'toon' or 'json', other engines ignore the value. " +
 						"Setting it at all means you parse the reply: if a dedicated engine (Reddit, Hacker News, …) fails, you get " +
 						"its error instead of a generic page render. Without it, a failed engine falls back to the generic render, " +
 						"marked by _meta fallback_from/fallback_reason and a note on the first line — except after a block or " +

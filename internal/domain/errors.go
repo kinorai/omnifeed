@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -98,4 +99,27 @@ func KindForStatus(code int) FailureKind {
 	default:
 		return KindError
 	}
+}
+
+// finalError marks an engine failure the registry must hand back as-is
+// instead of retrying the URL on the generic fallback. See NoFallback.
+type finalError struct{ error }
+
+func (e finalError) Unwrap() error { return e.error }
+
+// NoFallback marks err as final: the engine already ran the generic fallback
+// itself (on a URL it rewrote) or knows the content does not exist, so the
+// registry must not spend another browser render on the original URL. The
+// message and the wrapped chain — FetchError included — are unchanged.
+func NoFallback(err error) error {
+	if err == nil {
+		return nil
+	}
+	return finalError{err}
+}
+
+// IsNoFallback reports whether err was marked with NoFallback.
+func IsNoFallback(err error) bool {
+	var f finalError
+	return errors.As(err, &f)
 }

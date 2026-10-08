@@ -44,6 +44,7 @@ internal/
   engine/        Registry + fallback ordering
     reddit/      Engine: drives a browser.Browser, TOON comment trees
     bluesky/     Engine: public AT Protocol AppView, TOON reply trees
+    twitter/     Engine: X posts via FxTwitter → syndication/vxTwitter → crawl4ai, markdown
     crawl4ai/    Engine: generic markdown fallback (crawl4ai /crawl — not the browser port)
   search/
     searxng/     Searcher adapter (JSON API) — the only Searcher
@@ -84,6 +85,7 @@ cmd/omnifeed/    entry point + wiring
 
 - **crawl4ai is mandatory.** `OMNIFEED_CRAWL4AI_URL` must be set or the binary exits at startup — the generic fallback fetches through `/crawl`, and crawl4ai is also the browser backend for Reddit. **Exceptions:** the Hacker News engine reads the public Algolia HN API (`hn.algolia.com`), the GitHub engine reads the public GitHub REST API (`api.github.com`, plus its GraphQL endpoint for discussions when `OMNIFEED_GITHUB_TOKEN` is set), and the Bluesky engine reads the public AT Protocol AppView (`public.api.bsky.app`) directly — none is bot-walled, so a headless browser would only add latency (and lose comments) — and they therefore need outbound access to those three hosts. The Discourse engine does the same against each host listed in `OMNIFEED_DISCOURSE_HOSTS` (public topic JSON), so those hosts need outbound access too.
 - **Bluesky reads the cached AppView.** The engine calls `public.api.bsky.app` for `getPostThread` / `getAuthorFeed`, because Bluesky asks public-web use to stay on the cached host. It claims post and profile URLs only, so `bsky.app/search` falls through to the browser fallback. (Keyword search needs `app.bsky.feed.searchPosts`, which is 403 on that host and 200 on `api.bsky.app` — see `docs/ideas.md`, the search-vertical entry.)
+- **Twitter/X never loads twitter.com.** The Twitter engine reads FxTwitter (`OMNIFEED_TWITTER_FXTWITTER_URL`), then the syndication endpoint and vxTwitter, and only then crawl4ai on the canonical `x.com` URL; the generic engine rewrites any other `twitter.com` URL to `x.com`. When the engine has already run crawl4ai itself (or two sources agree the post is gone) it returns its error wrapped in `domain.NoFallback`, so the registry does not render the URL again.
 - **Never call Reddit directly.** Reddit 403-blocks non-browser clients; the Reddit engine fetches through a real browser via the `browser.Browser` port. See `internal/engine/reddit` and `internal/browser`.
 - **HTTP transports fail closed.** No `OMNIFEED_API_KEY` → the binary refuses to start, unless `OMNIFEED_DEV_NO_AUTH=true` (local only). Stdio MCP is unauthenticated by design.
 - **SSRF:** validate caller-supplied URLs with `httpx.ValidateURL`; `OMNIFEED_BLOCK_PRIVATE_IPS` defaults to on.
