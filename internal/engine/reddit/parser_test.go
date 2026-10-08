@@ -2,7 +2,9 @@ package reddit
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
@@ -243,6 +245,84 @@ func TestCapComments(t *testing.T) {
 			t.Errorf("n=0 must not truncate, got %d", len(thread.Comments))
 		}
 	})
+}
+
+// capComments must cut breadth-first: with a deep first branch and many later
+// top-level threads, the old pre-order prefix kept the first branch's tail and
+// dropped the later threads (measured: max_comments=150 at depth 6 kept only
+// 3-10 top-level comments). Breadth-first keeps every top-level comment, fills
+// the rest one depth at a time, never keeps a reply without its parent, and
+// preserves output order — including expansion comments appended at the tail,
+// which rank by their real depth (from the parent chain), not their position.
+func TestCapCommentsBreadthFirst(t *testing.T) {
+	var cs []Comment
+	// Branch 1: a 40-deep chain d0 -> d1 -> ... -> d39 under the post.
+	cs = append(cs, Comment{ID: "d0", ParentID: "p"})
+	for i := 1; i < 40; i++ {
+		cs = append(cs, Comment{ID: fmt.Sprintf("d%d", i), ParentID: fmt.Sprintf("d%d", i-1)})
+	}
+	// 15 more top-level threads, each with one reply.
+	for i := 0; i < 15; i++ {
+		cs = append(cs, Comment{ID: fmt.Sprintf("t%d", i), ParentID: "p"},
+			Comment{ID: fmt.Sprintf("t%dr", i), ParentID: fmt.Sprintf("t%d", i)})
+	}
+	// Expansion tail (appended by MergeExpanded): a late top-level comment, a
+	// depth-1 reply under t14, and a depth-2 reply under a kept depth-1 parent.
+	cs = append(cs,
+		Comment{ID: "late", ParentID: "p"},
+		Comment{ID: "x1", ParentID: "t14"},
+		Comment{ID: "x2", ParentID: "t0r"},
+		Comment{ID: "orphan", ParentID: "ghost"}, // deleted parent: counts as top-level
+	)
+	thread := Thread{Post: Post{ID: "p"}, Comments: slices.Clone(cs)}
+	pos := map[string]int{}
+	for i, c := range cs {
+		pos[c.ID] = i
+	}
+
+	// 18 top-level (d0, t0..t14, late, orphan) + 4 depth-1 (d1, t0r, t1r, t2r).
+	const n = 22
+	capComments(&thread, n)
+	if len(thread.Comments) != n {
+		t.Fatalf("kept %d, want %d: %+v", len(thread.Comments), n, thread.Comments)
+	}
+	kept := map[string]bool{}
+	for _, c := range thread.Comments {
+		kept[c.ID] = true
+	}
+	for _, id := range []string{"d0", "t0", "t14", "late", "orphan", "d1", "t0r", "t1r", "t2r"} {
+		if !kept[id] {
+			t.Errorf("%s dropped, want kept", id)
+		}
+	}
+	for _, id := range []string{"d2", "t3r", "x1", "x2"} {
+		if kept[id] {
+			t.Errorf("%s kept beyond the budget", id)
+		}
+	}
+	for _, c := range thread.Comments {
+		if c.ParentID != "p" && c.ParentID != "ghost" && !kept[c.ParentID] {
+			t.Errorf("%s kept without its parent %s", c.ID, c.ParentID)
+		}
+	}
+	for i := 1; i < len(thread.Comments); i++ {
+		if pos[thread.Comments[i-1].ID] > pos[thread.Comments[i].ID] {
+			t.Fatalf("order changed: %s before %s", thread.Comments[i-1].ID, thread.Comments[i].ID)
+		}
+	}
+
+	// A larger budget reaches the expansion tail's deeper comments, but only
+	// those whose parent is kept: x2 (depth 2 under t0r) is in, d2's chain
+	// continues one level at a time.
+	thread = Thread{Post: Post{ID: "p"}, Comments: slices.Clone(cs)}
+	capComments(&thread, 37) // 18 top-level + 17 depth-1 + 2 depth-2 (d2, x2)
+	kept = map[string]bool{}
+	for _, c := range thread.Comments {
+		kept[c.ID] = true
+	}
+	if !kept["x1"] || !kept["x2"] || !kept["d2"] || kept["d3"] {
+		t.Errorf("want x1, x2, d2 kept and d3 dropped; got %+v", thread.Comments)
+	}
 }
 
 // annotateTotals writes the thread totals into the post header.
