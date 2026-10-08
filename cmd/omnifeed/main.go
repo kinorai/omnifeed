@@ -201,8 +201,9 @@ func run(cfg config.Config, logger *slog.Logger) error {
 	// syndication endpoint and vxTwitter), with crawl4ai on the x.com URL last.
 	// Needs outbound access to api.fxtwitter.com (or the configured FxEmbed),
 	// cdn.syndication.twimg.com, api.vxtwitter.com and t.co.
+	threadEngines := []domain.Engine{redditEngine, hackerNewsEngine, gitHubEngine, discourseEngine, blueskyEngine}
 	if cfg.TwitterEnabled {
-		registry.Register(twitter.New(twitter.Config{
+		twitterEngine := twitter.New(twitter.Config{
 			Client:          httpClient,
 			Limiter:         limiter,
 			Generic:         crawl4aiEngine,
@@ -210,7 +211,10 @@ func run(cfg config.Config, logger *slog.Logger) error {
 			MaxReplies:      cfg.TwitterMaxReplies,
 			BlockPrivateIPs: cfg.BlockPrivateIPs,
 			Logger:          logger,
-		}))
+		})
+		registry.Register(twitterEngine)
+		// A post and its replies change like a thread: the threads TTL.
+		threadEngines = append(threadEngines, twitterEngine)
 	}
 
 	registry.
@@ -223,8 +227,7 @@ func run(cfg config.Config, logger *slog.Logger) error {
 
 	var dispatcher engine.Dispatcher = registry
 	if cfg.CacheEnabled {
-		dispatcher = fetchCache(cfg, registry, rdb, metrics, logger,
-			redditEngine, hackerNewsEngine, gitHubEngine, discourseEngine, blueskyEngine)
+		dispatcher = fetchCache(cfg, registry, rdb, metrics, logger, threadEngines...)
 	} else {
 		logger.Info("fetch cache disabled (OMNIFEED_CACHE_ENABLED=false)")
 	}
