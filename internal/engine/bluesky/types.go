@@ -107,8 +107,27 @@ type authorView struct {
 // record is the post record itself: the text and its creation time live here,
 // not on the view.
 type record struct {
-	Text      string `json:"text"`
-	CreatedAt string `json:"createdAt"`
+	Text      string  `json:"text"`
+	CreatedAt string  `json:"createdAt"`
+	Facets    []facet `json:"facets"`
+}
+
+// facet is an app.bsky.richtext.facet: an annotation over the UTF-8 byte range
+// [byteStart, byteEnd) of record.text. Clients display long links shortened
+// ("example.com/a/very…") in the text itself; the full URL lives only in the
+// facet's #link feature. Mention (#mention, did) and tag (#tag) features also
+// decode here but are left as the text already shows them.
+type facet struct {
+	Index struct {
+		ByteStart int `json:"byteStart"`
+		ByteEnd   int `json:"byteEnd"`
+	} `json:"index"`
+	Features []facetFeature `json:"features"`
+}
+
+type facetFeature struct {
+	Type string `json:"$type"`
+	URI  string `json:"uri"`
 }
 
 // embed carries an external link when the post has one. Only the external

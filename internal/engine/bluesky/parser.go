@@ -1,6 +1,60 @@
 package bluesky
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"sort"
+	"unicode/utf8"
+
+	"github.com/kinorai/omnifeed/internal/linkfmt"
+)
+
+// linkFeature is the facet feature type carrying a link's full URI.
+const linkFeature = "app.bsky.richtext.facet#link"
+
+// expandLinks rewrites every link facet's byte range in text to its full URI,
+// rendered by linkfmt.Link (bare URL when the visible text is the URL or a
+// shortened form of it, markdown [text](uri) otherwise). Facet offsets count
+// UTF-8 bytes, which is exactly how Go indexes a string. Ranges that are out
+// of bounds, empty, split a UTF-8 sequence, or overlap an earlier link are
+// skipped — the text there is left as-is rather than mangled.
+func expandLinks(text string, facets []facet) string {
+	type link struct {
+		start, end int
+		uri        string
+	}
+	var links []link
+	for _, f := range facets {
+		uri := ""
+		for _, ft := range f.Features {
+			if ft.Type == linkFeature && ft.URI != "" {
+				uri = ft.URI
+				break
+			}
+		}
+		s, e := f.Index.ByteStart, f.Index.ByteEnd
+		if uri == "" || s < 0 || e > len(text) || s >= e ||
+			!utf8.RuneStart(text[s]) || (e < len(text) && !utf8.RuneStart(text[e])) {
+			continue
+		}
+		links = append(links, link{s, e, uri})
+	}
+	if len(links) == 0 {
+		return text
+	}
+	sort.SliceStable(links, func(i, j int) bool { return links[i].start < links[j].start })
+	out := make([]byte, 0, len(text))
+	pos := 0
+	for _, l := range links {
+		if l.start < pos { // overlaps the previous link
+			continue
+		}
+		out = append(out, text[pos:l.start]...)
+		out = append(out, linkfmt.Link(text[l.start:l.end], l.uri)...)
+		pos = l.end
+	}
+	out = append(out, text[pos:]...)
+	return string(out)
+}
 
 // toPost flattens one AppView post view into the emitted shape.
 func toPost(p postView, parentURI string) Post {
@@ -11,7 +65,7 @@ func toPost(p postView, parentURI string) Post {
 			Handle: p.Author.Handle,
 			Name:   p.Author.DisplayName,
 		},
-		Text:      p.Record.Text,
+		Text:      expandLinks(p.Record.Text, p.Record.Facets),
 		CreatedAt: p.Record.CreatedAt,
 		Replies:   p.ReplyCount,
 		Reposts:   p.RepostCount,
