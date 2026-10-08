@@ -17,6 +17,7 @@ import (
 
 	"github.com/kinorai/omnifeed/internal/domain"
 	"github.com/kinorai/omnifeed/internal/httpx"
+	"github.com/kinorai/omnifeed/internal/linkfmt"
 	"github.com/toon-format/toon-go"
 )
 
@@ -313,13 +314,43 @@ var (
 	blockCloseRE  = regexp.MustCompile(`(?i)</(p|div|li|ul|ol|h[1-6]|blockquote|pre|tr|table)\s*>`)
 	anyTagRE      = regexp.MustCompile(`(?s)<[^>]*>`)
 	blankLinesRE  = regexp.MustCompile(`\n{3,}`)
+	// anchorRE captures an anchor's double-quoted href (group 1) and its inner
+	// HTML (group 2). The href attribute must follow whitespace so that
+	// data-download-href (Discourse lightboxes) is never taken for it.
+	anchorRE = regexp.MustCompile(`(?is)<a\s(?:[^>]*?\s)?href\s*=\s*"([^"]*)"[^>]*>(.*?)</a\s*>`)
 )
 
+// rewriteAnchor replaces one cooked <a href="…">text</a> with its link
+// target, rendered by linkfmt.Link (bare URL when the text is the URL or a
+// shortened form of it, markdown [text](href) otherwise). Discourse shortens
+// long URLs in the visible text ("example.com/a/very…"), so stripping the tag
+// alone produced dead links.
+//
+// Only absolute http(s) hrefs are rewritten: relative ones (@mentions as
+// /u/name, #hashtags, footnote fragments) keep just their text, as before —
+// they are meaningless outside the forum page.
+//
+// The result is still HTML-encoded: stripHTML strips tags and unescapes the
+// whole string afterwards, so it is re-escaped here to be decoded exactly once
+// (a literal "&amp;" in a URL must not become "&").
+func rewriteAnchor(a string) string {
+	m := anchorRE.FindStringSubmatch(a)
+	href := strings.TrimSpace(html.UnescapeString(m[1]))
+	inner := m[2]
+	lower := strings.ToLower(href)
+	if !strings.HasPrefix(lower, "https://") && !strings.HasPrefix(lower, "http://") {
+		return inner
+	}
+	text := html.UnescapeString(anyTagRE.ReplaceAllString(inner, ""))
+	return html.EscapeString(linkfmt.Link(text, href))
+}
+
 // stripHTML reduces a cooked post body to plain text: script/style content is
-// dropped, <br> and block-element ends become line breaks, remaining tags are
+// dropped, anchors keep their target (see rewriteAnchor), <br> and block-element ends become line breaks, remaining tags are
 // removed, and entities are unescaped.
 func stripHTML(s string) string {
 	s = scriptStyleRE.ReplaceAllString(s, "")
+	s = anchorRE.ReplaceAllStringFunc(s, rewriteAnchor)
 	s = brRE.ReplaceAllString(s, "\n")
 	s = blockCloseRE.ReplaceAllString(s, "\n\n")
 	s = anyTagRE.ReplaceAllString(s, "")
