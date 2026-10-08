@@ -353,3 +353,73 @@ func TestCapsKeepRepliesUnderDeletedParent(t *testing.T) {
 		t.Fatalf("kept %d comments, want 2: %+v", len(th.Comments), th.Comments)
 	}
 }
+
+// capComments must cut breadth-first across the whole thread: with a deep first
+// branch and many later top-level threads, a pre-order prefix would keep the
+// first branch's tail and drop the later threads. Breadth-first keeps every
+// top-level comment, fills the remaining budget one depth at a time, never keeps
+// a reply without its parent, and preserves document order.
+func TestCapCommentsBreadthFirst(t *testing.T) {
+	// Branch 1: a 60-deep chain (ids 2..61). Then 20 single-comment top-level
+	// threads (ids 62..81), the first five of which have one reply each.
+	chain := algoliaItem{ID: 61, Author: "u61", Text: "leaf"}
+	for id := 60; id >= 2; id-- {
+		chain = algoliaItem{ID: id, Author: fmt.Sprintf("u%d", id), Text: "x", Children: []algoliaItem{chain}}
+	}
+	tree := []algoliaItem{chain}
+	nextReply := 1000
+	for id := 62; id <= 81; id++ {
+		it := algoliaItem{ID: id, Author: fmt.Sprintf("u%d", id), Text: "top"}
+		if id < 67 {
+			it.Children = []algoliaItem{{ID: nextReply, Author: "r", Text: "reply"}}
+			nextReply++
+		}
+		tree = append(tree, it)
+	}
+	var comments []Comment
+	flattenComments(tree, 1, &comments)
+	th := Thread{Story: Item{ID: 1}, Comments: comments}
+	original := slices.Clone(th.Comments)
+
+	const n = 25 // 21 top-level + 4 depth-1 comments
+	capComments(&th, n)
+	if len(th.Comments) != n {
+		t.Fatalf("kept %d comments, want %d", len(th.Comments), n)
+	}
+	kept := map[int]bool{}
+	topLevel := 0
+	for _, c := range th.Comments {
+		kept[c.ID] = true
+		if c.ParentID == 1 {
+			topLevel++
+		}
+	}
+	if topLevel != 21 {
+		t.Errorf("kept %d top-level comments, want all 21", topLevel)
+	}
+	for _, c := range th.Comments {
+		if c.ParentID != 1 && !kept[c.ParentID] {
+			t.Errorf("comment %d kept without its parent %d", c.ID, c.ParentID)
+		}
+	}
+	// Depth 1 is filled in document order: the chain's #3 first, then the
+	// replies under #62, #63, #64; the 60-deep tail beyond depth 1 is cut.
+	for _, id := range []int{3, 1000, 1001, 1002} {
+		if !kept[id] {
+			t.Errorf("depth-1 comment %d dropped, want kept", id)
+		}
+	}
+	if kept[4] || kept[1003] {
+		t.Errorf("kept #4 (depth 2) or #1003 (5th depth-1 reply) beyond the budget")
+	}
+	// Survivors keep their original relative order.
+	pos := map[int]int{}
+	for i, c := range original {
+		pos[c.ID] = i
+	}
+	for i := 1; i < len(th.Comments); i++ {
+		if pos[th.Comments[i-1].ID] > pos[th.Comments[i].ID] {
+			t.Fatalf("order changed at %d: %d before %d", i, th.Comments[i-1].ID, th.Comments[i].ID)
+		}
+	}
+}

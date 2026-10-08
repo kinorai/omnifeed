@@ -210,15 +210,64 @@ func MergeExpanded(thread *Thread, newC []Comment, newG []Gap, requestedIDs []st
 	thread.Gaps = append(thread.Gaps, newG...)
 }
 
-// capComments truncates the comment list to at most n entries, preserving order
-// (0 = unlimited). The list is depth-first pre-order for the initial fetch, so
-// ancestors precede their descendants and a prefix cut never orphans a kept
-// reply from a dropped parent; expansion appends deeper comments at the tail, so
-// those — the least central — are dropped first.
+// capComments keeps at most n comments (0 = unlimited), selected breadth-first:
+// every top-level comment (up to n) first, then their direct replies, then the
+// next depth, and so on. A pre-order prefix cut (the old behavior) spent the
+// budget on the first branches' deep tails — measured on big threads,
+// max_comments=150 at depth 6 kept only 3-10 top-level comments. Depth comes from
+// the parent chain, not list position, so expansion comments appended at the
+// tail are ranked by their real depth and kept only once their parent is kept.
+// A comment whose parent is neither the post nor an emitted comment (a skipped
+// deleted parent) counts as top-level, so it is never dropped as an orphan.
+// Survivors keep their original order.
 func capComments(t *Thread, n int) {
-	if n > 0 && len(t.Comments) > n {
-		t.Comments = t.Comments[:n]
+	if n <= 0 || len(t.Comments) <= n {
+		return
 	}
+	parent := make(map[string]string, len(t.Comments))
+	for _, c := range t.Comments {
+		parent[c.ID] = c.ParentID
+	}
+	depth := make(map[string]int, len(t.Comments))
+	var depthOf func(id string) int
+	depthOf = func(id string) int {
+		if d, ok := depth[id]; ok {
+			return d
+		}
+		depth[id] = 0 // provisional: a malformed parent cycle ends here
+		d := 0
+		if p := parent[id]; p != id {
+			if _, emitted := parent[p]; emitted {
+				d = depthOf(p) + 1
+			}
+		}
+		depth[id] = d
+		return d
+	}
+	var byDepth [][]string
+	for _, c := range t.Comments {
+		d := depthOf(c.ID)
+		for len(byDepth) <= d {
+			byDepth = append(byDepth, nil)
+		}
+		byDepth[d] = append(byDepth[d], c.ID)
+	}
+	kept := make(map[string]bool, n)
+	for _, ids := range byDepth {
+		for _, id := range ids {
+			if len(kept) >= n {
+				break
+			}
+			kept[id] = true
+		}
+	}
+	filtered := t.Comments[:0]
+	for _, c := range t.Comments {
+		if kept[c.ID] {
+			filtered = append(filtered, c)
+		}
+	}
+	t.Comments = filtered
 }
 
 // annotateTotals writes the thread totals into the post header once the caps
