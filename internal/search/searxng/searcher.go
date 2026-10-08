@@ -78,6 +78,13 @@ type Searcher struct {
 	limiter     httpx.Limiter
 	maxWait     time.Duration
 	audit       string
+	// configURL/configClient serve InitEngineMetrics' GET /config; the
+	// init* fields bound its retries (tests shrink them).
+	configURL      string
+	configClient   *httpx.Client
+	initBackoff    time.Duration
+	initMaxBackoff time.Duration
+	initBudget     time.Duration
 	// seenEngines is the engine pool as learned from SearXNG's own responses —
 	// the set an engine must be in before a search it sat out can be counted
 	// against it. There is no list of enabled engines in the JSON API, and the
@@ -93,16 +100,26 @@ func New(cfg Config) *Searcher {
 	if cfg.MaxWait <= 0 {
 		cfg.MaxWait = defaultMaxWait
 	}
-	return &Searcher{
-		searchURL:   strings.TrimRight(cfg.Endpoint, "/") + "/search",
-		client:      cfg.Client.WithUpstream("searxng", "search"),
-		logger:      cfg.Logger,
-		metrics:     cfg.Metrics,
-		siteEngines: strings.Join(cfg.SiteEngines, ","),
-		limiter:     cfg.Limiter,
-		maxWait:     cfg.MaxWait,
-		audit:       cfg.Audit,
+	s := &Searcher{
+		searchURL:      strings.TrimRight(cfg.Endpoint, "/") + "/search",
+		client:         cfg.Client.WithUpstream("searxng", "search"),
+		logger:         cfg.Logger,
+		metrics:        cfg.Metrics,
+		siteEngines:    strings.Join(cfg.SiteEngines, ","),
+		limiter:        cfg.Limiter,
+		maxWait:        cfg.MaxWait,
+		audit:          cfg.Audit,
+		configURL:      strings.TrimRight(cfg.Endpoint, "/") + "/config",
+		configClient:   cfg.Client.WithUpstream("searxng", "config"),
+		initBackoff:    initBackoff,
+		initMaxBackoff: initMaxBackoff,
+		initBudget:     initBudget,
 	}
+	// The site engines are known now, with no round-trip: their series start
+	// at zero before the first search. The rest of the pool follows from
+	// InitEngineMetrics, which the caller runs in the background.
+	s.initEngineMetrics(cfg.SiteEngines)
+	return s
 }
 
 // Name returns the searcher identifier ("searxng").
