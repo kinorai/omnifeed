@@ -4,6 +4,7 @@ import (
 	"errors"
 	"regexp"
 	"strconv"
+	"time"
 
 	"github.com/kinorai/omnifeed/internal/domain"
 )
@@ -31,7 +32,8 @@ func redact(s string) string {
 
 // Explain renders a failed crawl/search error as a short, caller-safe
 // explanation: the classified reason, the upstream HTTP status when the error
-// carries one, and the root cause with internal endpoints redacted. Transports
+// carries one, the root cause with internal endpoints redacted, and a
+// trailing "(retry_after_s=N)" when the error says how long to back off. Transports
 // prefix their own context ("fetch_url failed: " + Explain(err)) so an MCP or
 // HTTP client sees what metrics already know instead of an opaque failure.
 // Returns "" only when err is nil.
@@ -59,13 +61,25 @@ func Explain(err error) string {
 	if typed && fe.StatusCode != 0 {
 		label += " (HTTP " + strconv.Itoa(fe.StatusCode) + ")"
 	}
+	var out string
 	switch {
 	case detail == "":
-		return label
+		out = label
 	case label == string(domain.KindError):
 		// The catch-all reason adds nothing over the cause itself.
-		return redact(detail)
+		out = redact(detail)
 	default:
-		return label + ": " + redact(detail)
+		out = label + ": " + redact(detail)
 	}
+	// A machine-readable back-off hint, so a caller that parses the message
+	// (an engine client, an agent) knows how long to leave before retrying.
+	// Rounded UP: "retry in 12s" for a 12.4s wait would be refused again.
+	if typed && fe.RetryAfter > 0 {
+		secs := int(fe.RetryAfter / time.Second)
+		if fe.RetryAfter%time.Second > 0 {
+			secs++
+		}
+		out += " (retry_after_s=" + strconv.Itoa(secs) + ")"
+	}
+	return out
 }

@@ -62,9 +62,13 @@ func FetchURL(reg *engine.Registry, defaults reddit.Options, metrics *observabil
 						"`?t=` (hour|day|week|month|year|all — the time window for top/controversial) and `?limit=` (posts to return, 1-100).",
 				},
 				"format": map[string]any{
-					"type":        "string",
-					"description": "Reddit only (ignored elsewhere): 'toon' (default, token-efficient) or 'json'.",
-					"enum":        []string{"toon", "json"},
+					"type": "string",
+					"description": "Reddit output format: 'toon' (default, token-efficient) or 'json'; other engines ignore the value. " +
+						"Setting it at all means you parse the reply: if a dedicated engine (Reddit, Hacker News, …) fails, you get " +
+						"its error instead of a generic page render. Without it, a timeout or upstream fault falls back to the " +
+						"generic render, marked by _meta fallback_from/fallback_reason and a note on the first line; a block or " +
+						"rate limit never falls back.",
+					"enum": []string{"toon", "json"},
 				},
 				"expand": map[string]any{
 					"type":        "integer",
@@ -150,6 +154,7 @@ func crawlHandler(reg *engine.Registry, defaults reddit.Options, metrics *observ
 		}
 		if f, isString := args["format"].(string); isString && (f == "toon" || f == "json") {
 			opts.RedditFormat = f
+			opts.FormatExplicit = true
 		}
 		if ex, isNumber := args["expand"].(float64); isNumber && ex >= 0 {
 			opts.RedditMaxRounds = int(ex)

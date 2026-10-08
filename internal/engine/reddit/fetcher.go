@@ -6,12 +6,15 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/kinorai/omnifeed/internal/antibot"
 	"github.com/kinorai/omnifeed/internal/browser"
 	"github.com/kinorai/omnifeed/internal/domain"
+	"github.com/kinorai/omnifeed/internal/httpx"
 )
 
 // redditOrigin is the reddit.com host we navigate and fetch from. We use
@@ -31,17 +34,32 @@ const redditOrigin = "https://www.reddit.com"
 //
 // The Session is backed by a browser.Browser (crawl4ai's /execute_js).
 type Fetcher struct {
-	browser browser.Browser
+	browser  browser.Browser
+	quota    httpx.Limiter
+	penalize func(rawURL string, d time.Duration)
 }
 
 // FetcherConfig configures a Fetcher.
 type FetcherConfig struct {
 	Browser browser.Browser
+
+	// Quota, when non-nil, admits every request that reaches Reddit — the
+	// thread fetch, each /api/morechildren round, a listing, a share-link
+	// resolve — not the crawl as a whole. Reddit counts requests, and one
+	// expand=full crawl can be 40 of them. Nil disables it
+	// (OMNIFEED_REDDIT_QUOTA=0, the default).
+	Quota httpx.Limiter
+
+	// Penalize, when non-nil, is told how long Reddit asked us to stay away
+	// (Retry-After / X-Ratelimit-Reset on a 429, or when X-Ratelimit-Remaining
+	// hits 0), keyed on the Reddit origin. main.go points it at the per-domain
+	// limiter, so the next crawl waits out the block instead of extending it.
+	Penalize func(rawURL string, d time.Duration)
 }
 
 // NewFetcher constructs a Fetcher from cfg.
 func NewFetcher(cfg FetcherConfig) *Fetcher {
-	return &Fetcher{browser: cfg.Browser}
+	return &Fetcher{browser: cfg.Browser, quota: cfg.Quota, penalize: cfg.Penalize}
 }
 
 // Open starts a crawl session. The caller owns it and must Close it.
@@ -50,7 +68,7 @@ func (f *Fetcher) Open(ctx context.Context) (*Session, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open %s browser: %w", f.browser.Name(), err)
 	}
-	return &Session{active: bs}, nil
+	return &Session{active: bs, quota: f.quota, penalize: f.penalize}, nil
 }
 
 // Session is one crawl's browser session. All fetches in a crawl share one
@@ -59,6 +77,25 @@ func (f *Fetcher) Open(ctx context.Context) (*Session, error) {
 type Session struct {
 	active     browser.Session
 	threadPage string // the thread page FetchThread navigated to, reused by morechildren
+	quota      httpx.Limiter
+	penalize   func(rawURL string, d time.Duration)
+}
+
+// admit takes one slot of the Reddit request quota and returns its release.
+// The slot is keyed on redditOrigin whatever URL the request is for — a share
+// link may be on bare reddit.com, and the limiter buckets by hostname, so
+// keying on the request URL would split one IP's budget across two counters. A refused or canceled wait comes back
+// classified (quota_exhausted with its retry-after, timeout, canceled), so the
+// caller sees the same error shape every other pacing refusal has.
+func (s *Session) admit(ctx context.Context) (func(), error) {
+	if s.quota == nil {
+		return func() {}, nil
+	}
+	release, err := s.quota.Acquire(ctx, "reddit", redditOrigin+"/")
+	if err != nil {
+		return nil, httpx.ClassifyClientError(err, domain.KindError)
+	}
+	return release, nil
 }
 
 // Close releases the browser session.
@@ -72,6 +109,11 @@ func (s *Session) Close(ctx context.Context) error {
 // fetchViaBrowser navigates navURL, runs the in-page fetch snippet js, and
 // unwraps the {s,b} envelope into the Reddit body.
 func (s *Session) fetchViaBrowser(ctx context.Context, navURL, js string) ([]byte, error) {
+	release, err := s.admit(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	if err := s.active.Navigate(ctx, navURL); err != nil {
 		return nil, err
 	}
@@ -79,35 +121,61 @@ func (s *Session) fetchViaBrowser(ctx context.Context, navURL, js string) ([]byt
 	if err != nil {
 		return nil, err
 	}
-	out, err := unwrapEnvelope(envStr)
+	out, wait, err := unwrapEnvelope(envStr)
+	// Reddit's own back-off answer outlives this request: hand it to the
+	// limiter so the NEXT crawl waits it out, instead of walking into the same
+	// wall and extending the block. Applied on success too — a 200 with
+	// X-Ratelimit-Remaining 0 means the next request will be refused.
+	if wait > 0 && s.penalize != nil {
+		s.penalize(redditOrigin+"/", wait)
+	}
 	if err != nil {
 		return nil, err
 	}
 	return []byte(out), nil
 }
 
-// unwrapEnvelope decodes the {s,b} envelope the in-page snippet returns and
-// yields the Reddit body, distinguishing a Reddit-side block (non-200 envelope
-// status, or a non-JSON body carrying an anti-bot marker) from a clean response.
-func unwrapEnvelope(envStr string) (string, error) {
+// defaultRateLimitBackoff is the hold applied on a Reddit 429 that names no
+// back-off of its own (neither Retry-After nor X-Ratelimit-Reset). Reddit's
+// unauthenticated budget refills per minute, so a minute is the smallest wait
+// that is not a guess at hammering it again.
+const defaultRateLimitBackoff = time.Minute
+
+// unwrapEnvelope decodes the envelope the in-page snippet returns and yields
+// the Reddit body, distinguishing a Reddit-side block (non-200 envelope
+// status, or a non-JSON body carrying an anti-bot marker) from a clean
+// response. wait is how long Reddit asked us to stay away (0 when it did not);
+// a 429 error carries it as RetryAfter.
+func unwrapEnvelope(envStr string) (body string, wait time.Duration, err error) {
 	var env fetchEnvelope
 	if err := json.Unmarshal([]byte(envStr), &env); err != nil {
-		return "", &domain.FetchError{Kind: domain.KindBadResponse, Err: fmt.Errorf("decode fetch envelope: %w", err)}
+		return "", 0, &domain.FetchError{Kind: domain.KindBadResponse, Err: fmt.Errorf("decode fetch envelope: %w", err)}
+	}
+	wait = env.backoff()
+	if env.S == http.StatusTooManyRequests {
+		return "", wait, &domain.FetchError{
+			Kind:       domain.KindHTTP429,
+			StatusCode: env.S,
+			RetryAfter: wait,
+			Err: fmt.Errorf("reddit rate limited this IP; retry in %ds: %s",
+				int((wait+time.Second-1)/time.Second), truncate(env.B, 200)),
+		}
 	}
 	if env.S != http.StatusOK {
-		return "", &domain.FetchError{
+		return "", wait, &domain.FetchError{
 			Kind:       domain.KindForStatus(env.S),
 			StatusCode: env.S,
+			RetryAfter: wait,
 			Err:        fmt.Errorf("reddit returned %d via browser: %s", env.S, truncate(env.B, 200)),
 		}
 	}
 	if !json.Valid([]byte(env.B)) {
 		if marker, blocked := antibot.Detect(env.B); blocked {
-			return "", &domain.FetchError{Kind: domain.KindCaptcha, StatusCode: env.S, Marker: marker}
+			return "", wait, &domain.FetchError{Kind: domain.KindCaptcha, StatusCode: env.S, Marker: marker}
 		}
-		return "", &domain.FetchError{Kind: domain.KindBotBlock, Err: fmt.Errorf("reddit response not JSON (likely bot-blocked): %s", truncate(env.B, 200))}
+		return "", wait, &domain.FetchError{Kind: domain.KindBotBlock, Err: fmt.Errorf("reddit response not JSON (likely bot-blocked): %s", truncate(env.B, 200))}
 	}
-	return env.B, nil
+	return env.B, wait, nil
 }
 
 // FetchThread retrieves a thread via the .json endpoint, fetched from inside a
@@ -168,6 +236,11 @@ func (s *Session) FetchMoreChildren(ctx context.Context, linkID string, childIDs
 // read the resulting location. Returns the full canonical URL (tracking query
 // params and all — NormalizePermalink only looks at the path).
 func (s *Session) ResolveShareURL(ctx context.Context, shareURL string) (string, error) {
+	release, err := s.admit(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer release()
 	if err := s.active.Navigate(ctx, shareURL); err != nil {
 		return "", err
 	}
@@ -191,27 +264,81 @@ func jsLit(s string) string {
 	return string(b)
 }
 
-// getJS returns an async snippet that GETs u and returns {s:status, b:body}.
+// envelopeReturn is the tail every in-page snippet ends with: the status, the
+// body, and the rate-limit headers Reddit sends. The fetch is same-origin, so
+// every response header is readable (CORS exposure rules only bind
+// cross-origin reads); a missing header comes back as null.
+const envelopeReturn = `return JSON.stringify({s: r.status, b: await r.text(), ` +
+	`ra: r.headers.get("retry-after"), rs: r.headers.get("x-ratelimit-reset"), ` +
+	`rm: r.headers.get("x-ratelimit-remaining")});`
+
+// getJS returns an async snippet that GETs u and returns the envelope.
 func getJS(u string) string {
 	return `const r = await fetch(` + jsLit(u) + `, {headers: {"Accept": "application/json"}}); ` +
-		`return JSON.stringify({s: r.status, b: await r.text()});`
+		envelopeReturn
 }
 
-// postJS returns an async snippet that form-POSTs body to u and returns {s,b}.
+// postJS returns an async snippet that form-POSTs body to u and returns the
+// envelope.
 func postJS(u, body string) string {
 	return `const r = await fetch(` + jsLit(u) + `, {method: "POST", ` +
 		`headers: {"Accept": "application/json", "Content-Type": "application/x-www-form-urlencoded"}, ` +
 		`body: ` + jsLit(body) + `}); ` +
-		`return JSON.stringify({s: r.status, b: await r.text()});`
+		envelopeReturn
 }
 
 // fetchEnvelope is what the in-page snippet returns: the HTTP status of the
 // Reddit fetch and its raw body — so we can tell a Reddit-side block (403)
-// apart from a browser/navigation failure.
+// apart from a browser/navigation failure — plus Reddit's rate-limit headers,
+// which are the only signal of how long a block will last.
 type fetchEnvelope struct {
-	S int    `json:"s"`
-	B string `json:"b"`
+	S  int    `json:"s"`
+	B  string `json:"b"`
+	RA string `json:"ra,omitempty"` // Retry-After (seconds)
+	RS string `json:"rs,omitempty"` // X-Ratelimit-Reset (seconds until the window resets)
+	RM string `json:"rm,omitempty"` // X-Ratelimit-Remaining (requests left; Reddit sends a float, "0.0")
 }
+
+// backoff returns how long Reddit asked us to stay away, or 0 when it did not.
+// Only a spent budget asks: a 429, or any response whose X-Ratelimit-Remaining
+// is below 1. The hold is Retry-After when present, else X-Ratelimit-Reset,
+// else — for a 429 that names nothing — defaultRateLimitBackoff.
+func (e fetchEnvelope) backoff() time.Duration {
+	limited := e.S == http.StatusTooManyRequests
+	if rm, ok := headerNumber(e.RM); ok && rm < 1 {
+		limited = true
+	}
+	if !limited {
+		return 0
+	}
+	if ra, ok := headerNumber(e.RA); ok && ra > 0 {
+		return seconds(ra)
+	}
+	if rs, ok := headerNumber(e.RS); ok && rs > 0 {
+		return seconds(rs)
+	}
+	if e.S == http.StatusTooManyRequests {
+		return defaultRateLimitBackoff
+	}
+	return 0
+}
+
+// headerNumber parses a non-negative numeric header value. Reddit sends
+// integers for Retry-After and X-Ratelimit-Reset but floats ("0.0", "99.0")
+// for X-Ratelimit-Remaining, so both forms are accepted. The HTTP-date form of
+// Retry-After is not (see httpx.parseRetryAfter for why).
+func headerNumber(v string) (float64, bool) {
+	if v == "" {
+		return 0, false
+	}
+	f, err := strconv.ParseFloat(strings.TrimSpace(v), 64)
+	if err != nil || f < 0 {
+		return 0, false
+	}
+	return f, true
+}
+
+func seconds(f float64) time.Duration { return time.Duration(f * float64(time.Second)) }
 
 func truncate(s string, n int) string {
 	if len(s) <= n {
