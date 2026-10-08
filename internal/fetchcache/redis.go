@@ -169,7 +169,9 @@ var errProbeMismatch = errors.New("probe value not read back")
 // any other answer Redis will keep giving (an error reply such as READONLY or
 // an unknown command, or a value not read back), and ErrKindTransient for a
 // Redis that did not answer (timeout, refused connection) or answered with a
-// retryable error (LOADING, TRYAGAIN, BUSY, CLUSTERDOWN, MASTERDOWN).
+// retryable error (LOADING, TRYAGAIN, BUSY, CLUSTERDOWN, MASTERDOWN, and OOM or
+// MISCONF: a full or unsaveable Redis refuses writes until memory frees or the
+// disk recovers, which the runtime path already treats as transient).
 func (r *Redis) Probe(ctx context.Context, timeout time.Duration) (kind string, err error) {
 	key := r.prefix + ":probe:" + fmt.Sprint(r.now().UnixNano())
 	want := "ok"
@@ -205,7 +207,7 @@ func probeKind(err error) string {
 		return ErrKindTransient // no reply at all: network, timeout, dial
 	}
 	msg := rerr.Error()
-	for _, p := range []string{"LOADING", "TRYAGAIN", "BUSY", "CLUSTERDOWN", "MASTERDOWN"} {
+	for _, p := range []string{"LOADING", "TRYAGAIN", "BUSY", "CLUSTERDOWN", "MASTERDOWN", "OOM", "MISCONF"} {
 		if strings.HasPrefix(msg, p) {
 			return ErrKindTransient
 		}
