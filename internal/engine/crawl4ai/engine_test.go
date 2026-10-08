@@ -94,8 +94,13 @@ func TestCrawlClassifiesUnsuccessfulResponse(t *testing.T) {
 			true, domain.KindBotBlock, "",
 		},
 		{
-			"success=false generic stays upstream_error",
+			"success=false timeout is a timeout",
 			map[string]interface{}{"success": false, "error": "navigation timeout"},
+			true, domain.KindTimeout, "",
+		},
+		{
+			"success=false generic stays upstream_error",
+			map[string]interface{}{"success": false, "error": "Unexpected error in _crawl_web: browser crashed"},
 			true, domain.KindUpstreamError, "",
 		},
 		{
