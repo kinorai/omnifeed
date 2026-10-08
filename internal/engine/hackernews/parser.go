@@ -223,7 +223,7 @@ func capTopLevel(t *Thread, n int) {
 // capPerSubtree keeps at most n comments inside each top-level thread, counting
 // the thread's root comment, and drops the rest (0 = unlimited). This is the cap
 // that fits HN's mega-thread shape: subtree sizes are wildly skewed (one measured
-// thread ran 105, 55, 16, 13, … over 62 top-level threads), so a flat total cap
+// thread ran 105, 55, 16, 13, … over 62 top-level threads), so a pre-order flat cap
 // spends nearly the whole budget on the first branch, while a per-subtree cap
 // buys breadth across the discussion.
 //
@@ -263,11 +263,34 @@ func capPerSubtree(t *Thread, n int) {
 	keepOnly(t, kept)
 }
 
-// capComments truncates the flat comment list to at most n entries, preserving
-// order. The list is pre-order, so ancestors precede their descendants and a
-// prefix cut never orphans a kept reply from a dropped parent.
+// capComments keeps at most n comments of the flat list (0 = unlimited),
+// selected breadth-first across the WHOLE thread: every top-level comment (up to
+// n) first, then their direct replies, then the next depth, and so on. A
+// pre-order prefix cut (the old behavior) spent the budget on the first
+// branch's deep tail and dropped later top-level threads entirely. Breadth-first
+// selection keeps a reply only once its parent is kept, so parent_id never
+// dangles, and survivors stay in the order HN returned them.
 func capComments(t *Thread, n int) {
-	if n > 0 && len(t.Comments) > n {
-		t.Comments = t.Comments[:n]
+	if n <= 0 || len(t.Comments) <= n {
+		return
 	}
+	idx := indexSubtrees(t.Comments)
+	var byDepth [][]int
+	for _, c := range t.Comments {
+		d := idx.depth[c.ID]
+		for len(byDepth) <= d {
+			byDepth = append(byDepth, nil)
+		}
+		byDepth[d] = append(byDepth[d], c.ID)
+	}
+	kept := make(map[int]bool, n)
+	for _, ids := range byDepth {
+		for _, id := range ids {
+			if len(kept) >= n {
+				break
+			}
+			kept[id] = true
+		}
+	}
+	keepOnly(t, kept)
 }
