@@ -32,7 +32,7 @@ const maxBodySize = 1 << 20 // 1MB request body cap
 
 // Server is the HTTP loader endpoint.
 type Server struct {
-	registry       *engine.Registry
+	registry       engine.Dispatcher
 	auth           auth.Authenticator
 	logger         *slog.Logger
 	metrics        *observability.Metrics
@@ -42,7 +42,7 @@ type Server struct {
 
 // Config configures the Server.
 type Config struct {
-	Registry          *engine.Registry
+	Registry          engine.Dispatcher
 	Authenticator     auth.Authenticator
 	Logger            *slog.Logger
 	Metrics           *observability.Metrics
@@ -228,6 +228,11 @@ func (s *Server) buildEngineOptions(r *http.Request) domain.EngineOptions {
 	if sfp := q.Get("scan_full_page"); sfp == "true" || sfp == "false" {
 		v := sfp == "true"
 		opts.ScanFullPage = &v
+	}
+	// ?no_cache=true (or 1) skips the response cache for this batch, mirroring
+	// fetch_url's no_cache argument.
+	if nc := q.Get("no_cache"); nc == "true" || nc == "1" {
+		opts.NoCache = true
 	}
 	return opts
 }

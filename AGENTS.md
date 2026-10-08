@@ -41,11 +41,13 @@ internal/
                  EngineOptions, errors). Depends on nothing.
   browser/       Browser port: navigate a page + run same-origin JS on it.
     crawl4ai/    Backend: crawl4ai /execute_js (re-navigates per Eval)
-  engine/        Registry + fallback ordering
+  engine/        Registry + fallback ordering; Dispatcher (what transports use)
     reddit/      Engine: drives a browser.Browser, TOON comment trees
     bluesky/     Engine: public AT Protocol AppView, TOON reply trees
     twitter/     Engine: X posts via FxTwitter → syndication/vxTwitter → crawl4ai, markdown
     crawl4ai/    Engine: generic markdown fallback (crawl4ai /crawl — not the browser port)
+  fetchcache/    fetch_url/crawl response cache: decorates engine.Dispatcher
+                 (Redis when configured, else in-process LRU; singleflight)
   search/
     searxng/     Searcher adapter (JSON API) — the only Searcher
   transport/
