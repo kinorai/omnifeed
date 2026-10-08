@@ -32,6 +32,10 @@ func TestClassifyClientError(t *testing.T) {
 		{"reddit 503 is a block", &StatusError{StatusCode: 503}, domain.KindBotBlock, domain.KindBotBlock},
 		// The generic crawl path wants 5xx → upstream_error (its fallback).
 		{"generic 500 is upstream", &StatusError{StatusCode: 500}, domain.KindUpstreamError, domain.KindUpstreamError},
+		// A 504 is a gateway timeout (crawl4ai's wall-clock "Crawl exceeded the
+		// time limit") — unambiguous, so no fallback reclassifies it.
+		{"generic 504 is timeout", &StatusError{StatusCode: 504}, domain.KindUpstreamError, domain.KindTimeout},
+		{"reddit 504 is timeout", &StatusError{StatusCode: 504}, domain.KindBotBlock, domain.KindTimeout},
 		// errors.As must see the StatusError through a wrap.
 		{"wrapped 502 is a block", fmt.Errorf("crawl4ai request: %w", &StatusError{StatusCode: 502}), domain.KindBotBlock, domain.KindBotBlock},
 		{"deadline is timeout", context.DeadlineExceeded, domain.KindBotBlock, domain.KindTimeout},

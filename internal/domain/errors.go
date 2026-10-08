@@ -89,6 +89,10 @@ func KindForStatus(code int) FailureKind {
 		return KindHTTP403
 	case code == http.StatusTooManyRequests:
 		return KindHTTP429
+	case code == http.StatusGatewayTimeout:
+		// A gateway timeout is a time budget running out (crawl4ai's own
+		// wall-clock 504 "Crawl exceeded the time limit"), not an upstream fault.
+		return KindTimeout
 	case code >= 500:
 		return KindUpstreamError
 	default:

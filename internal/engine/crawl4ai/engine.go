@@ -212,12 +212,14 @@ type crawlResponse struct {
 }
 
 type crawlResult struct {
-	URL          string        `json:"url"`
-	Markdown     crawlMarkdown `json:"markdown"`
-	CleanedHTML  string        `json:"cleaned_html"`
-	Success      bool          `json:"success"`
-	StatusCode   int           `json:"status_code"`
-	ErrorMessage string        `json:"error_message"`
+	URL         string        `json:"url"`
+	Markdown    crawlMarkdown `json:"markdown"`
+	CleanedHTML string        `json:"cleaned_html"`
+	// Success is a pointer so a result that omits the field (older fixtures,
+	// pre-0.9.3 shapes) is not read as a failure — only an explicit false is.
+	Success      *bool  `json:"success"`
+	StatusCode   int    `json:"status_code"`
+	ErrorMessage string `json:"error_message"`
 }
 
 type crawlMarkdown struct {
@@ -409,20 +411,25 @@ func (e *Engine) crawlOnce(ctx context.Context, rawURL, excludedSelector string,
 	}
 	if !cr.Success {
 		msg := cr.Error
+		status := 0
 		if msg == "" && len(cr.Results) > 0 {
 			msg = cr.Results[0].ErrorMessage
+			status = cr.Results[0].StatusCode
 		}
-		kind := domain.KindUpstreamError
-		if antibot.IsBlockResponse(msg) {
-			kind = blockKind(msg)
-		}
-		return domain.Document{}, &domain.FetchError{Kind: kind, Err: fmt.Errorf("crawl failed: %s", msg)}
+		return domain.Document{}, verdictError(msg, status)
 	}
 	if len(cr.Results) == 0 {
 		return domain.Document{}, &domain.FetchError{Kind: domain.KindBadResponse, Err: fmt.Errorf("crawl returned no results")}
 	}
 
 	result := cr.Results[0]
+	// crawl4ai 0.9.3+ (PR #2134) answers HTTP 200 with a top-level
+	// success:true even when every URL failed: the verdict lives in the
+	// result's own success/error_message. Without this check a blocked page's
+	// own markdown would be served as content.
+	if result.Success != nil && !*result.Success {
+		return domain.Document{}, verdictError(result.ErrorMessage, result.StatusCode)
+	}
 	// Whitespace-only counts as empty here: a fit_markdown of "\n" must fall
 	// back to raw_markdown, not win the pick and defeat the fallback chain.
 	content := result.Markdown.FitMarkdown
@@ -477,6 +484,18 @@ func (e *Engine) crawlOnce(ctx context.Context, rawURL, excludedSelector string,
 	}, nil
 }
 
+// verdictError turns a crawl4ai failure message into a classified FetchError
+// (see classifyVerdict), keeping the raw message — flattened and truncated —
+// as the detail so the log and the caller see crawl4ai's own words.
+func verdictError(msg string, pageStatus int) *domain.FetchError {
+	kind := classifyVerdict(msg, pageStatus)
+	detail := sanitizeVerdict(msg)
+	if detail == "" {
+		detail = "no error message"
+	}
+	return &domain.FetchError{Kind: kind, StatusCode: pageStatus, Err: fmt.Errorf("crawl failed: %s", detail)}
+}
+
 func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
@@ -505,7 +524,9 @@ func blockKind(body string) domain.FailureKind {
 // blockKind — crawl4ai's content-gate (minimal_text / no <body>: a JS-only SPA, a
 // PDF, a near-empty page) becomes thin_content, while a genuine wall becomes
 // bot_block. Both drop out of the OmnifeedCrawlErrors alert while staying
-// distinct, visible metric series. A 5xx with any other body stays upstream_error.
+// distinct, visible metric series. A 5xx carrying a FastAPI `detail` is
+// classified from that message (classifyVerdict); a scrubbed 0.9.2+ 500 is
+// upstream_rejected; a 504 is a timeout; any other 5xx stays upstream_error.
 func classifyCrawlError(err error) *domain.FetchError {
 	fe := httpx.ClassifyClientError(err, domain.KindUpstreamError)
 	if fe != nil && fe.Kind == domain.KindUpstreamError {
@@ -517,6 +538,13 @@ func classifyCrawlError(err error) *domain.FetchError {
 			// says WHY — minimal_text / no <body> / which wall — instead of the
 			// bare "upstream returned 500".
 			fe.Err = fmt.Errorf("crawl4ai %d: %s", se.StatusCode, truncate(se.Body, 200))
+		case errors.As(err, &se) && errorDetail(se.Body) != "":
+			// A FastAPI `detail` carries crawl4ai's own verdict (the 502 shape of
+			// /md and /llm since 0.9.3, PR #2117): classify it like a result's
+			// error_message instead of reading every 5xx as an outage.
+			detail := errorDetail(se.Body)
+			fe.Kind = classifyVerdict(detail, 0)
+			fe.Err = fmt.Errorf("crawl4ai %d: %s", se.StatusCode, sanitizeVerdict(detail))
 		case errors.As(err, &se) && se.StatusCode == http.StatusInternalServerError && antibot.IsScrubbedServerError(se.Body):
 			// crawl4ai 0.9.2+ scrubs its crawl verdicts (blocks, content-gates,
 			// crashes) out of the 500 body — the reason lives in ITS log under a
@@ -524,6 +552,14 @@ func classifyCrawlError(err error) *domain.FetchError {
 			// so it must not read as an upstream outage.
 			fe.Kind = domain.KindUpstreamRejected
 			fe.Err = fmt.Errorf("crawl4ai rejected the page (verdict scrubbed server-side; see crawl4ai logs): %s", truncate(se.Body, 120))
+		}
+	}
+	// crawl4ai's wall-clock 504 is already a timeout (ClassifyClientError);
+	// keep its `detail` ("Crawl exceeded the time limit") as the cause.
+	var se *httpx.StatusError
+	if fe != nil && fe.Kind == domain.KindTimeout && errors.As(err, &se) {
+		if detail := errorDetail(se.Body); detail != "" {
+			fe.Err = fmt.Errorf("crawl4ai %d: %s", se.StatusCode, sanitizeVerdict(detail))
 		}
 	}
 	return fe
