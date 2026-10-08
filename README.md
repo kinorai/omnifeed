@@ -121,7 +121,7 @@ Set `OMNIFEED_API_KEY` to it in `docker-compose.yml` and remove `OMNIFEED_DEV_NO
 
 omnifeed reads `OMNIFEED_`-prefixed environment variables. You usually **set only three**: `OMNIFEED_API_KEY`, `OMNIFEED_CRAWL4AI_URL` and, for search, `OMNIFEED_SEARXNG_URL`.
 
-**[docs/configuration.md](docs/configuration.md)** lists every variable, plus fetch truncation (`max_chars` and `start_char`), infinite-scroll fetching, Reddit size limits and Prometheus metrics.
+**[docs/configuration.md](docs/configuration.md)** lists every variable, plus fetch truncation (`max_chars` and `start_char`), infinite-scroll fetching, Reddit size limits, the [response cache](docs/configuration.md#response-cache) (`no_cache` to bypass), [partial Reddit threads](docs/configuration.md#partial-reddit-threads), [per-engine timeouts](docs/configuration.md#timeouts) and Prometheus metrics.
 
 **Running more than one replica?** Set `OMNIFEED_REDIS_URL` so the rate limiters share state and the deployment obeys one limit. Without it, N replicas send N times the configured rate, which upstream search engines notice. If Redis goes down, the limiters fall back to per-process pacing and crawls keep working.
 
