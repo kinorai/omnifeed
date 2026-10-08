@@ -7,8 +7,8 @@ package linkfmt
 import "strings"
 
 // Link renders a link whose visible text is text and whose target is href.
-// When the text is just the URL itself — equal to the href, a prefix of it, or
-// shortened with a trailing "..."/"…" — the bare href is returned; otherwise
+// When the text is just the URL itself — equal to the href or a prefix of it,
+// possibly shortened with a trailing "..."/"…" — the bare href is returned; otherwise
 // markdown [text](href) keeps both. Prefix matching also ignores the href's
 // http(s):// scheme and a leading "www.", since clients commonly display links
 // that way (Bluesky shows "example.com/path…" for https://example.com/path/x).
@@ -28,7 +28,11 @@ func Link(text, href string) string {
 
 // isURLText reports whether text is a (possibly shortened) display of href.
 func isURLText(text, href string) bool {
-	if strings.HasSuffix(text, "...") || strings.HasSuffix(text, "…") {
+	// A trailing ellipsis marks a shortened URL only when what precedes it is
+	// a prefix of the href; "Continue reading…" or a truncated onebox title
+	// is a real label and must survive.
+	text = strings.TrimSuffix(strings.TrimSuffix(text, "..."), "…")
+	if text == "" {
 		return true
 	}
 	bare := href
