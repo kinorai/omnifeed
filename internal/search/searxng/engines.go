@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -32,6 +33,14 @@ var engineErrorTypes = []string{
 	"captcha", "too_many_requests", "access_denied", "timeout", "suspended", "error", "unknown",
 }
 
+// queriedCategories are the SearXNG categories Search actually runs. Search
+// sends no `categories` param, so SearXNG answers from its default category,
+// "general". Only enabled engines in one of these categories are minted from
+// /config: the rest (images, music, maps, packages…) never answer an omnifeed
+// query, and minting them would add ~21 never-incremented series each. If
+// Search ever sends `categories`, this must follow.
+var queriedCategories = []string{"general"}
+
 // initEngineMetrics mints every per-engine series for the given engines at
 // zero. Prometheus' increase()/rate() cannot count a counter's FIRST sample,
 // so a series that is born at 20 on a pod's first search reads as no increase
@@ -54,8 +63,9 @@ func (s *Searcher) initEngineMetrics(engines []string) {
 // instance with no engines.
 type configResponse struct {
 	Engines *[]struct {
-		Name    string `json:"name"`
-		Enabled *bool  `json:"enabled"`
+		Name       string   `json:"name"`
+		Enabled    *bool    `json:"enabled"`
+		Categories []string `json:"categories"`
 	} `json:"engines"`
 }
 
@@ -107,7 +117,7 @@ func (s *Searcher) InitEngineMetrics(ctx context.Context) {
 }
 
 // enabledEngines makes one GET /config attempt and returns the names of the
-// engines the instance has enabled. The retry loop is InitEngineMetrics'
+// engines the instance has enabled in one of queriedCategories. The retry loop is InitEngineMetrics'
 // own, so the client is asked for a single attempt.
 func (s *Searcher) enabledEngines(ctx context.Context) ([]string, error) {
 	resp, err := s.configClient.DoRetry(ctx, http.MethodGet, s.configURL, nil, nil,
@@ -135,9 +145,20 @@ func (s *Searcher) enabledEngines(ctx context.Context) ([]string, error) {
 	}
 	var engines []string
 	for _, e := range *cr.Engines {
-		if e.Name != "" && e.Enabled != nil && *e.Enabled {
+		if e.Name != "" && e.Enabled != nil && *e.Enabled && inQueriedCategory(e.Categories) {
 			engines = append(engines, e.Name)
 		}
 	}
 	return engines, nil
+}
+
+// inQueriedCategory reports whether an engine in categories can answer a
+// Search query (see queriedCategories).
+func inQueriedCategory(categories []string) bool {
+	for _, c := range categories {
+		if slices.Contains(queriedCategories, c) {
+			return true
+		}
+	}
+	return false
 }
