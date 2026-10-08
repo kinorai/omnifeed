@@ -615,6 +615,17 @@ func TestFallbackGenericOnCanonicalURL(t *testing.T) {
 	if doc.Metadata["upstream"] != "crawl4ai" {
 		t.Errorf("upstream = %q, want crawl4ai", doc.Metadata["upstream"])
 	}
+
+	// A caller that asked for TOON/JSON parses the reply: no markdown page
+	// render, here or in the registry.
+	gen.urls = nil
+	_, err = newEngine(srv, gen).Crawl(context.Background(), "https://x.com/tuakdotsol/status/"+id, domain.EngineOptions{RedditFormat: "json", FormatExplicit: true})
+	if err == nil || !domain.IsNoFallback(err) {
+		t.Fatalf("Crawl(format=json) err = %v, want a final error", err)
+	}
+	if len(gen.urls) != 0 {
+		t.Errorf("generic crawled %v for a JSON caller", gen.urls)
+	}
 }
 
 // FxTwitter and syndication both say 404: a classified not-found error,
@@ -860,6 +871,9 @@ func TestShortLinkToPrivateAddressRejected(t *testing.T) {
 	_, err := e.Crawl(context.Background(), "https://t.co/evil1", domain.EngineOptions{})
 	if err == nil || !strings.Contains(err.Error(), "t.co destination rejected") {
 		t.Fatalf("err = %v, want the destination rejected", err)
+	}
+	if !domain.IsNoFallback(err) {
+		t.Errorf("err = %v, want final (a registry fallback would follow the redirect)", err)
 	}
 	if len(gen.urls) != 0 {
 		t.Errorf("generic crawled %v", gen.urls)
