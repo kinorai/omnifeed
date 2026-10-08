@@ -124,9 +124,12 @@ func configSearcher(t *testing.T, config http.HandlerFunc, search string) (*Sear
 
 const configFixture = `{"engines":[
 	{"name":"google cse","enabled":true,"categories":["general"]},
-	{"name":"privacywall","enabled":true,"categories":["general"]},
+	{"name":"privacywall","enabled":true,"categories":["general","web"]},
 	{"name":"bing","enabled":false,"categories":["general"]},
-	{"name":"","enabled":true}
+	{"name":"bing images","enabled":true,"categories":["images","web"]},
+	{"name":"genius","enabled":true,"categories":["music","lyrics"]},
+	{"name":"nocategory","enabled":true},
+	{"name":"","enabled":true,"categories":["general"]}
 ]}`
 
 func countLevel(c *capture, level slog.Level) int {
@@ -139,8 +142,10 @@ func countLevel(c *capture, level slog.Level) int {
 	return n
 }
 
-// Only the engines SearXNG has enabled get series; disabled ones never run,
-// and minting them would only add dead series.
+// Only engines SearXNG has enabled AND that run for omnifeed's queries (the
+// general category) get series: disabled engines, and enabled ones in other
+// categories (images, music…), never answer a search, so minting them would
+// only add dead series.
 func TestInitEngineMetricsMintsEnabledEnginesOnly(t *testing.T) {
 	s, cap, m := configSearcher(t, func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = io.WriteString(w, configFixture)
@@ -151,7 +156,9 @@ func TestInitEngineMetricsMintsEnabledEnginesOnly(t *testing.T) {
 	body := scrape(t, m)
 	wantEngineSeriesAtZero(t, body, "google cse")
 	wantEngineSeriesAtZero(t, body, "privacywall")
-	wantNoEngineSeries(t, body, "bing")
+	for _, engine := range []string{"bing", "bing images", "genius", "nocategory"} {
+		wantNoEngineSeries(t, body, engine)
+	}
 	if strings.Contains(body, `engine=""`) {
 		t.Error("a nameless engine minted a series")
 	}
