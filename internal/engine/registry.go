@@ -170,14 +170,16 @@ const FallbackNotice = "> Note: the dedicated %s engine failed (%s); this is the
 
 // markFallback labels a fallback-rendered document: _meta fallback_from /
 // fallback_reason for clients that read metadata, and FallbackNotice on top of
-// the body for those that only read text. The metadata map is copied, never
-// mutated in place — the fallback engine owns it.
+// the body for those that only read text. fallback_from also keeps the
+// response cache from storing a stand-in render under the dedicated engine's
+// URL (fetchcache refuses any document carrying domain.FallbackFromKey). The
+// metadata map is copied, never mutated in place — the fallback engine owns it.
 func markFallback(doc domain.Document, from, reason string) domain.Document {
 	meta := make(map[string]string, len(doc.Metadata)+2)
 	for k, v := range doc.Metadata {
 		meta[k] = v
 	}
-	meta["fallback_from"] = from
+	meta[domain.FallbackFromKey] = from
 	meta["fallback_reason"] = reason
 	doc.Metadata = meta
 	doc.PageContent = fmt.Sprintf(FallbackNotice, from, reason) + doc.PageContent

@@ -577,6 +577,21 @@ func TestRedis_DownDegradesToMiss(t *testing.T) {
 	}
 }
 
+// A caller hanging up mid-GET is not a Redis outage: it must not switch the
+// cache off for everyone else for a whole cooldown.
+func TestRedis_CanceledCallerDoesNotTripCooldown(t *testing.T) {
+	clock := newClock()
+	rb, _ := redisBackend(t, clock, 0)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, _, err := rb.Get(ctx, "k"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Get with dead ctx = %v, want context.Canceled", err)
+	}
+	if rb.coolingDown() {
+		t.Error("a canceled caller tripped the outage cooldown")
+	}
+}
+
 func TestRedis_CorruptValueIsAMiss(t *testing.T) {
 	clock := newClock()
 	rb, mr := redisBackend(t, clock, 0)
@@ -622,5 +637,44 @@ func TestMemory_EvictsLeastRecentlyUsed(t *testing.T) {
 	}
 	if err := m.Set(ctx, "huge", Entry{Doc: domain.Document{PageContent: strings.Repeat("x", 5000)}}, time.Hour); !errors.Is(err, ErrTooLarge) {
 		t.Errorf("oversized Set = %v, want ErrTooLarge", err)
+	}
+}
+
+// A leader whose upstream crawl panics must not hand its followers a zero
+// Document as a success: they fetch for themselves.
+func TestCrawl_SingleflightLeaderPanicDoesNotServeEmptyDoc(t *testing.T) {
+	clock := newClock()
+	release := make(chan struct{})
+	inner := &stubDispatcher{engine: "reddit", respond: func(_ context.Context, n int32) (domain.Document, error) {
+		if n == 1 {
+			<-release
+			panic("engine bug")
+		}
+		return page(testURL), nil
+	}}
+	c := newCache(inner, NewMemory(MemoryConfig{MaxBytes: 0, Now: clock.Now}), clock, nil)
+
+	leaderDone := make(chan struct{})
+	go func() {
+		defer close(leaderDone)
+		defer func() { _ = recover() }()
+		_, _ = c.Crawl(context.Background(), testURL, domain.EngineOptions{})
+	}()
+	for inner.calls.Load() != 1 {
+		time.Sleep(time.Millisecond)
+	}
+	followerDone := make(chan struct{})
+	var doc domain.Document
+	var err error
+	go func() {
+		defer close(followerDone)
+		doc, err = c.Crawl(context.Background(), testURL, domain.EngineOptions{})
+	}()
+	time.Sleep(20 * time.Millisecond) // let the follower join the flight
+	close(release)
+	<-leaderDone
+	<-followerDone
+	if err != nil || doc.PageContent != "content of "+testURL {
+		t.Fatalf("follower after a leader panic: err=%v content=%q", err, doc.PageContent)
 	}
 }
