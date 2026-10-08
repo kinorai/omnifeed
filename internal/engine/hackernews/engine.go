@@ -167,7 +167,9 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, eo domain.EngineOptio
 		capTopLevel(&thread, eo.HNMaxTopLevel)
 		capPerSubtree(&thread, eo.HNMaxPerSubtree)
 		capComments(&thread, commentCeiling(eo.HNMaxComments))
-		if len(thread.Comments) < total {
+		thread.Story.TotalComments = total
+		thread.Story.Truncated = len(thread.Comments) < total
+		if thread.Story.Truncated {
 			meta["truncated_from"] = strconv.Itoa(total)
 		}
 		meta["comments"] = strconv.Itoa(len(thread.Comments))
