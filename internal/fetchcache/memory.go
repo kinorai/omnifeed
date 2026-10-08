@@ -11,7 +11,8 @@ import (
 // slot, key, timestamps) so many tiny documents cannot blow past MaxBytes.
 const entryOverhead = 256
 
-// Memory is the in-process LRU backend, used when OMNIFEED_REDIS_URL is unset.
+// Memory is the in-process LRU backend, used when OMNIFEED_REDIS_URL is unset,
+// and as the Failover's fallback when Redis refuses the cache's keys.
 // It is bounded by the approximate byte size of what it holds; expired entries
 // are dropped on read and are first in line for eviction by recency.
 type Memory struct {
