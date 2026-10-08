@@ -226,6 +226,18 @@ type Config struct {
     PerDomainConcurrency int
     PerDomainDelay       time.Duration
     BlockPrivateIPs      bool
+
+    // fetch_url response cache (internal/fetchcache). Stored in Redis when
+    // RedisURL is set (shared by every replica), else in an in-process LRU of
+    // CacheMaxBytes. CacheTTLThreads applies to the dedicated engines (Reddit,
+    // Hacker News, Discourse, Bluesky, GitHub), CacheTTLPages to the generic
+    // page fallback; a TTL of 0 disables caching for that class.
+    CacheEnabled      bool
+    CacheTTLThreads   time.Duration
+    CacheTTLPages     time.Duration
+    CacheMaxBytes     int
+    CacheMaxItemBytes int
+    CacheKeyPrefix    string
 }
 ```
 

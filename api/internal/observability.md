@@ -28,6 +28,7 @@ Package observability wires structured logging, Prometheus metrics, and Kubernet
   - [func NewMetrics\(\) \*Metrics](<#NewMetrics>)
   - [func \(m \*Metrics\) Observe\(engine, tenant, status, reason string, duration time.Duration\)](<#Metrics.Observe>)
   - [func \(m \*Metrics\) ObserveAttempt\(upstream string, retry bool\)](<#Metrics.ObserveAttempt>)
+  - [func \(m \*Metrics\) ObserveCache\(result string\)](<#Metrics.ObserveCache>)
   - [func \(m \*Metrics\) ObserveEmptySearch\(scoped bool\)](<#Metrics.ObserveEmptySearch>)
   - [func \(m \*Metrics\) ObserveEngineRank\(engine string, rank int, unique bool\)](<#Metrics.ObserveEngineRank>)
   - [func \(m \*Metrics\) ObserveEngineResults\(engine string, rows int\)](<#Metrics.ObserveEngineResults>)
@@ -42,6 +43,7 @@ Package observability wires structured logging, Prometheus metrics, and Kubernet
   - [func \(m \*Metrics\) ObserveUnresponsiveEngine\(engine, errType string\)](<#Metrics.ObserveUnresponsiveEngine>)
   - [func \(m \*Metrics\) ObserveUpstream\(upstream, op, status string, duration time.Duration\)](<#Metrics.ObserveUpstream>)
   - [func \(m \*Metrics\) RegisterMetrics\(mux \*http.ServeMux\)](<#Metrics.RegisterMetrics>)
+  - [func \(m \*Metrics\) SetCacheBytes\(n int\)](<#Metrics.SetCacheBytes>)
   - [func \(m \*Metrics\) SetRatelimitDegraded\(scope string, down bool\)](<#Metrics.SetRatelimitDegraded>)
 - [type ReadyCheck](<#ReadyCheck>)
 
@@ -232,6 +234,8 @@ type Metrics struct {
     SearchSecs          *prometheus.HistogramVec // searcher, status
     SearchEnginePos     *prometheus.HistogramVec // engine
     SearchEngineUnique  *prometheus.CounterVec   // engine
+    CacheRequests       *prometheus.CounterVec   // result
+    CacheBytes          prometheus.Gauge
     // contains filtered or unexported fields
 }
 ```
@@ -262,6 +266,15 @@ func (m *Metrics) ObserveAttempt(upstream string, retry bool)
 ```
 
 ObserveAttempt records one HTTP attempt from the retrying client against the named upstream. retry is false for the first try and true for each retry, so attempt="retry" counts the re\-drives that \#2's RetryableStatus veto removes for non\-transient blocks.
+
+<a name="Metrics.ObserveCache"></a>
+### func \(\*Metrics\) ObserveCache
+
+```go
+func (m *Metrics) ObserveCache(result string)
+```
+
+ObserveCache counts one fetch\_url response\-cache lookup by result \(hit|miss|bypass|error\).
 
 <a name="Metrics.ObserveEmptySearch"></a>
 ### func \(\*Metrics\) ObserveEmptySearch
@@ -388,6 +401,15 @@ func (m *Metrics) RegisterMetrics(mux *http.ServeMux)
 ```
 
 RegisterMetrics attaches /metrics to mux.
+
+<a name="Metrics.SetCacheBytes"></a>
+### func \(\*Metrics\) SetCacheBytes
+
+```go
+func (m *Metrics) SetCacheBytes(n int)
+```
+
+SetCacheBytes publishes the in\-process response cache's approximate size.
 
 <a name="Metrics.SetRatelimitDegraded"></a>
 ### func \(\*Metrics\) SetRatelimitDegraded

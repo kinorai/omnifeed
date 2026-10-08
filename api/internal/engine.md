@@ -11,6 +11,7 @@ Package engine defines the dispatch mechanism that picks the right per\-URL hand
 ## Index
 
 - [Constants](<#constants>)
+- [type Dispatcher](<#Dispatcher>)
 - [type Registry](<#Registry>)
   - [func New\(\) \*Registry](<#New>)
   - [func \(r \*Registry\) BlockPrivateIPs\(block bool\) \*Registry](<#Registry.BlockPrivateIPs>)
@@ -28,6 +29,18 @@ Package engine defines the dispatch mechanism that picks the right per\-URL hand
 
 ```go
 const FallbackNotice = "> Note: the dedicated %s engine failed (%s); this is the generic page render instead.\n\n"
+```
+
+<a name="Dispatcher"></a>
+## type Dispatcher
+
+Dispatcher is what the transports need from the engine layer: crawl a URL through the right engine, and name the engine that would handle it \(for metrics labels\). \*Registry implements it; the fetch\_url response cache \(internal/fetchcache\) decorates it, so every transport shares one cache.
+
+```go
+type Dispatcher interface {
+    Crawl(ctx context.Context, rawURL string, opts domain.EngineOptions) (domain.Document, error)
+    Resolve(rawURL string) domain.Engine
+}
 ```
 
 <a name="Registry"></a>

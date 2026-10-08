@@ -11,7 +11,7 @@ Package tools defines the MCP tools this proxy exposes — fetch\_url and web\_s
 ## Index
 
 - [Constants](<#constants>)
-- [func FetchURL\(reg \*engine.Registry, defaults reddit.Options, metrics \*observability.Metrics, defaultMaxChars int\) mcp.Tool](<#FetchURL>)
+- [func FetchURL\(reg engine.Dispatcher, defaults reddit.Options, metrics \*observability.Metrics, defaultMaxChars int\) mcp.Tool](<#FetchURL>)
 - [func WebSearch\(searcher domain.Searcher, maxResults int, metrics \*observability.Metrics\) mcp.Tool](<#WebSearch>)
 
 
@@ -27,7 +27,7 @@ const MaxFetchChars = 500000
 ## func FetchURL
 
 ```go
-func FetchURL(reg *engine.Registry, defaults reddit.Options, metrics *observability.Metrics, defaultMaxChars int) mcp.Tool
+func FetchURL(reg engine.Dispatcher, defaults reddit.Options, metrics *observability.Metrics, defaultMaxChars int) mcp.Tool
 ```
 
 FetchURL returns the \`fetch\_url\` tool: URL → LLM\-friendly content via the engine registry \(Reddit engine for reddit.com, Hacker News engine for news.ycombinator.com, Twitter engine for X posts, crawl4ai fallback for the rest\). defaultMaxChars caps markdown content when the caller omits \`max\_chars\` \(0 = unlimited\); it comes from OMNIFEED\_FETCH\_MAX\_CHARS.
