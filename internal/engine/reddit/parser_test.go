@@ -198,7 +198,7 @@ func TestToonEncoding_NonEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	encoded, err := toon.Marshal(thread, toon.WithLengthMarkers(true))
+	encoded, err := toon.Marshal(thread)
 	if err != nil {
 		t.Fatalf("toon.Marshal: %v", err)
 	}

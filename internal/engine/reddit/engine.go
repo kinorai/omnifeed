@@ -318,7 +318,7 @@ func encode[T any](v T, format string) ([]byte, error) {
 	if format == "json" {
 		return json.Marshal(v)
 	}
-	return toon.Marshal(v, toon.WithLengthMarkers(true))
+	return toon.Marshal(v)
 }
 
 // crawlListing renders a bare subreddit page (/r/{sub}/{sort}) as its post list.
