@@ -5,6 +5,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"unicode/utf8"
@@ -86,6 +87,7 @@ func (r *Registry) Crawl(ctx context.Context, rawURL string, opts domain.EngineO
 			continue
 		}
 		doc, err := e.Crawl(ctx, rawURL, opts)
+		err = classifyPacing(err)
 		// A dedicated engine failing (rate limit, API change, upstream hiccup)
 		// must not hard-fail a URL the generic browser fallback can still
 		// render — before dedicated engines existed, these URLs worked. The
@@ -104,6 +106,7 @@ func (r *Registry) Crawl(ctx context.Context, rawURL string, opts domain.EngineO
 				r.metrics.ObserveFallback(e.Name(), reason)
 			}
 			doc, err = r.fallback.Crawl(ctx, rawURL, opts)
+			err = classifyPacing(err)
 			r.observeChars(r.fallback, doc, err)
 			if err == nil {
 				doc = markFallback(doc, e.Name(), reason)
@@ -117,6 +120,7 @@ func (r *Registry) Crawl(ctx context.Context, rawURL string, opts domain.EngineO
 		return domain.Document{}, fmt.Errorf("no engine available for %s and no fallback configured", rawURL)
 	}
 	doc, err := r.fallback.Crawl(ctx, rawURL, opts)
+	err = classifyPacing(err)
 	r.observeChars(r.fallback, doc, err)
 	return doc, err
 }
@@ -171,6 +175,20 @@ func markFallback(doc domain.Document, from, reason string) domain.Document {
 	doc.Metadata = meta
 	doc.PageContent = fmt.Sprintf(FallbackNotice, from, reason) + doc.PageContent
 	return doc
+}
+
+// classifyPacing types a limiter's raw fast-fail (*httpx.WaitBudgetError) as
+// KindQuotaExhausted with its retry-after. Engines return the limiter's
+// Acquire error as-is, so without this a refused pacing wait would reach the
+// transports as an untyped error: reason "error", code upstream_error, not
+// retryable, no retry_after_s.
+func classifyPacing(err error) error {
+	var wbe *httpx.WaitBudgetError
+	var fe *domain.FetchError
+	if errors.As(err, &wbe) && !errors.As(err, &fe) {
+		return httpx.ClassifyClientError(err, domain.KindError)
+	}
+	return err
 }
 
 // observeChars records the extracted content length of a successful crawl
