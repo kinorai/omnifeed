@@ -221,6 +221,22 @@ func capComments(t *Thread, n int) {
 	}
 }
 
+// annotateTotals writes the thread totals into the post header once the caps
+// have run. fetched is the comment count after fetch + expansion, before caps.
+func annotateTotals(t *Thread, fetched int) {
+	total := t.Post.NumComments
+	returned := len(t.Comments)
+	hidden := 0
+	for _, g := range t.Gaps {
+		hidden += g.Count
+	}
+	truncated := returned < fetched || len(t.Gaps) > 0
+	t.Post.TotalComments = &total
+	t.Post.ReturnedComments = &returned
+	t.Post.HiddenMore = &hidden
+	t.Post.Truncated = &truncated
+}
+
 // capTopLevel keeps only the first n top-level comment threads (in Reddit's sort
 // order) and every reply beneath them, dropping the rest (0 = unlimited). A
 // comment is top-level when its parent is the post itself. Comments whose parent
