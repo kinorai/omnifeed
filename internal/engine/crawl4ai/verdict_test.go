@@ -80,6 +80,7 @@ func TestCrawl094ResultFailureFamilies(t *testing.T) {
 		{"structural content-gate", "Blocked by anti-bot protection: Structural: minimal_text on small page (224 bytes)", 200, domain.KindThinContent, "minimal_text"},
 		{"http 5xx", "Failed on navigating ACS-GOTO: HTTP 503 Service Unavailable", 503, domain.KindUpstreamError, "HTTP 503"},
 		{"net err other", "Failed on navigating ACS-GOTO: net::ERR_NAME_NOT_RESOLVED", 0, domain.KindUpstreamError, "ERR_NAME_NOT_RESOLVED"},
+		{"url names a vendor", "Failed on navigating ACS-GOTO: net::ERR_CONNECTION_RESET at https://blog.cloudflare.com/blocked-timeout-captcha", 0, domain.KindUpstreamError, "ERR_CONNECTION_RESET"},
 		{"silent 403 page", "Unexpected error", 403, domain.KindHTTP403, "Unexpected error"},
 		{"empty message", "", 0, domain.KindUpstreamError, "no error message"},
 	}
