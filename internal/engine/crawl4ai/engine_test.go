@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -25,15 +24,13 @@ import (
 // the engine's post-failure direct-GET rescue (rawtext.go) fails instantly and
 // locally rather than reaching the real internet — every assertion in this file
 // is decided by the crawl4ai fake, never by the crawled URL itself.
-var deadTargetURL = func() string {
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		panic(err)
-	}
-	addr := l.Addr().String()
-	_ = l.Close()
-	return "http://" + addr
-}()
+//
+// Port 1 (tcpmux) is privileged and outside the ephemeral range, so no
+// httptest server can ever be handed it. A port reserved by listening on :0
+// and closing it was reused by the kernel for a test's own crawl4ai fake: the
+// rescue GET then hit the fake and counted as an extra upstream attempt
+// (TestCrawlScrubbed500RejectedNotRetried: "upstream attempts = 3, want 2").
+const deadTargetURL = "http://127.0.0.1:1"
 
 func TestClassifyCrawlError(t *testing.T) {
 	cases := []struct {
