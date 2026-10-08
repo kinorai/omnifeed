@@ -241,6 +241,21 @@ Reddit's edge fingerprints the TLS/JA3 handshake and 403-blocks non-browser HTTP
 
 > Sustained scraping can raise your IP's risk score. If fetches return the block page, slow down, keep `expand` modest, or route the browser through a residential proxy.
 
+## Partial Reddit threads
+
+A thread whose `/api/morechildren` expansion is cut short, because a round was
+blocked, rate limited, timed out or returned something unparseable, is still
+returned with the comments loaded so far. omnifeed flags it:
+
+- `_meta.partial: "true"`, `_meta.partial_reason` with the failure kind (e.g.
+  `http_429`, `timeout`, `bot_block`, `parse_error`), and
+  `_meta.missing_replies` with the count still behind `more` gaps.
+- The body starts with a note an agent reading only text will see. In TOON it is
+  the first line, `note: 212 more replies could not be loaded (http_429)`. In
+  JSON it is a top-level `"note"` field.
+
+A thread that simply used up its `expand` budget is not partial.
+
 ## Raw-text bypass
 
 Raw code, JSON, markdown and plain text have nothing for a browser to render, and Chromium's page-idle wait makes them slow: a raw `githubusercontent.com` file takes 30 to 39 s in the browser and about 200 ms direct. When a URL's extension looks raw (`.md`, `.txt`, `.json`, source files), the generic engine sends a HEAD request. If the server confirms a non-HTML text type, a plain GET fetches the body and returns it unchanged. Anything uncertain, such as a failed probe, `text/html`, binary bytes or blocked egress, falls back to the browser. With `OMNIFEED_BLOCK_PRIVATE_IPS` on, direct fetches refuse private and reserved addresses **when dialing**, so DNS rebinding can't bypass URL validation. This needs outbound access to the **target sites**, not just crawl4ai. Without it the probe fails and everything goes through crawl4ai.
