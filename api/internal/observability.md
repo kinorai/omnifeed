@@ -26,6 +26,7 @@ Package observability wires structured logging, Prometheus metrics, and Kubernet
   - [func \(h \*Health\) Register\(mux \*http.ServeMux\)](<#Health.Register>)
 - [type Metrics](<#Metrics>)
   - [func NewMetrics\(\) \*Metrics](<#NewMetrics>)
+  - [func \(m \*Metrics\) InitSearxngEngine\(engine string, errorTypes \[\]string\)](<#Metrics.InitSearxngEngine>)
   - [func \(m \*Metrics\) Observe\(engine, tenant, status, reason string, duration time.Duration\)](<#Metrics.Observe>)
   - [func \(m \*Metrics\) ObserveAttempt\(upstream string, retry bool\)](<#Metrics.ObserveAttempt>)
   - [func \(m \*Metrics\) ObserveCache\(result string\)](<#Metrics.ObserveCache>)
@@ -252,6 +253,15 @@ func NewMetrics() *Metrics
 ```
 
 NewMetrics builds and registers all collectors.
+
+<a name="Metrics.InitSearxngEngine"></a>
+### func \(\*Metrics\) InitSearxngEngine
+
+```go
+func (m *Metrics) InitSearxngEngine(engine string, errorTypes []string)
+```
+
+InitSearxngEngine creates every per\-engine search series for engine at zero: results, zero\-result searches, unique results, the rank histogram, and the unresponsive counter for each of errorTypes. increase\(\) and rate\(\) cannot count a counter's first sample, so a series born at its first value hides that value — after each restart, a pod's first results per engine. Minted at startup, the series already sits at 0 when the first search lands. Idempotent.
 
 <a name="Metrics.Observe"></a>
 ### func \(\*Metrics\) Observe
