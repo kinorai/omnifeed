@@ -173,9 +173,21 @@ func (s *Server) crawlOne(ctx context.Context, rawURL string, opts domain.Engine
 		s.metrics.Observe(engName, string(tenant), status, reason, time.Since(start))
 	}
 	if err != nil {
+		// error_code/retryable mirror the MCP structuredContent verdict
+		// (docs/errors.md) so a loader client can branch without parsing text.
+		f := observability.Classify(err)
+		meta := map[string]string{
+			"source":     rawURL,
+			"error":      "true",
+			"error_code": string(f.Code),
+			"retryable":  strconv.FormatBool(f.Retryable),
+		}
+		if s := f.RetryAfterSeconds(); s > 0 {
+			meta["retry_after_s"] = strconv.Itoa(s)
+		}
 		return loaderDocument{
 			PageContent: "Error crawling URL: " + observability.Explain(err),
-			Metadata:    map[string]string{"source": rawURL, "error": "true"},
+			Metadata:    meta,
 		}
 	}
 	return loaderDocument{PageContent: doc.PageContent, Metadata: doc.Metadata}

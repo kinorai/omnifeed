@@ -147,16 +147,19 @@ func TestToolsCall_LogsArgsOnFailure(t *testing.T) {
 	}
 }
 
-// A tools/call failure must carry the classified reason (and the upstream status
-// when the error has one) into the JSON-RPC error message: a bare
-// "fetch_url failed" leaves the calling agent unable to tell a retryable
-// upstream fault from a bot wall. The code stays -32603 (no protocol change).
+// A tools/call failure is a tool execution error: a result with isError, whose
+// first text block carries the classified reason (and the upstream status when
+// the error has one) — a bare "fetch_url failed" leaves the calling agent unable
+// to tell a retryable upstream fault from a bot wall — and whose
+// structuredContent carries the stable code. Never a JSON-RPC error.
 func TestToolsCall_ErrorMessageCarriesReasonAndStatus(t *testing.T) {
 	cases := []struct {
-		name string
-		tool string
-		err  error
-		want string
+		name      string
+		tool      string
+		err       error
+		want      string
+		wantCode  string
+		retryable bool
 	}{
 		{
 			name: "fetch_error_with_kind_and_status",
@@ -166,13 +169,15 @@ func TestToolsCall_ErrorMessageCarriesReasonAndStatus(t *testing.T) {
 				StatusCode: 500,
 				Err:        errors.New("crawl4ai returned 500: Internal Server Error"),
 			},
-			want: "fetch_url failed: upstream_error (HTTP 500): crawl4ai returned 500: Internal Server Error",
+			want:     "fetch_url failed: upstream_error (HTTP 500): crawl4ai returned 500: Internal Server Error [upstream_error] Retryable.",
+			wantCode: "upstream_error", retryable: true,
 		},
 		{
-			name: "captcha_without_wrapped_error",
-			tool: "fetch_url",
-			err:  &domain.FetchError{Kind: domain.KindCaptcha, StatusCode: 403, Marker: "cf-challenge"},
-			want: `fetch_url failed: captcha (HTTP 403): matched block marker "cf-challenge"`,
+			name:     "captcha_without_wrapped_error",
+			tool:     "fetch_url",
+			err:      &domain.FetchError{Kind: domain.KindCaptcha, StatusCode: 403, Marker: "cf-challenge"},
+			want:     `fetch_url failed: captcha (HTTP 403): matched block marker "cf-challenge" [captcha] Not retryable.`,
+			wantCode: "captcha",
 		},
 		{
 			// Reddit's back-off reaches the caller as a parseable hint.
@@ -184,13 +189,15 @@ func TestToolsCall_ErrorMessageCarriesReasonAndStatus(t *testing.T) {
 				RetryAfter: 90 * time.Second,
 				Err:        errors.New("reddit rate limited this IP; retry in 90s"),
 			},
-			want: "fetch_url failed: http_429 (HTTP 429): reddit rate limited this IP; retry in 90s (retry_after_s=90)",
+			want:     "fetch_url failed: http_429 (HTTP 429): reddit rate limited this IP; retry in 90s [rate_limited] Retryable after 90s.",
+			wantCode: "rate_limited", retryable: true,
 		},
 		{
-			name: "plain_error",
-			tool: "fetch_url",
-			err:  errors.New("boom"),
-			want: "fetch_url failed: boom",
+			name:     "plain_error",
+			tool:     "fetch_url",
+			err:      errors.New("boom"),
+			want:     "fetch_url failed: boom [upstream_error] Not retryable.",
+			wantCode: "upstream_error",
 		},
 		{
 			// The upstream endpoint is a configured internal address — it must not
@@ -201,7 +208,8 @@ func TestToolsCall_ErrorMessageCarriesReasonAndStatus(t *testing.T) {
 				Kind: domain.KindUpstreamError,
 				Err:  errors.New(`Post "http://crawl4ai:11235/crawl": dial tcp: connection refused`),
 			},
-			want: `fetch_url failed: upstream_error: Post "[upstream]": dial tcp: connection refused`,
+			want:     `fetch_url failed: upstream_error: Post "[upstream]": dial tcp: connection refused [upstream_error] Retryable.`,
+			wantCode: "upstream_error", retryable: true,
 		},
 	}
 
@@ -219,19 +227,28 @@ func TestToolsCall_ErrorMessageCarriesReasonAndStatus(t *testing.T) {
 			body := post(t, srv, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"`+tc.tool+`","arguments":{}}}`)
 
 			var resp struct {
-				Error struct {
-					Code    int    `json:"code"`
-					Message string `json:"message"`
-				} `json:"error"`
+				Error  json.RawMessage `json:"error"`
+				Result struct {
+					IsError           bool `json:"isError"`
+					Content           []struct{ Type, Text string }
+					StructuredContent map[string]any `json:"structuredContent"`
+				} `json:"result"`
 			}
 			if err := json.Unmarshal(body, &resp); err != nil {
 				t.Fatalf("decode: %v", err)
 			}
-			if resp.Error.Code != codeInternalError {
-				t.Fatalf("code: got %d, want %d", resp.Error.Code, codeInternalError)
+			if resp.Error != nil {
+				t.Fatalf("tool failure must not be a JSON-RPC error, got %s", resp.Error)
 			}
-			if resp.Error.Message != tc.want {
-				t.Fatalf("message:\n got %q\nwant %q", resp.Error.Message, tc.want)
+			if !resp.Result.IsError || len(resp.Result.Content) == 0 {
+				t.Fatalf("want isError result with content, got %s", body)
+			}
+			if got := resp.Result.Content[0].Text; got != tc.want {
+				t.Fatalf("text:\n got %q\nwant %q", got, tc.want)
+			}
+			sc := resp.Result.StructuredContent
+			if sc["code"] != tc.wantCode || sc["retryable"] != tc.retryable {
+				t.Fatalf("structuredContent = %v, want code=%s retryable=%v", sc, tc.wantCode, tc.retryable)
 			}
 		})
 	}

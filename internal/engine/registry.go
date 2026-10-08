@@ -79,7 +79,7 @@ func (r *Registry) Resolve(rawURL string) domain.Engine {
 // transport — guarantees every inbound path is covered.
 func (r *Registry) Crawl(ctx context.Context, rawURL string, opts domain.EngineOptions) (domain.Document, error) {
 	if err := httpx.ValidateURL(rawURL, r.blockPrivate); err != nil {
-		return domain.Document{}, fmt.Errorf("url rejected: %w", err)
+		return domain.Document{}, fmt.Errorf("url rejected: %w", &domain.InvalidRequestError{Err: err})
 	}
 	for _, e := range r.engines {
 		if !e.Matches(rawURL) {

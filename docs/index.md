@@ -15,6 +15,8 @@ Install and quick start are in the [README](https://github.com/kinorai/omnifeed#
 
 ## Reference
 
+- [Error codes](errors.md): the stable error codes every front-end reports, how
+  failure reasons map onto them, and the MCP `isError` result shape.
 - [API reference](api/index.md): Go package docs generated from source.
 - [Ideas and parked work](ideas.md): features considered and not built, or built and
   removed, with the measurements, what would justify revisiting each, and the git ref

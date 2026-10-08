@@ -2,6 +2,8 @@ package mcp
 
 import (
 	"context"
+	"encoding/json"
+	"strconv"
 
 	"github.com/kinorai/omnifeed/internal/observability"
 )
@@ -44,10 +46,48 @@ func (e ParamError) Error() string { return e.msg }
 // InvalidParams returns a ParamError with the given message.
 func InvalidParams(msg string) error { return ParamError{msg: msg} }
 
-// toolFailureMessage is the JSON-RPC error message for a failed tools/call: the
+// toolFailureMessage is the human-readable text of a failed tools/call: the
 // tool name plus the classified reason, upstream status, and root cause that
 // observability already records as metric labels. A bare "<tool> failed" tells
 // the calling agent nothing about whether to retry, use another URL, or give up.
 func toolFailureMessage(tool string, err error) string {
 	return tool + " failed: " + observability.Explain(err)
+}
+
+// toolErrorResult renders a failed tools/call as a CallToolResult with
+// isError: true (MCP tool execution error). content[0] is the short human
+// text — what failed, why, and whether to retry; structuredContent carries the
+// same verdict as stable fields (code, retryable, retry_after_s?,
+// upstream_status?, url?) so clients branch without parsing prose. The
+// structured object is also serialized into a second text block, as the spec
+// recommends for clients that predate structuredContent (added in 2025-06-18;
+// older clients ignore the unknown field). Codes: see docs/errors.md.
+func toolErrorResult(tool string, args map[string]any, err error) map[string]any {
+	f := observability.Classify(err)
+	structured := f.Fields()
+	if u, isString := args["url"].(string); isString && u != "" {
+		structured["url"] = u
+	}
+	text := toolFailureMessage(tool, err) + " [" + string(f.Code) + "] " + retryHint(f)
+	serialized, _ := json.Marshal(structured)
+	return map[string]any{
+		"content": []map[string]any{
+			{"type": "text", "text": text},
+			{"type": "text", "text": string(serialized)},
+		},
+		"structuredContent": structured,
+		"isError":           true,
+	}
+}
+
+// retryHint is the caller-facing retry advice for a failure.
+func retryHint(f observability.Failure) string {
+	switch {
+	case !f.Retryable:
+		return "Not retryable."
+	case f.RetryAfterSeconds() > 0:
+		return "Retryable after " + strconv.Itoa(f.RetryAfterSeconds()) + "s."
+	default:
+		return "Retryable."
+	}
 }
