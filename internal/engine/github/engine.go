@@ -496,7 +496,7 @@ func labelNames(labels []apiLabel) []string {
 // reader, human or program, gets the page title without parsing the TOON), and
 // wraps it in a Document with standard metadata.
 func (e *Engine) document(v any, title, source string, extra map[string]string) (domain.Document, error) {
-	encoded, err := toon.Marshal(v, toon.WithLengthMarkers(true))
+	encoded, err := toon.Marshal(v)
 	if err != nil {
 		return domain.Document{}, fmt.Errorf("encode: %w", err)
 	}

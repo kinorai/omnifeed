@@ -151,7 +151,7 @@ func TestCrawlPrintView(t *testing.T) {
 	}
 	for _, want := range []string{
 		"PEP 777: how to re-invent the wheel", "posts_count: 3",
-		"posts[#3]:", // TOON length marker
+		"posts[3]:", // TOON array header (spec v2+: no # length marker)
 		"alice", "bob", "carol",
 		"first post body", "second post body", "third post body",
 		"number: 2", "reply_to: 1", "reply_to: 2",
