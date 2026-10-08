@@ -165,6 +165,14 @@ type Config struct {
 	// goes to the generic browser fallback.
 	DiscourseHosts []string
 
+	// Twitter/X engine. TwitterEnabled off sends every x.com/twitter.com URL
+	// to the generic fallback. TwitterFxTwitterURL is the FxTwitter API base —
+	// the public api.fxtwitter.com, or a self-hosted FxEmbed. TwitterMaxReplies
+	// caps the replies rendered under a post.
+	TwitterEnabled      bool
+	TwitterFxTwitterURL string
+	TwitterMaxReplies   int
+
 	// Reddit engine defaults.
 	RedditTimeout     time.Duration
 	RedditMaxRounds   int
@@ -237,8 +245,11 @@ func Load() (Config, error) {
 		RedisURL:       env("OMNIFEED_REDIS_URL", ""),
 		RedisKeyPrefix: env("OMNIFEED_REDIS_KEY_PREFIX", "omnifeed:ratelimit"),
 		GitHubToken:    env("OMNIFEED_GITHUB_TOKEN", ""),
-		RedditFormat:   env("OMNIFEED_REDDIT_FORMAT", "toon"),
-		RedditSort:     env("OMNIFEED_REDDIT_SORT", domain.DefaultRedditSort),
+
+		TwitterFxTwitterURL: env("OMNIFEED_TWITTER_FXTWITTER_URL", "https://api.fxtwitter.com"),
+
+		RedditFormat: env("OMNIFEED_REDDIT_FORMAT", "toon"),
+		RedditSort:   env("OMNIFEED_REDDIT_SORT", domain.DefaultRedditSort),
 	}
 
 	// Tri-state: unset = the shipped default list, set = that list verbatim,
@@ -320,6 +331,12 @@ func Load() (Config, error) {
 	if c.RedditTimeout, err = envDuration("OMNIFEED_REDDIT_TIMEOUT", 4*time.Minute); err != nil {
 		return c, err
 	}
+	if c.TwitterEnabled, err = envBool("OMNIFEED_TWITTER_ENABLED", true); err != nil {
+		return c, err
+	}
+	if c.TwitterMaxReplies, err = envInt("OMNIFEED_TWITTER_MAX_REPLIES", 20); err != nil {
+		return c, err
+	}
 	if c.RedditMaxRounds, err = envInt("OMNIFEED_REDDIT_MAX_ROUNDS", 3); err != nil {
 		return c, err
 	}
@@ -397,6 +414,12 @@ func Load() (Config, error) {
 	}
 	if c.RedditDepth < 1 {
 		return c, fmt.Errorf("OMNIFEED_REDDIT_DEPTH must be >= 1, got %d", c.RedditDepth)
+	}
+	if c.TwitterMaxReplies < 1 {
+		return c, fmt.Errorf("OMNIFEED_TWITTER_MAX_REPLIES must be >= 1, got %d", c.TwitterMaxReplies)
+	}
+	if u, perr := url.Parse(c.TwitterFxTwitterURL); perr != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return c, fmt.Errorf("OMNIFEED_TWITTER_FXTWITTER_URL must be an absolute http(s) URL, got %q", c.TwitterFxTwitterURL)
 	}
 	if c.RedditMaxComments < 0 {
 		return c, fmt.Errorf("OMNIFEED_REDDIT_MAX_COMMENTS must be >= 0 (0 = unlimited), got %d", c.RedditMaxComments)

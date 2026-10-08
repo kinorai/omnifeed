@@ -335,3 +335,42 @@ func TestLoad_RedditQuota(t *testing.T) {
 		t.Error("OMNIFEED_REDDIT_QUOTA with a zero window accepted")
 	}
 }
+
+// The Twitter knobs: on by default, the public FxTwitter API, 20 replies; a
+// self-hosted FxEmbed URL and a reply cap are taken verbatim; nonsense fails.
+func TestLoad_Twitter(t *testing.T) {
+	cfg, err := loadWith(t, "", "")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.TwitterEnabled || cfg.TwitterFxTwitterURL != "https://api.fxtwitter.com" || cfg.TwitterMaxReplies != 20 {
+		t.Errorf("defaults = %v %q %d", cfg.TwitterEnabled, cfg.TwitterFxTwitterURL, cfg.TwitterMaxReplies)
+	}
+
+	for _, tc := range []struct {
+		key, value string
+		check      func(Config) bool
+		wantErr    bool
+	}{
+		{"OMNIFEED_TWITTER_ENABLED", "false", func(c Config) bool { return !c.TwitterEnabled }, false},
+		{"OMNIFEED_TWITTER_FXTWITTER_URL", "http://fxembed.internal:8787", func(c Config) bool {
+			return c.TwitterFxTwitterURL == "http://fxembed.internal:8787"
+		}, false},
+		{"OMNIFEED_TWITTER_MAX_REPLIES", "50", func(c Config) bool { return c.TwitterMaxReplies == 50 }, false},
+		{"OMNIFEED_TWITTER_MAX_REPLIES", "0", nil, true},
+		{"OMNIFEED_TWITTER_MAX_REPLIES", "many", nil, true},
+		{"OMNIFEED_TWITTER_ENABLED", "maybe", nil, true},
+		{"OMNIFEED_TWITTER_FXTWITTER_URL", "api.fxtwitter.com", nil, true},
+	} {
+		cfg, err := loadWith(t, tc.key, tc.value)
+		if tc.wantErr {
+			if err == nil {
+				t.Errorf("%s=%q: want error", tc.key, tc.value)
+			}
+			continue
+		}
+		if err != nil || !tc.check(cfg) {
+			t.Errorf("%s=%q: err=%v cfg=%+v", tc.key, tc.value, err, cfg)
+		}
+	}
+}

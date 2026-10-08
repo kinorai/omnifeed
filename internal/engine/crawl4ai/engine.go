@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"unicode/utf8"
 
@@ -238,6 +239,8 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, opts domain.EngineOpt
 	if e.endpoint == "" {
 		return domain.Document{}, fmt.Errorf("crawl4ai endpoint not configured (set OMNIFEED_CRAWL4AI_URL)")
 	}
+
+	rawURL = xcomURL(rawURL)
 
 	release, err := e.limiter.Acquire(ctx, e.Name(), rawURL)
 	if err != nil {
@@ -563,4 +566,20 @@ func classifyCrawlError(err error) *domain.FetchError {
 		}
 	}
 	return fe
+}
+
+// twitterHosts are the legacy hosts this engine must never load: twitter.com
+// only 301s to x.com, yet a headless browser opening it lands on X's anti-bot
+// page (a 39-byte crawl), while x.com serves logged-out readers a rendered page.
+var twitterHosts = map[string]bool{"twitter.com": true, "www.twitter.com": true, "mobile.twitter.com": true}
+
+// xcomURL points a twitter.com URL at x.com (profiles, lists, … — the
+// URLs the Twitter engine does not claim) and returns any other URL unchanged.
+func xcomURL(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil || !twitterHosts[strings.ToLower(u.Hostname())] {
+		return rawURL
+	}
+	u.Host = "x.com"
+	return u.String()
 }

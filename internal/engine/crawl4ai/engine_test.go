@@ -793,3 +793,50 @@ func TestCrawlRequestLatencyKnobs(t *testing.T) {
 		})
 	}
 }
+
+// A twitter.com URL the Twitter engine does not claim (a profile, a list…)
+// reaches crawl4ai as x.com: twitter.com only 301s there, and the headless
+// browser trips X's anti-bot page instead of following it. Other hosts —
+// look-alikes included — are sent untouched.
+func TestXcomURL(t *testing.T) {
+	cases := map[string]string{
+		"https://twitter.com/jack":                  "https://x.com/jack",
+		"https://www.twitter.com/jack/lists?x=1":    "https://x.com/jack/lists?x=1",
+		"https://mobile.twitter.com/search?q=go":    "https://x.com/search?q=go",
+		"https://x.com/jack":                        "https://x.com/jack",
+		"https://nottwitter.com/jack":               "https://nottwitter.com/jack",
+		"https://twitter.com.evil.example/jack":     "https://twitter.com.evil.example/jack",
+		"https://blog.twitter.com/engineering/post": "https://blog.twitter.com/engineering/post",
+	}
+	for in, want := range cases {
+		if got := xcomURL(in); got != want {
+			t.Errorf("xcomURL(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestCrawlSendsTwitterAsXcom(t *testing.T) {
+	var gotURLs []any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		var req map[string]any
+		if err := json.Unmarshal(raw, &req); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+		gotURLs, _ = req["urls"].([]any)
+		resp := map[string]any{"success": true, "results": []any{map[string]any{
+			"success": true, "status_code": 200, "markdown": map[string]any{"raw_markdown": "# jack\n\nprofile body " + strings.Repeat("text ", 80)},
+		}}}
+		b, _ := json.Marshal(resp)
+		_, _ = w.Write(b)
+	}))
+	defer srv.Close()
+
+	e := New(Config{Endpoint: srv.URL, Client: httpx.New(nil), Limiter: httpx.NewDomainLimiter(2, 0)})
+	if _, err := e.Crawl(context.Background(), "https://twitter.com/jack", domain.EngineOptions{}); err != nil {
+		t.Fatalf("Crawl() error = %v", err)
+	}
+	if len(gotURLs) != 1 || gotURLs[0] != "https://x.com/jack" {
+		t.Fatalf("crawl4ai urls = %v, want [https://x.com/jack]", gotURLs)
+	}
+}
