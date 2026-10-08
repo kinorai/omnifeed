@@ -39,8 +39,15 @@ func TestRegistryCrawl_ChokePointRejectsSSRF(t *testing.T) {
 	} {
 		stub := &stubEngine{}
 		r := New().Fallback(stub).BlockPrivateIPs(true)
-		if _, err := r.Crawl(context.Background(), rawURL, domain.EngineOptions{}); err == nil {
+		_, err := r.Crawl(context.Background(), rawURL, domain.EngineOptions{})
+		if err == nil {
 			t.Errorf("Crawl(%q) = nil error, want rejected", rawURL)
+		}
+		// Transports report a rejected URL as the caller's mistake
+		// (invalid_request), not an upstream failure.
+		var ire *domain.InvalidRequestError
+		if !errors.As(err, &ire) {
+			t.Errorf("Crawl(%q) err = %v, want a *domain.InvalidRequestError", rawURL, err)
 		}
 		if stub.called {
 			t.Errorf("Crawl(%q) dispatched to the engine despite an invalid URL", rawURL)

@@ -463,7 +463,15 @@ func (s *Server) handleToolsCall(ctx context.Context, req rpcRequest, name strin
 			return errorResp(req.ID, codeInvalidParams, paramErr.Error())
 		}
 		s.logger.Warn("mcp tool call failed", "tool", name, "args", p.Arguments, "err", err)
-		return errorResp(req.ID, codeInternalError, toolFailureMessage(name, err))
+		// A tool that ran and failed is a tool execution error, not a protocol
+		// error: the spec puts it in the result with isError so the model sees
+		// it and can react (retry, try another URL, give up). JSON-RPC errors
+		// stay reserved for bad params, unknown tools, and the protocol itself.
+		result := toolErrorResult(name, p.Arguments, err)
+		if modern {
+			return ok(req.ID, modernize(result))
+		}
+		return ok(req.ID, result)
 	}
 	// Success exemplar for latency triage: metrics carry the duration
 	// distributions but can never carry the URL/query (label cardinality) —

@@ -155,19 +155,22 @@ func TestNew_DefaultMaxResults(t *testing.T) {
 // degraded SearXNG (retry) from a hard failure.
 func TestSearch_UpstreamErrorBodyCarriesReason(t *testing.T) {
 	cases := []struct {
-		name string
-		err  error
-		want string
+		name     string
+		err      error
+		want     string
+		wantCode string
 	}{
 		{
-			name: "status_carried",
-			err:  &domain.FetchError{Kind: domain.KindHTTP429, StatusCode: 429, Err: errors.New("searxng returned 429")},
-			want: "search upstream failed: http_429 (HTTP 429): searxng returned 429",
+			name:     "status_carried",
+			err:      &domain.FetchError{Kind: domain.KindHTTP429, StatusCode: 429, Err: errors.New("searxng returned 429")},
+			want:     "search upstream failed: http_429 (HTTP 429): searxng returned 429",
+			wantCode: "rate_limited",
 		},
 		{
-			name: "plain_error",
-			err:  errors.New("boom"),
-			want: "search upstream failed: boom",
+			name:     "plain_error",
+			err:      errors.New("boom"),
+			want:     "search upstream failed: boom",
+			wantCode: "upstream_error",
 		},
 	}
 
@@ -180,12 +183,16 @@ func TestSearch_UpstreamErrorBodyCarriesReason(t *testing.T) {
 			if rec.Code != http.StatusBadGateway {
 				t.Fatalf("status: got %d, want 502", rec.Code)
 			}
-			var body map[string]string
+			var body map[string]any
 			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 				t.Fatalf("decode: %v", err)
 			}
 			if body["error"] != tc.want {
 				t.Fatalf("error:\n got %q\nwant %q", body["error"], tc.want)
+			}
+			// The stable code mirrors the MCP structuredContent verdict.
+			if body["code"] != tc.wantCode {
+				t.Fatalf("code: got %v, want %q", body["code"], tc.wantCode)
 			}
 		})
 	}

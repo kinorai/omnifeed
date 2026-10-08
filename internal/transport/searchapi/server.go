@@ -125,7 +125,11 @@ func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		s.logger.Warn("search failed", "query", req.Query, "reason", observability.Reason(err), "err", err)
-		writeError(w, http.StatusBadGateway, "search upstream failed: "+observability.Explain(err))
+		// code/retryable mirror the MCP structuredContent verdict (docs/errors.md).
+		f := observability.Classify(err)
+		body := f.Fields()
+		body["error"] = "search upstream failed: " + observability.Explain(err)
+		writeJSON(w, http.StatusBadGateway, body)
 		return
 	}
 	// Success exemplar (query-level) for latency triage — see the matching
@@ -139,7 +143,11 @@ func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 }
 
 func writeError(w http.ResponseWriter, code int, msg string) {
+	writeJSON(w, code, map[string]any{"error": msg})
+}
+
+func writeJSON(w http.ResponseWriter, code int, body map[string]any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
-	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
+	_ = json.NewEncoder(w).Encode(body)
 }
