@@ -123,6 +123,15 @@ omnifeed **never truncates TOON or JSON output**, which covers every dedicated e
 
 Generic crawls **don't scroll** by default. Scrolling costs seconds on every page, gains content only on append-style infinite feeds, and corrupts virtualized pages. When a feed, listing or gallery comes back missing items, opt in per request with `scan_full_page: true` on `fetch_url` or `POST /crawl?scan_full_page=true`. Both accept `false` too, which turns the scroll off where `OMNIFEED_CRAWL4AI_SCAN_FULL_PAGE` turns it on. `OMNIFEED_CRAWL4AI_SCROLL_DELAY` sets the pause between scroll steps.
 
+## Thread totals in the body
+
+AI agents read the TOON (or JSON) body, not the response `_meta`, so thread headers state how complete the comment list is:
+
+- Hacker News `story`: `total_comments`, the live comments in Algolia's tree before any cap, and `truncated`, whether a cap dropped some of them.
+- Reddit `post`: `total_comments`, Reddit's `num_comments` (it counts deleted and removed comments, so it can exceed what is fetchable); `returned_comments`, the comments emitted; `hidden_more`, the sum of the remaining `more` gaps' counts; and `truncated`, true when a cap dropped comments or any gap is left unexpanded.
+
+`_meta` keeps its own fields (`comments`, `truncated_from`, `total_comments`, `gaps`) unchanged.
+
 ## Controlling Reddit response size
 
 Reddit comment trees can be huge. There are two kinds of limit:

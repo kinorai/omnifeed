@@ -36,7 +36,12 @@ type Item struct {
 	URL     string `json:"url,omitempty" toon:"url,omitempty"`
 	Points  int    `json:"points" toon:"points"`
 	Created int64  `json:"created" toon:"created"`
-	Text    string `json:"text,omitempty" toon:"text,omitempty"`
+	// TotalComments is how many live comments the Algolia tree held before any
+	// cap; Truncated reports whether the caps dropped some of them. They sit in
+	// the body because AI agents see the TOON text, not the response _meta.
+	TotalComments int    `json:"total_comments" toon:"total_comments"`
+	Truncated     bool   `json:"truncated" toon:"truncated"`
+	Text          string `json:"text,omitempty" toon:"text,omitempty"`
 }
 
 // Comment is a Hacker News comment, flattened with parent_id (like the Reddit

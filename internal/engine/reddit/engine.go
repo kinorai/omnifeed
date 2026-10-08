@@ -172,12 +172,14 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, eo domain.EngineOptio
 	// Post-fetch size caps: applied after expansion so they bound the final
 	// output regardless of how much expansion produced. Top-level cap first
 	// (structural — keeps whole threads), then the absolute comment ceiling.
+	fetched := len(thread.Comments)
 	if opts.MaxTopLevel > 0 {
 		capTopLevel(&thread, opts.MaxTopLevel)
 	}
 	if opts.MaxComments > 0 {
 		capComments(&thread, opts.MaxComments)
 	}
+	annotateTotals(&thread, fetched)
 
 	// Strip the per-gap child-ID lists from the output — they were only
 	// needed internally for /api/morechildren expansion.
