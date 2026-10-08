@@ -122,6 +122,7 @@ func TestKey_IncludesEveryOutputOption(t *testing.T) {
 	yes := true
 	variants := map[string]func(o *domain.EngineOptions){
 		"format":          func(o *domain.EngineOptions) { o.RedditFormat = "json" },
+		"format_explicit": func(o *domain.EngineOptions) { o.FormatExplicit = true },
 		"expand":          func(o *domain.EngineOptions) { o.RedditMaxRounds = 40 },
 		"limit":           func(o *domain.EngineOptions) { o.RedditFetchLimit = 50 },
 		"depth":           func(o *domain.EngineOptions) { o.RedditDepth = 2 },
