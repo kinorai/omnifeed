@@ -37,12 +37,15 @@ const MaxFetchChars = 500000
 // rest).
 // defaultMaxChars caps markdown content when the caller omits `max_chars`
 // (0 = unlimited); it comes from OMNIFEED_FETCH_MAX_CHARS.
-func FetchURL(reg *engine.Registry, defaults reddit.Options, metrics *observability.Metrics, defaultMaxChars int) mcp.Tool {
+func FetchURL(reg engine.Dispatcher, defaults reddit.Options, metrics *observability.Metrics, defaultMaxChars int) mcp.Tool {
 	return mcp.Tool{
 		Name: "fetch_url",
 		Description: "Fetch any URL and return LLM-friendly content. You MUST use it for Reddit and Hacker News URLs. " +
 			"X/Twitter post links (x.com, twitter.com, fxtwitter/fixupx/vxtwitter/fixvx, t.co) return the full post with " +
-			"its quote, media alt text, community note, the author's thread and top replies.",
+			"its quote, media alt text, community note, the author's thread and top replies. " +
+			"Successful results are cached briefly (threads ~10 min, pages ~30 min; _meta.cache is hit or miss, _meta.cached_at " +
+			"says when it was fetched), so re-reading a URL is free — pass no_cache=true only when you need content newer than that. " +
+			"A Reddit thread whose reply expansion was cut short is flagged _meta.partial with a 'note:' first line.",
 		// Read-only and open-world: fetches external pages without mutating
 		// anything, so clients can auto-approve it.
 		Annotations: map[string]any{
@@ -134,13 +137,19 @@ func FetchURL(reg *engine.Registry, defaults reddit.Options, metrics *observabil
 						"their next batches. Costs several extra seconds and can corrupt virtualized pages — set true only for " +
 						"feed/listing/gallery URLs where the first fetch clearly missed items.",
 				},
+				"no_cache": map[string]any{
+					"type": "boolean",
+					"description": "Skip the response cache and fetch the URL fresh (the fresh result still refreshes the cache). " +
+						"Leave unset unless the cached copy (see _meta.cached_at) is too old for your purpose: every uncached Reddit " +
+						"fetch spends a tight per-IP rate budget.",
+				},
 			},
 		},
 		Handle: crawlHandler(reg, defaults, metrics, defaultMaxChars),
 	}
 }
 
-func crawlHandler(reg *engine.Registry, defaults reddit.Options, metrics *observability.Metrics, defaultMaxChars int) func(context.Context, map[string]any) (mcp.ToolResult, error) {
+func crawlHandler(reg engine.Dispatcher, defaults reddit.Options, metrics *observability.Metrics, defaultMaxChars int) func(context.Context, map[string]any) (mcp.ToolResult, error) {
 	return func(ctx context.Context, args map[string]any) (mcp.ToolResult, error) {
 		rawURL, _ := args["url"].(string)
 		if rawURL == "" {
@@ -189,6 +198,9 @@ func crawlHandler(reg *engine.Registry, defaults reddit.Options, metrics *observ
 		}
 		if sfp, isBool := args["scan_full_page"].(bool); isBool {
 			opts.ScanFullPage = &sfp
+		}
+		if nc, isBool := args["no_cache"].(bool); isBool {
+			opts.NoCache = nc
 		}
 
 		start := time.Now()
@@ -346,7 +358,7 @@ func observe(metrics *observability.Metrics, engine string, err error, start tim
 	metrics.Observe(engine, mcpTenant, observability.StatusOf(err), observability.Reason(err), time.Since(start))
 }
 
-func engineName(reg *engine.Registry, rawURL string) string {
+func engineName(reg engine.Dispatcher, rawURL string) string {
 	if e := reg.Resolve(rawURL); e != nil {
 		return e.Name()
 	}

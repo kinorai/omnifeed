@@ -74,6 +74,12 @@ falls back to crawl4ai on the `x.com` URL.
 | `OMNIFEED_LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error` |
 | `OMNIFEED_LOG_FORMAT` | `json` | `json` or `text` |
 | `OMNIFEED_ENABLE_PPROF` | `false` | Expose `/debug/pprof/*` |
+| `OMNIFEED_CACHE_ENABLED` | `true` | Cache successful `fetch_url` and `POST /crawl` results. See [Response cache](#response-cache). |
+| `OMNIFEED_CACHE_TTL_THREADS` | `10m` | How long a result from a dedicated engine (Reddit, Hacker News, Discourse, Bluesky, GitHub) stays cached. `0` turns caching off for them. |
+| `OMNIFEED_CACHE_TTL_PAGES` | `30m` | How long a generic page (the crawl4ai engine) stays cached. `0` turns caching off for them. |
+| `OMNIFEED_CACHE_MAX_BYTES` | `67108864` (64 MiB) | Size of the in-process LRU, used when `OMNIFEED_REDIS_URL` is unset. Approximate: content plus metadata plus a small per-entry overhead. Per pod. |
+| `OMNIFEED_CACHE_MAX_ITEM_BYTES` | `4194304` (4 MiB) | Largest single entry. In Redis it is the gzip-compressed size, in memory the raw size. A bigger result is still returned, just not cached. |
+| `OMNIFEED_CACHE_KEY_PREFIX` | `omnifeed:cache` | Redis key namespace for cache entries, separate from the rate limiter's `OMNIFEED_REDIS_KEY_PREFIX`. |
 
 ### Retry-After propagation
 
@@ -241,6 +247,50 @@ Reddit's edge fingerprints the TLS/JA3 handshake and 403-blocks non-browser HTTP
 
 > Sustained scraping can raise your IP's risk score. If fetches return the block page, slow down, keep `expand` modest, or route the browser through a residential proxy.
 
+## Response cache
+
+The same thread is often fetched again within minutes: a retry job re-reads
+the threads it already has, and agents re-open URLs they fetched a turn ago.
+Every repeat of a Reddit thread spends Reddit's per-IP budget, which is small
+(on 2026-10-08 it ran out and the egress IP was blocked). So omnifeed caches
+successful results and serves repeats from the cache.
+
+- **What is cached.** Only complete, successful documents. Errors, generic
+  fallback renders (`_meta.fallback_from` set) and partial Reddit threads
+  (`_meta.partial`, see below) are never cached, so the next call tries again.
+- **How long.** `OMNIFEED_CACHE_TTL_THREADS` (10 minutes) for the dedicated
+  engines, `OMNIFEED_CACHE_TTL_PAGES` (30 minutes) for generic pages.
+- **The key.** The normalized URL (scheme and host lowercased, default port and
+  `#fragment` dropped, query parameters sorted; the path is kept as-is) plus
+  every option that reaches the engine: `format`, `expand`, `limit`, `depth`,
+  `sort`, `max_comments`, `max_top_level`, `max_per_subtree`, `scan_full_page`
+  and the Reddit defaults. `max_chars` and `start_char` are **not** part of the
+  key: `fetch_url` cuts its character window from the whole cached document, so
+  paging through a long page with `start_char` costs one upstream fetch.
+- **Where.** In Redis when `OMNIFEED_REDIS_URL` is set, so every replica serves
+  every other replica's fetches. Entries are gzip-compressed and expire through
+  a Redis TTL. Without Redis, an in-process LRU of `OMNIFEED_CACHE_MAX_BYTES`
+  per pod.
+- **When Redis fails.** The lookup counts as `result="error"` and the request is
+  served as a miss, never failed. After a failure, the cache skips Redis for 30
+  seconds, so a dead Redis costs one `OMNIFEED_REDIS_TIMEOUT` per 30 seconds,
+  not one per request.
+- **Concurrent identical requests** share one upstream fetch. If that fetch
+  fails, all of them get its error, because the upstream that refused one would
+  refuse the others. The exception is when the first caller hangs up: then the
+  others fetch for themselves.
+
+Every response from the cache layer carries `_meta.cache` (or `metadata.cache`
+on `POST /crawl`): `hit` (served from the cache, or shared with an identical
+in-flight request), `miss` (fetched upstream) or `bypass`. `_meta.cached_at` is
+the time (RFC 3339, UTC) the content was fetched and stored. It is absent when the
+response is not in the cache.
+
+**Bypass.** Pass `no_cache: true` to `fetch_url`, or `POST /crawl?no_cache=true`
+(or `=1`), to skip the cache and fetch fresh. The fresh result still replaces
+the cached copy. Use it only when `cached_at` is too old for the job: every
+uncached Reddit fetch spends the per-IP budget.
+
 ## Partial Reddit threads
 
 A thread whose `/api/morechildren` expansion is cut short, because a round was
@@ -254,7 +304,8 @@ returned with the comments loaded so far. omnifeed flags it:
   the first line, `note: 212 more replies could not be loaded (http_429)`. In
   JSON it is a top-level `"note"` field.
 
-A thread that simply used up its `expand` budget is not partial.
+A thread that simply used up its `expand` budget is not partial. Partial
+threads are never cached.
 
 ## Raw-text bypass
 
@@ -286,3 +337,5 @@ Served at `/metrics` on `OMNIFEED_METRICS_ADDR`, default `:9090`, alongside the 
 | `omnifeed_search_request_seconds` | histogram | `searcher, status` | Search latency |
 | `omnifeed_search_engine_position_rank` | histogram | `engine` | The rank each engine gave each row it returned. 1 to 3 is a result a caller reads, 20 and above is filler |
 | `omnifeed_search_engine_unique_results_total` | counter | `engine` | Results no other engine returned, which shows whether an engine earns its slot |
+| `omnifeed_cache_requests_total` | counter | `result` | [Response cache](#response-cache) lookups: `hit` (served from the cache or shared with an identical in-flight fetch), `miss` (fetched upstream), `bypass` (`no_cache`), `error` (the cache backend failed, served as a miss). `hit / (hit + miss)` is the hit rate |
+| `omnifeed_cache_bytes` | gauge | none | Approximate bytes in the in-process cache. Only with the in-memory backend: the Redis backend is shared and not measured per pod |

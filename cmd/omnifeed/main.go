@@ -28,6 +28,7 @@ import (
 	"github.com/kinorai/omnifeed/internal/engine/hackernews"
 	"github.com/kinorai/omnifeed/internal/engine/reddit"
 	"github.com/kinorai/omnifeed/internal/engine/twitter"
+	"github.com/kinorai/omnifeed/internal/fetchcache"
 	"github.com/kinorai/omnifeed/internal/httpx"
 	"github.com/kinorai/omnifeed/internal/httpx/redislimit"
 	"github.com/kinorai/omnifeed/internal/observability"
@@ -218,6 +219,16 @@ func run(cfg config.Config, logger *slog.Logger) error {
 		Logger(logger).
 		Metrics(metrics)
 
+	// --- fetch_url response cache (decorates the registry for every transport) ---
+
+	var dispatcher engine.Dispatcher = registry
+	if cfg.CacheEnabled {
+		dispatcher = fetchCache(cfg, registry, rdb, metrics, logger,
+			redditEngine, hackerNewsEngine, gitHubEngine, discourseEngine, blueskyEngine)
+	} else {
+		logger.Info("fetch cache disabled (OMNIFEED_CACHE_ENABLED=false)")
+	}
+
 	// --- Searcher (optional — search tool is exposed only when configured) ---
 
 	var searcher domain.Searcher
@@ -254,7 +265,7 @@ func run(cfg config.Config, logger *slog.Logger) error {
 	// --- MCP tools (shared by the stdio and HTTP transports) ---
 
 	mcpTools := []mcp.Tool{
-		tools.FetchURL(registry, redditDefaults, metrics, cfg.FetchMaxChars),
+		tools.FetchURL(dispatcher, redditDefaults, metrics, cfg.FetchMaxChars),
 	}
 	if searcher != nil {
 		mcpTools = append(mcpTools, tools.WebSearch(searcher, cfg.SearchMaxResults, metrics))
@@ -298,7 +309,7 @@ func run(cfg config.Config, logger *slog.Logger) error {
 	// --- HTTP server (Open WebUI loader + MCP HTTP) ---
 
 	loaderServer := openwebui.New(openwebui.Config{
-		Registry:          registry,
+		Registry:          dispatcher,
 		Authenticator:     authn,
 		Logger:            logger,
 		Metrics:           metrics,
@@ -715,4 +726,46 @@ func upstreamReady(name string, client *httpx.Client, endpoint string) observabi
 		_ = resp.Body.Close()
 		return nil
 	}
+}
+
+// fetchCache wraps the registry in the fetch_url response cache. Redis when
+// OMNIFEED_REDIS_URL is set (the same client the limiters use, so one replica's
+// fetch serves them all), else an in-process LRU of OMNIFEED_CACHE_MAX_BYTES.
+// threadEngines get OMNIFEED_CACHE_TTL_THREADS; everything else (the generic
+// page fallback) gets OMNIFEED_CACHE_TTL_PAGES.
+func fetchCache(cfg config.Config, registry *engine.Registry, rdb redis.UniversalClient,
+	metrics *observability.Metrics, logger *slog.Logger, threadEngines ...domain.Engine) *fetchcache.Cache {
+	engineTTL := make(map[string]time.Duration, len(threadEngines))
+	for _, e := range threadEngines {
+		engineTTL[e.Name()] = cfg.CacheTTLThreads
+	}
+
+	var backend fetchcache.Backend
+	backendName := "memory"
+	if rdb != nil {
+		backendName = "redis"
+		backend = fetchcache.NewRedis(fetchcache.RedisConfig{
+			Client:       rdb,
+			Prefix:       cfg.CacheKeyPrefix,
+			MaxItemBytes: cfg.CacheMaxItemBytes,
+		})
+	} else {
+		metrics.SetCacheBytes(0)
+		backend = fetchcache.NewMemory(fetchcache.MemoryConfig{
+			MaxBytes:     cfg.CacheMaxBytes,
+			MaxItemBytes: cfg.CacheMaxItemBytes,
+			OnSize:       metrics.SetCacheBytes,
+		})
+	}
+	logger.Info("fetch cache enabled", "backend", backendName,
+		"ttl_threads", cfg.CacheTTLThreads, "ttl_pages", cfg.CacheTTLPages,
+		"max_bytes", cfg.CacheMaxBytes, "max_item_bytes", cfg.CacheMaxItemBytes)
+	return fetchcache.New(fetchcache.Config{
+		Inner:      registry,
+		Backend:    backend,
+		DefaultTTL: cfg.CacheTTLPages,
+		EngineTTL:  engineTTL,
+		Metrics:    metrics,
+		Logger:     logger,
+	})
 }

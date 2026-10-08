@@ -35,6 +35,8 @@ type Metrics struct {
 	SearchSecs          *prometheus.HistogramVec // searcher, status
 	SearchEnginePos     *prometheus.HistogramVec // engine
 	SearchEngineUnique  *prometheus.CounterVec   // engine
+	CacheRequests       *prometheus.CounterVec   // result
+	CacheBytes          prometheus.Gauge
 }
 
 // NewMetrics builds and registers all collectors.
@@ -155,13 +157,21 @@ func NewMetrics() *Metrics {
 			Name: "omnifeed_search_engine_unique_results_total",
 			Help: "Results contributed by exactly one engine, by that engine.",
 		}, []string{"engine"}),
+		CacheRequests: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "omnifeed_cache_requests_total",
+			Help: `fetch_url response-cache lookups by result: hit (served from cache or shared with an identical in-flight fetch), miss (fetched upstream), bypass (caller passed no_cache), error (cache backend failed; served as a miss).`,
+		}, []string{"result"}),
+		CacheBytes: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "omnifeed_cache_bytes",
+			Help: "Approximate bytes held by the in-process fetch_url response cache (LRU backend only; the Redis backend is shared and not measured per pod).",
+		}),
 	}
 	reg.MustRegister(m.RequestsTotal, m.RequestAttempts, m.RequestSecs, m.UpstreamSecs,
 		m.LimiterWaitSecs, m.RatelimitErrors, m.RatelimitPenalties, m.RatelimitDegraded,
 		m.ResponseChars, m.EngineFallbacks, m.SearxngUnresponsive,
 		m.SearxngEngineHits, m.SearxngEmpty, m.SearxngQueries, m.SearxngEngineZero,
 		m.RedditRounds, m.SearchesTotal, m.SearchSecs,
-		m.SearchEnginePos, m.SearchEngineUnique)
+		m.SearchEnginePos, m.SearchEngineUnique, m.CacheRequests, m.CacheBytes)
 	reg.MustRegister(
 		collectors.NewGoCollector(),
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
@@ -239,6 +249,17 @@ func (m *Metrics) SetRatelimitDegraded(scope string, down bool) {
 // produced the document, fallbacks included.
 func (m *Metrics) ObserveResponseChars(engine string, chars int) {
 	m.ResponseChars.WithLabelValues(engine).Observe(float64(chars))
+}
+
+// ObserveCache counts one fetch_url response-cache lookup by result
+// (hit|miss|bypass|error).
+func (m *Metrics) ObserveCache(result string) {
+	m.CacheRequests.WithLabelValues(result).Inc()
+}
+
+// SetCacheBytes publishes the in-process response cache's approximate size.
+func (m *Metrics) SetCacheBytes(n int) {
+	m.CacheBytes.Set(float64(n))
 }
 
 // ObserveFallback counts one engine→generic-fallback handoff: fromEngine is the

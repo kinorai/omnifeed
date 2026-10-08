@@ -52,6 +52,12 @@ type EngineOptions struct {
 	// multiple seconds and corrupts virtualized pages, so it's for feed/gallery
 	// URLs specifically.
 	ScanFullPage *bool
+
+	// NoCache skips the fetch_url response cache for this request: the URL is
+	// fetched fresh, and a cacheable result still refreshes the cache entry.
+	// It never changes what an engine renders, so it is not part of the cache
+	// key.
+	NoCache bool
 }
 
 // Reddit comment-fetch defaults are defined here so config (env fallback) and
