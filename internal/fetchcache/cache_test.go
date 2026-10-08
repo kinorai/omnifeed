@@ -488,10 +488,18 @@ func TestCrawl_BackendDownServesMiss(t *testing.T) {
 func redisBackend(t *testing.T, clock *fakeClock, maxItem int) (*Redis, *miniredis.Miniredis) {
 	t.Helper()
 	mr := miniredis.RunT(t)
+	rb, client := redisBackendOn(t, mr, clock)
+	return NewRedis(RedisConfig{Client: client, Prefix: rb.prefix, MaxItemBytes: maxItem, Now: clock.Now}), mr
+}
+
+// redisBackendOn builds a Redis backend (no item cap) over an existing
+// miniredis, and returns its client too.
+func redisBackendOn(t *testing.T, mr *miniredis.Miniredis, clock *fakeClock) (*Redis, redis.UniversalClient) {
+	t.Helper()
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr(), MaxRetries: -1,
 		DialTimeout: 100 * time.Millisecond, ReadTimeout: 100 * time.Millisecond, WriteTimeout: 100 * time.Millisecond})
 	t.Cleanup(func() { _ = client.Close() })
-	return NewRedis(RedisConfig{Client: client, Prefix: "omnifeed:cache", MaxItemBytes: maxItem, Now: clock.Now}), mr
+	return NewRedis(RedisConfig{Client: client, Prefix: "omnifeed:cache", Now: clock.Now}), client
 }
 
 func TestRedis_SharedCompressedWithTTL(t *testing.T) {

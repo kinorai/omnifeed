@@ -734,6 +734,8 @@ func upstreamReady(name string, client *httpx.Client, endpoint string) observabi
 // fetchCache wraps the registry in the fetch_url response cache. Redis when
 // OMNIFEED_REDIS_URL is set (the same client the limiters use, so one replica's
 // fetch serves them all), else an in-process LRU of OMNIFEED_CACHE_MAX_BYTES.
+// With Redis, a startup probe (and any later permission error) falls back to
+// that LRU when the Redis user may not write the cache prefix.
 // threadEngines get OMNIFEED_CACHE_TTL_THREADS; everything else (the generic
 // page fallback) gets OMNIFEED_CACHE_TTL_PAGES.
 func fetchCache(cfg config.Config, registry *engine.Registry, rdb redis.UniversalClient,
@@ -743,22 +745,34 @@ func fetchCache(cfg config.Config, registry *engine.Registry, rdb redis.Universa
 		engineTTL[e.Name()] = cfg.CacheTTLThreads
 	}
 
-	var backend fetchcache.Backend
-	backendName := "memory"
+	metrics.SetCacheBytes(0)
+	memory := fetchcache.NewMemory(fetchcache.MemoryConfig{
+		MaxBytes:     cfg.CacheMaxBytes,
+		MaxItemBytes: cfg.CacheMaxItemBytes,
+		OnSize:       metrics.SetCacheBytes,
+	})
+	var backend fetchcache.Backend = memory
+	backendName := fetchcache.BackendMemory
 	if rdb != nil {
-		backendName = "redis"
-		backend = fetchcache.NewRedis(fetchcache.RedisConfig{
-			Client:       rdb,
-			Prefix:       cfg.CacheKeyPrefix,
-			MaxItemBytes: cfg.CacheMaxItemBytes,
+		// Probe before serving: a Redis user whose ACL does not cover the
+		// cache prefix refuses every GET and SET, and the cache then silently
+		// stores nothing. The Failover falls back to the in-process LRU above.
+		failover := fetchcache.NewFailover(fetchcache.FailoverConfig{
+			Redis: fetchcache.NewRedis(fetchcache.RedisConfig{
+				Client:       rdb,
+				Prefix:       cfg.CacheKeyPrefix,
+				MaxItemBytes: cfg.CacheMaxItemBytes,
+				OnError:      metrics.ObserveCacheBackendError,
+			}),
+			Memory:    memory,
+			Prefix:    cfg.CacheKeyPrefix,
+			Logger:    logger,
+			OnBackend: metrics.SetCacheBackend,
 		})
+		failover.Probe(context.Background(), cfg.RedisTimeout)
+		backend, backendName = failover, failover.Backend()
 	} else {
-		metrics.SetCacheBytes(0)
-		backend = fetchcache.NewMemory(fetchcache.MemoryConfig{
-			MaxBytes:     cfg.CacheMaxBytes,
-			MaxItemBytes: cfg.CacheMaxItemBytes,
-			OnSize:       metrics.SetCacheBytes,
-		})
+		metrics.SetCacheBackend(fetchcache.BackendMemory)
 	}
 	logger.Info("fetch cache enabled", "backend", backendName,
 		"ttl_threads", cfg.CacheTTLThreads, "ttl_pages", cfg.CacheTTLPages,
