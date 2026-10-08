@@ -279,3 +279,56 @@ func TestCrawlItemIgnoresRedditDepth(t *testing.T) {
 		t.Fatalf("comments = %q, want 20 (Reddit params must not affect HN)", doc.Metadata["comments"])
 	}
 }
+
+// max_comments above the 500 default must be honored up to the absolute cap, and
+// the story header must carry total_comments and truncated in the BODY (agents
+// never see _meta).
+func TestCrawlItemExplicitCeilingAndTotals(t *testing.T) {
+	const n = 1200
+	kids := make([]algoliaItem, n)
+	for i := range kids {
+		kids[i] = algoliaItem{ID: 10 + i, Author: "u", Text: "c"}
+	}
+	body, err := json.Marshal(algoliaItem{ID: 1, Type: "story", Title: "big", Author: "pg", Children: kids})
+	if err != nil {
+		t.Fatalf("marshal fixture: %v", err)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(body)
+	}))
+	defer srv.Close()
+	e := New(Config{Client: httpx.New(nil), APIBase: srv.URL})
+
+	cases := []struct {
+		name      string
+		max       int
+		want      int
+		truncated bool
+	}{
+		{"default", 0, DefaultThreadComments, true},
+		{"above_default", 1000, 1000, true},
+		{"above_total", 4000, n, false},
+		{"above_absolute_cap", 99999, n, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			doc, cerr := e.Crawl(context.Background(), "https://news.ycombinator.com/item?id=1",
+				domain.EngineOptions{HNMaxComments: tc.max})
+			if cerr != nil {
+				t.Fatalf("Crawl: %v", cerr)
+			}
+			if doc.Metadata["comments"] != strconv.Itoa(tc.want) {
+				t.Fatalf("comments = %q, want %d", doc.Metadata["comments"], tc.want)
+			}
+			for _, want := range []string{
+				"\n  total_comments: " + strconv.Itoa(n) + "\n",
+				"\n  truncated: " + strconv.FormatBool(tc.truncated) + "\n",
+				"\ncomments[" + strconv.Itoa(tc.want) + "]{",
+			} {
+				if !strings.Contains(doc.PageContent, want) {
+					t.Errorf("body missing %q:\n%.300s", want, doc.PageContent)
+				}
+			}
+		})
+	}
+}

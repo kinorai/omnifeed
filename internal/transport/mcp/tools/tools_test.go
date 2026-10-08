@@ -65,6 +65,19 @@ func TestFetchURL_SizeParamsInSchema(t *testing.T) {
 	}
 }
 
+// max_comments must state the HN default and absolute cap, and that the cut is
+// breadth-first — callers size requests from this text.
+func TestFetchURL_MaxCommentsDescription(t *testing.T) {
+	props := FetchURL(nil, reddit.Options{}, nil, 120000).
+		InputSchema["properties"].(map[string]any)
+	desc, _ := props["max_comments"].(map[string]any)["description"].(string)
+	for _, want := range []string{"Hacker News 500", "up to 5000", "breadth-first", "total_comments", "truncated"} {
+		if !strings.Contains(desc, want) {
+			t.Errorf("max_comments description missing %q: %q", want, desc)
+		}
+	}
+}
+
 // stubEngine returns a fixed Document for any URL.
 type stubEngine struct{ doc domain.Document }
 
