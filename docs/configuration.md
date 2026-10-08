@@ -149,7 +149,7 @@ The Algolia item API returns a Hacker News thread's **whole** tree in one respon
 |---|---|---|
 | `max_per_subtree` | unlimited | Max comments kept in **each** top-level thread, root included. Selection is breadth-first, so a thread keeps its root and shallow replies before its deep tail. |
 | `max_top_level` | unlimited | Keep the first N top-level threads, in HN's order, with all their replies. |
-| `max_comments` | 500 | Ceiling on the flat comment list, applied last. A caller can lower it below 500, never raise it. |
+| `max_comments` | 500 | Ceiling on the flat comment list, applied last. `0` or omitted means 500; a caller can ask for up to `5000` (Algolia already returned the whole tree, so this costs no extra request). The cut is breadth-first across the whole thread. |
 
 Start with `max_per_subtree`, which fits that skew. On two real threads, `max_per_subtree=12` returned about 56% and 47% of the full-tree bytes and kept 9 of 12 and 11 of 14 of the comments a human rated substantive. `max_comments` is one breadth-first cut over the whole thread: every top-level comment first, then their direct replies, then the next depth. It used to keep the first N comments in pre-order, which spent most of the budget in the biggest branch: at 100 comments that covered 4 of 62 top-level threads, with 72% of its comments in one subtree.
 
