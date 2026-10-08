@@ -217,6 +217,9 @@ func TestFailover_ProbeClassifiesStartupErrors(t *testing.T) {
 		{"loading", func(mr *miniredis.Miniredis) {
 			mr.SetError("LOADING Redis is loading the dataset in memory")
 		}, BackendRedis, ErrKindTransient, "WARN"},
+		{"oom", func(mr *miniredis.Miniredis) {
+			mr.SetError("OOM command not allowed when used memory > 'maxmemory'.")
+		}, BackendRedis, ErrKindTransient, "WARN"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
