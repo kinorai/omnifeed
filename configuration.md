@@ -123,12 +123,21 @@ omnifeed **never truncates TOON or JSON output**, which covers every dedicated e
 
 Generic crawls **don't scroll** by default. Scrolling costs seconds on every page, gains content only on append-style infinite feeds, and corrupts virtualized pages. When a feed, listing or gallery comes back missing items, opt in per request with `scan_full_page: true` on `fetch_url` or `POST /crawl?scan_full_page=true`. Both accept `false` too, which turns the scroll off where `OMNIFEED_CRAWL4AI_SCAN_FULL_PAGE` turns it on. `OMNIFEED_CRAWL4AI_SCROLL_DELAY` sets the pause between scroll steps.
 
+## Thread totals in the body
+
+AI agents read the TOON (or JSON) body, not the response `_meta`, so thread headers state how complete the comment list is:
+
+- Hacker News `story`: `total_comments`, the live comments in Algolia's tree before any cap, and `truncated`, whether a cap dropped some of them.
+- Reddit `post`: `total_comments`, Reddit's `num_comments` (it counts deleted and removed comments, so it can exceed what is fetchable); `returned_comments`, the comments emitted; `hidden_more`, the sum of the remaining `more` gaps' counts; and `truncated`, true when a cap dropped comments or any gap is left unexpanded.
+
+`_meta` keeps its own fields (`comments`, `truncated_from`, `total_comments`, `gaps`) unchanged.
+
 ## Controlling Reddit response size
 
 Reddit comment trees can be huge. There are two kinds of limit:
 
 - **Reddit parameters**, forwarded as-is to Reddit's API: `OMNIFEED_REDDIT_FETCH_LIMIT` as `limit`, `OMNIFEED_REDDIT_DEPTH` as `depth`, and `OMNIFEED_REDDIT_SORT` as `sort`. They reduce what Reddit sends, which saves latency and tokens, but they are **approximate**, and `limit` and `depth` bound only the **initial** fetch. Reddit defines them in its [API docs](https://www.reddit.com/dev/api/) under `GET [/r/subreddit]/comments/article`: `limit` is "maximum number of comments to return" and `depth` is "maximum depth of subtrees".
-- **omnifeed caps**, applied after fetch and expansion, so they are **exact**: `OMNIFEED_REDDIT_MAX_COMMENTS` truncates the flat comment list, and `OMNIFEED_REDDIT_MAX_TOP_LEVEL` keeps the first N top-level threads, in `sort` order, with their replies.
+- **omnifeed caps**, applied after fetch and expansion, so they are **exact**: `OMNIFEED_REDDIT_MAX_COMMENTS` cuts the flat comment list breadth-first (every top-level comment first, then their replies, then the next depth, never a reply without its parent, output order unchanged), and `OMNIFEED_REDDIT_MAX_TOP_LEVEL` keeps the first N top-level threads, in `sort` order, with their replies.
 
 Use the Reddit parameters to fetch less. Use the caps for a guaranteed ceiling: `OMNIFEED_REDDIT_MAX_ROUNDS` expansion adds comments beyond `limit`, so only the caps bound the total. `fetch_url` accepts all five per request as `limit`, `depth`, `sort`, `max_comments` and `max_top_level`, and a positive value overrides the env default. They apply to **threads** only. A subreddit listing has no comment tree and takes its post count and time window from the URL: `?limit=`, 1 to 100 with a default of 25, and `?t=hour|day|week|month|year|all`, which Reddit applies only to `top` and `controversial`.
 
@@ -140,9 +149,9 @@ The Algolia item API returns a Hacker News thread's **whole** tree in one respon
 |---|---|---|
 | `max_per_subtree` | unlimited | Max comments kept in **each** top-level thread, root included. Selection is breadth-first, so a thread keeps its root and shallow replies before its deep tail. |
 | `max_top_level` | unlimited | Keep the first N top-level threads, in HN's order, with all their replies. |
-| `max_comments` | 500 | Ceiling on the flat comment list, applied last. A caller can lower it below 500, never raise it. |
+| `max_comments` | 500 | Ceiling on the flat comment list, applied last. `0` or omitted means 500; a caller can ask for up to `5000` (Algolia already returned the whole tree, so this costs no extra request). The cut is breadth-first across the whole thread. |
 
-Start with `max_per_subtree`, which fits that skew. On two real threads, `max_per_subtree=12` returned about 56% and 47% of the full-tree bytes and kept 9 of 12 and 11 of 14 of the comments a human rated substantive. A flat `max_comments` cut spends most of its budget in the biggest branch: at 100 comments it covered 4 of 62 top-level threads, with 72% of its comments in one subtree.
+Start with `max_per_subtree`, which fits that skew. On two real threads, `max_per_subtree=12` returned about 56% and 47% of the full-tree bytes and kept 9 of 12 and 11 of 14 of the comments a human rated substantive. `max_comments` is one breadth-first cut over the whole thread: every top-level comment first, then their direct replies, then the next depth. It used to keep the first N comments in pre-order, which spent most of the budget in the biggest branch: at 100 comments that covered 4 of 62 top-level threads, with 72% of its comments in one subtree.
 
 Hacker News has **no depth cap** on purpose, because depth says nothing about quality there. The most valuable comment in both measured threads sat at depth 7, and adding `depth<=5` to a subtree cap lost real content while saving under 1k of 84k characters. `depth` and `sort` are Reddit-only and ignored on HN URLs.
 
