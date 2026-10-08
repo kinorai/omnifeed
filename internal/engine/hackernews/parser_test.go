@@ -423,3 +423,20 @@ func TestCapCommentsBreadthFirst(t *testing.T) {
 		}
 	}
 }
+
+// commentCeiling: 0 means the default; an explicit value is honored up to the
+// absolute cap, including values above the default.
+func TestCommentCeiling(t *testing.T) {
+	for _, tc := range []struct{ in, want int }{
+		{0, DefaultThreadComments},
+		{-1, DefaultThreadComments},
+		{40, 40},
+		{1000, 1000},
+		{AbsoluteMaxThreadComments, AbsoluteMaxThreadComments},
+		{99999, AbsoluteMaxThreadComments},
+	} {
+		if got := commentCeiling(tc.in); got != tc.want {
+			t.Errorf("commentCeiling(%d) = %d, want %d", tc.in, got, tc.want)
+		}
+	}
+}

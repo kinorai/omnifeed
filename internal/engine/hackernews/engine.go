@@ -22,10 +22,15 @@ const (
 	defaultTimeout = 30 * time.Second // wall-clock budget per HN crawl
 )
 
-// MaxThreadComments is the ceiling on comments emitted for one thread, so a
-// megathread can't blow the consumer's context. A caller's max_comments can only
-// lower it. Exported because the fetch_url tool schema states the number.
-const MaxThreadComments = 500
+// DefaultThreadComments is the cap on comments emitted for one thread when the
+// caller sets no max_comments, so a megathread can't blow the consumer's context
+// by default. AbsoluteMaxThreadComments is the most a caller can ask for: Algolia
+// returns the whole tree in one request, so a bigger cap costs no extra fetches.
+// Exported because the fetch_url tool schema states both numbers.
+const (
+	DefaultThreadComments     = 500
+	AbsoluteMaxThreadComments = 5000
+)
 
 // hostMatcher matches news.ycombinator.com and its subdomains.
 var hostMatcher = httpx.HostMatcher("news.ycombinator.com")
@@ -194,15 +199,14 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, eo domain.EngineOptio
 	})
 }
 
-// commentCeiling resolves the absolute cap on emitted comments: the caller's
-// max_comments when it asks for fewer, otherwise MaxThreadComments. The engine
-// ceiling always wins over a larger caller value — it exists so a megathread
-// can't blow the consumer's context no matter what was asked for.
+// commentCeiling resolves the cap on emitted comments: DefaultThreadComments
+// when the caller sets no max_comments (0), otherwise the caller's value clamped
+// to AbsoluteMaxThreadComments.
 func commentCeiling(requested int) int {
 	if requested > 0 {
-		return min(requested, MaxThreadComments)
+		return min(requested, AbsoluteMaxThreadComments)
 	}
-	return MaxThreadComments
+	return DefaultThreadComments
 }
 
 // get fetches an Algolia API URL and returns the raw JSON body.
