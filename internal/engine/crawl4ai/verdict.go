@@ -27,6 +27,9 @@ var (
 	timeoutPattern   = regexp.MustCompile(`(?i)exceeded the time limit|\btime(?:d)?[ -]?out\b|net::err_timed_out|net::err_connection_timed_out`)
 	captchaPattern   = regexp.MustCompile(`(?i)captcha|just a moment|turnstile|verify(?:ing)? (?:you are|you're) (?:a )?human`)
 	botBlockPattern  = regexp.MustCompile(`(?i)anti-?bot|\bblocked\b|cloudflare|akamai|perimeterx|datadome|incapsula|imperva|access denied`)
+	// urlPattern strips the URLs Playwright embeds in its messages ("… at
+	// https://blog.cloudflare.com/…") so a host or path never reads as a verdict.
+	urlPattern = regexp.MustCompile(`(?i)\bhttps?://\S+`)
 )
 
 // classifyVerdict maps a crawl4ai failure message (a result's error_message, a
@@ -47,6 +50,7 @@ var (
 // pageStatus is the result's own status_code (0 when unknown): it breaks the
 // tie when the message names nothing but the page itself answered 403/429.
 func classifyVerdict(msg string, pageStatus int) domain.FailureKind {
+	msg = urlPattern.ReplaceAllString(msg, " ")
 	switch {
 	case antibot.IsStructuralBlock(msg):
 		return domain.KindThinContent
