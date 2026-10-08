@@ -29,6 +29,7 @@ Package observability wires structured logging, Prometheus metrics, and Kubernet
   - [func \(m \*Metrics\) Observe\(engine, tenant, status, reason string, duration time.Duration\)](<#Metrics.Observe>)
   - [func \(m \*Metrics\) ObserveAttempt\(upstream string, retry bool\)](<#Metrics.ObserveAttempt>)
   - [func \(m \*Metrics\) ObserveCache\(result string\)](<#Metrics.ObserveCache>)
+  - [func \(m \*Metrics\) ObserveCacheBackendError\(op, kind string\)](<#Metrics.ObserveCacheBackendError>)
   - [func \(m \*Metrics\) ObserveEmptySearch\(scoped bool\)](<#Metrics.ObserveEmptySearch>)
   - [func \(m \*Metrics\) ObserveEngineRank\(engine string, rank int, unique bool\)](<#Metrics.ObserveEngineRank>)
   - [func \(m \*Metrics\) ObserveEngineResults\(engine string, rows int\)](<#Metrics.ObserveEngineResults>)
@@ -43,6 +44,7 @@ Package observability wires structured logging, Prometheus metrics, and Kubernet
   - [func \(m \*Metrics\) ObserveUnresponsiveEngine\(engine, errType string\)](<#Metrics.ObserveUnresponsiveEngine>)
   - [func \(m \*Metrics\) ObserveUpstream\(upstream, op, status string, duration time.Duration\)](<#Metrics.ObserveUpstream>)
   - [func \(m \*Metrics\) RegisterMetrics\(mux \*http.ServeMux\)](<#Metrics.RegisterMetrics>)
+  - [func \(m \*Metrics\) SetCacheBackend\(name string\)](<#Metrics.SetCacheBackend>)
   - [func \(m \*Metrics\) SetCacheBytes\(n int\)](<#Metrics.SetCacheBytes>)
   - [func \(m \*Metrics\) SetRatelimitDegraded\(scope string, down bool\)](<#Metrics.SetRatelimitDegraded>)
 - [type ReadyCheck](<#ReadyCheck>)
@@ -236,6 +238,8 @@ type Metrics struct {
     SearchEngineUnique  *prometheus.CounterVec   // engine
     CacheRequests       *prometheus.CounterVec   // result
     CacheBytes          prometheus.Gauge
+    CacheBackend        *prometheus.GaugeVec   // backend
+    CacheBackendErrors  *prometheus.CounterVec // op, kind
     // contains filtered or unexported fields
 }
 ```
@@ -275,6 +279,15 @@ func (m *Metrics) ObserveCache(result string)
 ```
 
 ObserveCache counts one fetch\_url response\-cache lookup by result \(hit|miss|bypass|error\).
+
+<a name="Metrics.ObserveCacheBackendError"></a>
+### func \(\*Metrics\) ObserveCacheBackendError
+
+```go
+func (m *Metrics) ObserveCacheBackendError(op, kind string)
+```
+
+ObserveCacheBackendError counts one response\-cache Redis error by op \(get|set|probe\) and kind \(noperm|transient|other\).
 
 <a name="Metrics.ObserveEmptySearch"></a>
 ### func \(\*Metrics\) ObserveEmptySearch
@@ -401,6 +414,15 @@ func (m *Metrics) RegisterMetrics(mux *http.ServeMux)
 ```
 
 RegisterMetrics attaches /metrics to mux.
+
+<a name="Metrics.SetCacheBackend"></a>
+### func \(\*Metrics\) SetCacheBackend
+
+```go
+func (m *Metrics) SetCacheBackend(name string)
+```
+
+SetCacheBackend marks name \(redis|memory\) as the response cache's active backend.
 
 <a name="Metrics.SetCacheBytes"></a>
 ### func \(\*Metrics\) SetCacheBytes

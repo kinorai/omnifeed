@@ -10,7 +10,7 @@ Package fetchcache is the fetch\_url response cache: a decorator around the engi
 
 Why it exists: the same Reddit/HN threads are re\-fetched every few minutes \(a retry job, agents re\-reading a URL they already have\), and every repeat spends Reddit's tight per\-IP budget — on 2026\-10\-08 that budget ran out and the egress IP was blocked. A short TTL turns those repeats into free hits.
 
-What it caches: successful, complete documents only. Errors, generic fallback renders \(domain.FallbackFromKey\) and partial crawls \(domain.PartialKey\) are never stored, so the next caller gets a fresh chance at the real thing. Concurrent identical requests share one upstream fetch \(singleflight\). Backend failures degrade to a miss, never to a failed request.
+What it caches: successful, complete documents only. Errors, generic fallback renders \(domain.FallbackFromKey\) and partial crawls \(domain.PartialKey\) are never stored, so the next caller gets a fresh chance at the real thing. Concurrent identical requests share one upstream fetch \(singleflight\). Backend failures degrade to a miss, never to a failed request; a Redis that refuses the cache's keys \(ACL\) is replaced by the in\-process backend \(Failover\).
 
 ## Index
 
@@ -25,6 +25,13 @@ What it caches: successful, complete documents only. Errors, generic fallback re
   - [func \(c \*Cache\) Resolve\(rawURL string\) domain.Engine](<#Cache.Resolve>)
 - [type Config](<#Config>)
 - [type Entry](<#Entry>)
+- [type Failover](<#Failover>)
+  - [func NewFailover\(cfg FailoverConfig\) \*Failover](<#NewFailover>)
+  - [func \(f \*Failover\) Backend\(\) string](<#Failover.Backend>)
+  - [func \(f \*Failover\) Get\(ctx context.Context, key string\) \(Entry, bool, error\)](<#Failover.Get>)
+  - [func \(f \*Failover\) Probe\(ctx context.Context, timeout time.Duration\)](<#Failover.Probe>)
+  - [func \(f \*Failover\) Set\(ctx context.Context, key string, e Entry, ttl time.Duration\) error](<#Failover.Set>)
+- [type FailoverConfig](<#FailoverConfig>)
 - [type Memory](<#Memory>)
   - [func NewMemory\(cfg MemoryConfig\) \*Memory](<#NewMemory>)
   - [func \(m \*Memory\) Bytes\(\) int](<#Memory.Bytes>)
@@ -34,6 +41,7 @@ What it caches: successful, complete documents only. Errors, generic fallback re
 - [type Redis](<#Redis>)
   - [func NewRedis\(cfg RedisConfig\) \*Redis](<#NewRedis>)
   - [func \(r \*Redis\) Get\(ctx context.Context, key string\) \(Entry, bool, error\)](<#Redis.Get>)
+  - [func \(r \*Redis\) Probe\(ctx context.Context, timeout time.Duration\) \(kind string, err error\)](<#Redis.Probe>)
   - [func \(r \*Redis\) Set\(ctx context.Context, key string, e Entry, ttl time.Duration\) error](<#Redis.Set>)
 - [type RedisConfig](<#RedisConfig>)
 
@@ -66,7 +74,32 @@ const (
 )
 ```
 
+<a name="BackendRedis"></a>Backend names, the values of the omnifeed\_cache\_backend \`backend\` label.
+
+```go
+const (
+    BackendRedis  = "redis"
+    BackendMemory = "memory"
+)
+```
+
+<a name="ErrKindNoPerm"></a>Kinds of backend error, the values of the omnifeed\_cache\_backend\_errors\_total \`kind\` label.
+
+```go
+const (
+    ErrKindNoPerm    = "noperm"    // permission/auth: permanent until the ACL changes
+    ErrKindTransient = "transient" // timeouts, refused connections, LOADING…: cooldown and retry
+    ErrKindOther     = "other"     // startup probe only: Redis answered, but not as a cache can use
+)
+```
+
 ## Variables
+
+<a name="ErrPermission"></a>ErrPermission wraps a Redis error that retrying will not fix: the ACL user may not touch the cache's keys \(NOPERM\), or the connection is not authenticated \(NOAUTH, WRONGPASS\). It does not trip the cooldown — a Failover answers it by switching to its in\-process backend for good.
+
+```go
+var ErrPermission = errors.New("fetch cache: redis permission denied")
+```
 
 <a name="ErrTooLarge"></a>ErrTooLarge is returned by Set for an entry over the backend's item cap. The response is still served; it just is not cached.
 
@@ -182,10 +215,83 @@ type Entry struct {
 }
 ```
 
+<a name="Failover"></a>
+## type Failover
+
+Failover is the Redis backend with an in\-process fallback for the failures retrying cannot fix. On 2026\-10\-08 the Redis ACL user could only touch the rate limiter's keys: every cache GET and SET answered NOPERM, the Redis backend cooled down and retried every 30 s forever, and nothing was ever cached, on any replica — silently, since every request still succeeded as a miss. A permission error \(at the startup probe or on any later Get/Set\) now switches this replica to the in\-process LRU for good and says so once at ERROR. Transient errors keep the Redis backend and its degrade\-to\-miss cooldown: Redis coming back is the expected outcome.
+
+```go
+type Failover struct {
+    // contains filtered or unexported fields
+}
+```
+
+<a name="NewFailover"></a>
+### func NewFailover
+
+```go
+func NewFailover(cfg FailoverConfig) *Failover
+```
+
+NewFailover builds a Failover that starts on Redis.
+
+<a name="Failover.Backend"></a>
+### func \(\*Failover\) Backend
+
+```go
+func (f *Failover) Backend() string
+```
+
+Backend is the active backend's name: BackendRedis or BackendMemory.
+
+<a name="Failover.Get"></a>
+### func \(\*Failover\) Get
+
+```go
+func (f *Failover) Get(ctx context.Context, key string) (Entry, bool, error)
+```
+
+Get reads from the active backend. A permission error from Redis switches to the in\-process backend and answers from it \(a miss, the first time\), so the caller's fetch is stored there.
+
+<a name="Failover.Probe"></a>
+### func \(\*Failover\) Probe
+
+```go
+func (f *Failover) Probe(ctx context.Context, timeout time.Duration)
+```
+
+Probe runs the Redis backend's startup check \(Redis.Probe\) with timeout per command. A permission error, or any other answer Redis will keep giving, switches to the in\-process backend; a Redis that did not answer keeps the Redis backend, whose runtime cooldown covers it until it does.
+
+<a name="Failover.Set"></a>
+### func \(\*Failover\) Set
+
+```go
+func (f *Failover) Set(ctx context.Context, key string, e Entry, ttl time.Duration) error
+```
+
+Set writes to the active backend, switching on a permission error like Get.
+
+<a name="FailoverConfig"></a>
+## type FailoverConfig
+
+FailoverConfig configures a Failover.
+
+```go
+type FailoverConfig struct {
+    Redis  *Redis
+    Memory Backend // the fallback; used only after a switch
+    Prefix string  // the cache key prefix, named in the ERROR log
+    Logger *slog.Logger
+    // OnBackend, when set, is called with the active backend's name
+    // (BackendRedis at construction, BackendMemory on the switch).
+    OnBackend func(name string)
+}
+```
+
 <a name="Memory"></a>
 ## type Memory
 
-Memory is the in\-process LRU backend, used when OMNIFEED\_REDIS\_URL is unset. It is bounded by the approximate byte size of what it holds; expired entries are dropped on read and are first in line for eviction by recency.
+Memory is the in\-process LRU backend, used when OMNIFEED\_REDIS\_URL is unset, and as the Failover's fallback when Redis refuses the cache's keys. It is bounded by the approximate byte size of what it holds; expired entries are dropped on read and are first in line for eviction by recency.
 
 ```go
 type Memory struct {
@@ -272,6 +378,15 @@ func (r *Redis) Get(ctx context.Context, key string) (Entry, bool, error)
 
 Get reads and decodes key.
 
+<a name="Redis.Probe"></a>
+### func \(\*Redis\) Probe
+
+```go
+func (r *Redis) Probe(ctx context.Context, timeout time.Duration) (kind string, err error)
+```
+
+Probe checks, once at startup, that this Redis user can do what the cache does: SET a key under the prefix \(with a short TTL, so nothing needs deleting\) and GET it back. Each command is bounded by timeout. The returned kind is "" on success, ErrKindNoPerm for a permission error, ErrKindOther for any other answer Redis will keep giving \(an error reply such as READONLY or an unknown command, or a value not read back\), and ErrKindTransient for a Redis that did not answer \(timeout, refused connection\) or answered with a retryable error \(LOADING, TRYAGAIN, BUSY, CLUSTERDOWN, MASTERDOWN, and OOM or MISCONF: a full or unsaveable Redis refuses writes until memory frees or the disk recovers, which the runtime path already treats as transient\).
+
 <a name="Redis.Set"></a>
 ### func \(\*Redis\) Set
 
@@ -293,6 +408,11 @@ type RedisConfig struct {
     MaxItemBytes int              // compressed size cap per entry; <= 0 = no cap
     Cooldown     time.Duration    // defaults to 30s
     Now          func() time.Time // defaults to time.Now
+    // OnError, when set, is called once per Redis error with the operation
+    // ("get", "set", "probe") and its kind (ErrKindNoPerm, ErrKindTransient,
+    // ErrKindOther). Cooldown fast-fails, oversize entries, corrupt values
+    // and callers hanging up are not Redis errors and are not reported.
+    OnError func(op, kind string)
 }
 ```
 

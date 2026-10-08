@@ -77,9 +77,9 @@ falls back to crawl4ai on the `x.com` URL.
 | `OMNIFEED_CACHE_ENABLED` | `true` | Cache successful `fetch_url` and `POST /crawl` results. See [Response cache](#response-cache). |
 | `OMNIFEED_CACHE_TTL_THREADS` | `10m` | How long a result from a dedicated engine (Reddit, Hacker News, Discourse, Bluesky, GitHub) stays cached. `0` turns caching off for them. |
 | `OMNIFEED_CACHE_TTL_PAGES` | `30m` | How long a generic page (the crawl4ai engine) stays cached. `0` turns caching off for them. |
-| `OMNIFEED_CACHE_MAX_BYTES` | `67108864` (64 MiB) | Size of the in-process LRU, used when `OMNIFEED_REDIS_URL` is unset. Approximate: content plus metadata plus a small per-entry overhead. Per pod. |
+| `OMNIFEED_CACHE_MAX_BYTES` | `67108864` (64 MiB) | Size of the in-process LRU, used when `OMNIFEED_REDIS_URL` is unset, or when Redis refuses the cache's keys (see [Response cache](#response-cache)). Approximate: content plus metadata plus a small per-entry overhead. Per pod. |
 | `OMNIFEED_CACHE_MAX_ITEM_BYTES` | `4194304` (4 MiB) | Largest single entry. In Redis it is the gzip-compressed size, in memory the raw size. A bigger result is still returned, just not cached. |
-| `OMNIFEED_CACHE_KEY_PREFIX` | `omnifeed:cache` | Redis key namespace for cache entries, separate from the rate limiter's `OMNIFEED_REDIS_KEY_PREFIX`. |
+| `OMNIFEED_CACHE_KEY_PREFIX` | `omnifeed:cache` | Redis key namespace for cache entries, separate from the rate limiter's `OMNIFEED_REDIS_KEY_PREFIX`. A Redis ACL user must be allowed `~<prefix>:*` with `GET` and `SET` (see [Response cache](#response-cache)). |
 
 ### Retry-After propagation
 
@@ -271,7 +271,28 @@ successful results and serves repeats from the cache.
   every other replica's fetches. Entries are gzip-compressed and expire through
   a Redis TTL. Without Redis, an in-process LRU of `OMNIFEED_CACHE_MAX_BYTES`
   per pod.
-- **When Redis fails.** The lookup counts as `result="error"` and the request is
+- **Redis permissions.** The Redis user needs the key pattern
+  `~<OMNIFEED_CACHE_KEY_PREFIX>:*` (default `~omnifeed:cache:*`) and the
+  commands `GET` and `SET`, on top of whatever the rate limiter needs under
+  `OMNIFEED_REDIS_KEY_PREFIX`. A user created for the rate limiter alone
+  (`~omnifeed:ratelimit:*`) is refused every cache command with `NOPERM`. For
+  example: `ACL SETUSER omnifeed ~omnifeed:ratelimit:* ~omnifeed:cache:* +get +set …`.
+- **Startup check.** With Redis, omnifeed writes a probe key
+  (`<prefix>:probe:<n>`, 10-second TTL, never deleted) and reads it back, each
+  command bounded by `OMNIFEED_REDIS_TIMEOUT`. If Redis refuses (`NOPERM`,
+  `NOAUTH`, `WRONGPASS`) or gives any other answer that will not change on
+  retry (e.g. `READONLY`, or the value is not read back), the pod logs one
+  `ERROR` naming the prefix to grant and uses the in-process LRU instead. If
+  Redis does not answer or asks to retry (timeout, connection refused, `LOADING`,
+  `OOM`, `MISCONF`), the pod keeps
+  the Redis backend and the rule below applies until it does.
+- **Permission errors at runtime.** A `NOPERM`/`NOAUTH`/`WRONGPASS` on a later
+  `GET` or `SET` (an ACL tightened under a running pod) does the same: one
+  `ERROR`, then the in-process LRU for the rest of the process's life, starting
+  with the request that hit the error. Restart the pods after fixing the ACL to
+  share the cache again. `omnifeed_cache_backend{backend="memory"} 1` with
+  `OMNIFEED_REDIS_URL` set means this happened.
+- **When Redis fails** (any other error). The lookup counts as `result="error"` and the request is
   served as a miss, never failed. After a failure, the cache skips Redis for 30
   seconds, so a dead Redis costs one `OMNIFEED_REDIS_TIMEOUT` per 30 seconds,
   not one per request.
@@ -369,3 +390,5 @@ Served at `/metrics` on `OMNIFEED_METRICS_ADDR`, default `:9090`, alongside the 
 | `omnifeed_search_engine_unique_results_total` | counter | `engine` | Results no other engine returned, which shows whether an engine earns its slot |
 | `omnifeed_cache_requests_total` | counter | `result` | [Response cache](#response-cache) lookups: `hit` (served from the cache or shared with an identical in-flight fetch), `miss` (fetched upstream), `bypass` (`no_cache`), `error` (the cache backend failed, served as a miss). `hit / (hit + miss)` is the hit rate |
 | `omnifeed_cache_bytes` | gauge | none | Approximate bytes in the in-process cache. Only with the in-memory backend: the Redis backend is shared and not measured per pod |
+| `omnifeed_cache_backend` | gauge | `backend` | `1` on the [response cache](#response-cache)'s active backend (`redis` or `memory`), `0` on the other. `memory` while `OMNIFEED_REDIS_URL` is set means Redis refused the cache's keys and this pod fell back to its in-process LRU |
+| `omnifeed_cache_backend_errors_total` | counter | `op`, `kind` | Response-cache Redis errors by `op` (`get`, `set`, `probe`) and `kind`: `noperm` (ACL or auth refusal: the pod switches to memory), `transient` (timeout, refused connection, `LOADING`…: 30-second cooldown, then retry), `other` (startup probe only: an answer the cache cannot use, e.g. `READONLY`) |
