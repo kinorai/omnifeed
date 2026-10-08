@@ -106,7 +106,7 @@ func NewMetrics() *Metrics {
 		}, []string{"engine", "error"}),
 		SearxngEngineHits: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "omnifeed_searxng_engine_results_total",
-			Help: "Result rows returned per SearXNG engine. The silent-block detector: an engine blocked by its upstream keeps answering HTTP 200 with an empty result set and no unresponsive_engines entry, so it goes flat here while the rest of the pool keeps moving. Alert on the divergence, not on the absolute rate. CAVEAT: a series exists only once that engine has been named in a response (a returned row, or an unresponsive_engines entry). An engine that is ALREADY blocked when the process starts, and blocked silently, mints no series at all — so an alert written as rate(...) == 0 matches nothing for it. Pair the rule with absent_over_time() over the engines you expect in the pool.",
+			Help: "Result rows returned per SearXNG engine. The silent-block detector: an engine blocked by its upstream keeps answering HTTP 200 with an empty result set and no unresponsive_engines entry, so it goes flat here while the rest of the pool keeps moving. Alert on the divergence, not on the absolute rate. Series start at 0 at startup for the OMNIFEED_SEARXNG_SITE_ENGINES engines and, once SearXNG's /config answers, for every engine it has enabled, so increase() counts a pod's first results. CAVEAT: an engine neither of those names gets a series only once a response names it (a returned row, or an unresponsive_engines entry); if /config never answered, an engine ALREADY blocked silently when the process started mints no series at all. Pair the rule with absent_over_time() over the engines you expect in the pool.",
 		}, []string{"engine"}),
 		SearxngEmpty: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "omnifeed_searxng_empty_searches_total",
@@ -301,6 +301,22 @@ func (m *Metrics) ObserveFallback(fromEngine, reason string) {
 // a search response, by engine name and error type.
 func (m *Metrics) ObserveUnresponsiveEngine(engine, errType string) {
 	m.SearxngUnresponsive.WithLabelValues(engine, errType).Inc()
+}
+
+// InitSearxngEngine creates every per-engine search series for engine at zero:
+// results, zero-result searches, unique results, the rank histogram, and the
+// unresponsive counter for each of errorTypes. increase() and rate() cannot
+// count a counter's first sample, so a series born at its first value hides
+// that value — after each restart, a pod's first results per engine. Minted at
+// startup, the series already sits at 0 when the first search lands. Idempotent.
+func (m *Metrics) InitSearxngEngine(engine string, errorTypes []string) {
+	m.SearxngEngineHits.WithLabelValues(engine)
+	m.SearxngEngineZero.WithLabelValues(engine)
+	m.SearchEngineUnique.WithLabelValues(engine)
+	m.SearchEnginePos.WithLabelValues(engine)
+	for _, errType := range errorTypes {
+		m.SearxngUnresponsive.WithLabelValues(engine, errType)
+	}
 }
 
 // ObserveEngineResults counts the rows one SearXNG engine contributed to a

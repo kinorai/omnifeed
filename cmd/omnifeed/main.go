@@ -235,6 +235,7 @@ func run(cfg config.Config, logger *slog.Logger) error {
 	// --- Searcher (optional — search tool is exposed only when configured) ---
 
 	var searcher domain.Searcher
+	var searxngSearcher *searxng.Searcher
 	var searxngClient *httpx.Client
 	if cfg.SearXNGURL != "" {
 		searxngPacer := searxngLimiter(cfg, rdb, metrics, logger)
@@ -242,7 +243,7 @@ func run(cfg config.Config, logger *slog.Logger) error {
 		searxngClient.OnAttempt = metrics.ObserveAttempt
 		searxngClient.OnUpstream = metrics.ObserveUpstream
 		searxngClient.OnRetryAfter = retryAfterHook(searxngPacer, metrics)
-		searcher = searxng.New(searxng.Config{
+		searxngSearcher = searxng.New(searxng.Config{
 			Endpoint:    cfg.SearXNGURL,
 			Client:      searxngClient,
 			Logger:      logger,
@@ -252,6 +253,7 @@ func run(cfg config.Config, logger *slog.Logger) error {
 			MaxWait:     cfg.SearXNGMaxWait,
 			Audit:       cfg.SearchAudit,
 		})
+		searcher = searxngSearcher
 		if cfg.SearchAudit != "off" {
 			// Announced at startup because both modes log every query string
 			// and "full" adds every result URL. An operator who did not intend
@@ -379,6 +381,12 @@ func run(cfg config.Config, logger *slog.Logger) error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	// Mint every enabled SearXNG engine's series at zero, in the background:
+	// SearXNG may still be starting, and readiness must not wait on metrics.
+	if searxngSearcher != nil {
+		go searxngSearcher.InitEngineMetrics(ctx)
+	}
 
 	logger.Info("starting servers",
 		"version", version.Version,
