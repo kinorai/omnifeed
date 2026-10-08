@@ -354,12 +354,67 @@ func TestStripHTML(t *testing.T) {
 		{"br", "one<br/>two", "one\ntwo"},
 		{"entities", "a &lt;b&gt; &amp; c", "a <b> & c"},
 		{"style dropped", "<style>p{color:red}</style>text", "text"},
-		{"attributes", `<a href="https://x/">link</a>`, "link"},
+		{"attributes", `<a href="https://x/" rel="nofollow">link</a>`, "[link](https://x/)"},
 		{"blank line collapse", "<p>a</p><div></div><div></div><p>b</p>", "a\n\nb"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := stripHTML(tc.in); got != tc.want {
 				t.Errorf("stripHTML(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// The cooked fallback must keep link targets: Discourse shortens long URLs in
+// the visible text, so stripping the <a> alone produced dead links. Inputs are
+// the shapes Discourse cooks (rel="noopener nofollow ugc", entity-encoded
+// query strings, mention/hashtag anchors with relative hrefs).
+func TestStripHTMLLinks(t *testing.T) {
+	for _, tc := range []struct{ name, in, want string }{
+		{
+			name: "shortened link keeps the full href",
+			in:   `<p>See <a href="https://github.com/discourse/discourse/blob/main/app/models/post.rb#L120" rel="noopener nofollow ugc">github.com/discourse/discourse/blob/main/app/models/post.rb#L120</a></p>`,
+			want: "See https://github.com/discourse/discourse/blob/main/app/models/post.rb#L120",
+		},
+		{
+			name: "ellipsis-shortened text",
+			in:   `<p><a href="https://example.com/a/very/long/path/to/a/page.html" rel="noopener nofollow ugc">example.com/a/very/long/path/…</a></p>`,
+			want: "https://example.com/a/very/long/path/to/a/page.html",
+		},
+		{
+			name: "custom text becomes a markdown link",
+			in:   `<p>Read <a href="https://go.dev/blog" rel="noopener nofollow ugc">the Go blog</a>.</p>`,
+			want: "Read [the Go blog](https://go.dev/blog).",
+		},
+		{
+			name: "entity-encoded href decoded exactly once",
+			in:   `<a href="https://www.google.com/search?q=a&amp;hl=en&amp;x=a%26b&amp;amp" rel="noopener nofollow ugc">search</a>`,
+			want: "[search](https://www.google.com/search?q=a&hl=en&x=a%26b&amp)",
+		},
+		{
+			name: "link text with entities and markup",
+			in:   `<a href="https://example.com/x"><code>a &lt;b&gt;</code> docs</a>`,
+			want: "[a <b> docs](https://example.com/x)",
+		},
+		{
+			name: "mention and hashtag keep their text",
+			in:   `<p><a class="mention" href="/u/alice">@alice</a> see <a class="hashtag-cooked" href="/c/dev/5"><span>dev</span></a></p>`,
+			want: "@alice see dev",
+		},
+		{
+			name: "data-download-href is not the href",
+			in:   `<a class="lightbox" data-download-href="/uploads/x.png?dl=1" href="https://cdn.example/x.png"><img src="https://cdn.example/x_small.png"></a>`,
+			want: "https://cdn.example/x.png",
+		},
+		{
+			name: "multiple links",
+			in:   `<p>A: <a href="https://a.example/one">https://a.example/one</a></p><p>B: <a href="https://b.example/two">two</a></p>`,
+			want: "A: https://a.example/one\n\nB: [two](https://b.example/two)",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := stripHTML(tc.in); got != tc.want {
+				t.Errorf("stripHTML(%q)\n got %q\nwant %q", tc.in, got, tc.want)
 			}
 		})
 	}
