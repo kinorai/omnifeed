@@ -17,12 +17,12 @@
 omnifeed gives an AI agent the full research loop, <b>search → URLs → content</b>, on self-hosted
 <a href="https://github.com/searxng/searxng">SearXNG</a> and <a href="https://github.com/unclecode/crawl4ai">crawl4ai</a>.
 Its <b>Reddit engine</b> returns full comment trees as <a href="https://github.com/toon-format/toon">TOON</a>,
-lossless and about 40% fewer tokens than JSON, with <b>no Reddit API key</b>. Hacker News, GitHub, Bluesky and Discourse
+lossless and about 40% fewer tokens than JSON, with <b>no Reddit API key</b>. Hacker News, GitHub, Bluesky, Discourse and X/Twitter
 get their own engines too.
 </p>
 
 - **`web_search`** queries SearXNG (Google, Bing, DDG, Reddit included) and returns ranked URLs with titles and snippets. Pass `site` to scope results to one hostname. Naming the site in the query text fails, because engines read it as a topic word.
-- **`fetch_url`** returns any URL as clean markdown through crawl4ai. Dedicated engines return TOON instead: Reddit threads and `/r/{sub}` listings through a real browser (listings honor the URL's `?t=` and `?limit=`), plus Hacker News, GitHub issues and pull requests, Bluesky posts and profiles, and Discourse topics from their public APIs. The GitHub engine also returns compact markdown for repository roots (metadata, latest release, README), files, directories, releases, commits, gists and, with a token, discussions.
+- **`fetch_url`** returns any URL as clean markdown through crawl4ai. Dedicated engines return TOON instead: Reddit threads and `/r/{sub}` listings through a real browser (listings honor the URL's `?t=` and `?limit=`), plus Hacker News, GitHub issues and pull requests, Bluesky posts and profiles, and Discourse topics from their public APIs. The GitHub engine also returns compact markdown for repository roots (metadata, latest release, README), files, directories, releases, commits, gists and, with a token, discussions. X/Twitter post links (`x.com`, `twitter.com`, the fxtwitter/vxtwitter mirrors and `t.co`) return markdown with the full text, quote, media alt text, community note, poll, the author's thread and top replies, read from FxTwitter with syndication, vxTwitter and crawl4ai as fallbacks.
 
 <img src="https://user-images.githubusercontent.com/74038190/212284100-561aa473-3905-4a80-b561-0d28506553ee.gif" width="100%">
 

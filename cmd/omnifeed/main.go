@@ -27,6 +27,7 @@ import (
 	"github.com/kinorai/omnifeed/internal/engine/github"
 	"github.com/kinorai/omnifeed/internal/engine/hackernews"
 	"github.com/kinorai/omnifeed/internal/engine/reddit"
+	"github.com/kinorai/omnifeed/internal/engine/twitter"
 	"github.com/kinorai/omnifeed/internal/httpx"
 	"github.com/kinorai/omnifeed/internal/httpx/redislimit"
 	"github.com/kinorai/omnifeed/internal/observability"
@@ -192,7 +193,26 @@ func run(cfg config.Config, logger *slog.Logger) error {
 		Register(hackerNewsEngine).
 		Register(gitHubEngine).
 		Register(discourseEngine).
-		Register(blueskyEngine).
+		Register(blueskyEngine)
+
+	// x.com walls headless browsers and twitter.com links fail in crawl4ai, so
+	// post URLs read public JSON mirrors directly (FxTwitter, then the embed
+	// syndication endpoint and vxTwitter), with crawl4ai on the x.com URL last.
+	// Needs outbound access to api.fxtwitter.com (or the configured FxEmbed),
+	// cdn.syndication.twimg.com, api.vxtwitter.com and t.co.
+	if cfg.TwitterEnabled {
+		registry.Register(twitter.New(twitter.Config{
+			Client:          httpClient,
+			Limiter:         limiter,
+			Generic:         crawl4aiEngine,
+			FxTwitterURL:    cfg.TwitterFxTwitterURL,
+			MaxReplies:      cfg.TwitterMaxReplies,
+			BlockPrivateIPs: cfg.BlockPrivateIPs,
+			Logger:          logger,
+		}))
+	}
+
+	registry.
 		Fallback(crawl4aiEngine).
 		BlockPrivateIPs(cfg.BlockPrivateIPs).
 		Logger(logger).

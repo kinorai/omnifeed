@@ -7,10 +7,13 @@ The **binary** reads every variable below. The Apple `container` launcher has a 
 `OMNIFEED_` variables of its own, for container names, host ports and images, which
 the binary never sees. They are in [apple-container.md](apple-container.md).
 
-**Egress.** Reddit and the generic fallback reach the web through crawl4ai. Four
+**Egress.** Reddit and the generic fallback reach the web through crawl4ai. Five
 engines call their upstream directly: Hacker News reads `hn.algolia.com`, GitHub reads
-`api.github.com`, Bluesky reads `public.api.bsky.app`, and Discourse reads each host in
-`OMNIFEED_DISCOURSE_HOSTS`. If outbound traffic may reach only crawl4ai, those four **break**.
+`api.github.com`, Bluesky reads `public.api.bsky.app`, Discourse reads each host in
+`OMNIFEED_DISCOURSE_HOSTS`, and Twitter/X reads `api.fxtwitter.com` (or
+`OMNIFEED_TWITTER_FXTWITTER_URL`), `cdn.syndication.twimg.com`, `api.vxtwitter.com` and
+`t.co`. If outbound traffic may reach only crawl4ai, those five **break**; Twitter/X then
+falls back to crawl4ai on the `x.com` URL.
 
 | Variable | Default | Purpose |
 |---|---|---|
@@ -48,6 +51,9 @@ engines call their upstream directly: Hacker News reads `hn.algolia.com`, GitHub
 | `OMNIFEED_FETCH_MAX_CHARS` | `120000` | Default cap on **markdown** returned by `fetch_url`. `0` is unlimited. Over the cap, the reply ends with a resumable truncation marker. TOON and JSON output from the dedicated engines is never cut; use their own limits. Doesn't apply to `/crawl`. See [Controlling fetched content size](#controlling-fetched-content-size). |
 | `OMNIFEED_GITHUB_TOKEN` | _(unset)_ | Personal access token for the GitHub engine. Anonymous access allows 60 requests per hour per IP. A token raises it to 5000. A repository root costs 3 requests, most other pages 1. Discussions need it: they are read through GraphQL, which refuses anonymous callers, so without a token discussion URLs go to the generic fallback. A fine-grained token with no extra permissions (public repositories, read-only) is enough. |
 | `OMNIFEED_DISCOURSE_HOSTS` | `meta.discourse.org,discuss.python.org,users.rust-lang.org,internals.rust-lang.org,discuss.pytorch.org` | Hostnames where the Discourse engine claims `/t/…` topic URLs. Discourse runs on **arbitrary** domains and the engine can't detect it, so **list the forums you use**. Matching is exact and case-insensitive, with no subdomain wildcards. Unlisted forums go through the generic browser fallback, which returns less of the thread. An **empty string** disables the engine. |
+| `OMNIFEED_TWITTER_ENABLED` | `true` | Render X/Twitter post URLs (`x.com`, `twitter.com`, `fxtwitter.com`, `fixupx.com`, `vxtwitter.com`, `fixvx.com`, and `t.co` links that land on a post) with the Twitter engine. `false` sends them to the generic fallback, which loads `x.com` in crawl4ai. See [Twitter/X posts](#twitterx-posts). |
+| `OMNIFEED_TWITTER_FXTWITTER_URL` | `https://api.fxtwitter.com` | Base URL of the FxTwitter API the engine reads first. Point it at a **self-hosted [FxEmbed](https://github.com/FxEmbed/FxEmbed)** to stop depending on the public instance. |
+| `OMNIFEED_TWITTER_MAX_REPLIES` | `20` | Replies rendered under a post, from the first page FxTwitter returns (about 35). Must be at least `1`. |
 | `OMNIFEED_REDDIT_TIMEOUT` | `4m` | Wall-clock cap for a Reddit thread expansion |
 | `OMNIFEED_REDDIT_MAX_ROUNDS` | `3` | Default `/api/morechildren` rounds. `?expand=full` allows up to 40. |
 | `OMNIFEED_REDDIT_FORMAT` | `toon` | Default Reddit output: `toon` or `json` |
@@ -160,7 +166,7 @@ Caps never reorder output. Comments stay in HN's order, and breadth-first select
 ## Dedicated-engine fallback
 
 When a dedicated engine (Reddit, Hacker News, GitHub, Discourse, Bluesky) fails,
-the generic browser engine renders the same URL instead, with two exceptions:
+the generic browser engine renders the same URL instead, with three exceptions:
 
 - **The caller passed `format`** (`json` or `toon`, on `fetch_url` or
   `POST /crawl`). Passing it means the caller parses the reply, so it gets the
@@ -171,6 +177,8 @@ the generic browser engine renders the same URL instead, with two exceptions:
   Discourse read the page's own host (`www.reddit.com`, the forum), so a browser
   render would hit the host that just refused us, or that our pacing is holding
   back, and prolong the block. The engine's error is returned.
+- **The engine marked its error final** (`domain.NoFallback`): the Twitter/X
+  engine already tried the generic render itself, so a second one is skipped.
 
 GitHub, Hacker News and Bluesky read a separate API host (`api.github.com`,
 `hn.algolia.com`, the Bluesky AppView). Their blocks and quota refusals are about
@@ -187,6 +195,45 @@ Errors reach MCP callers as a tool result with `isError: true` whose text is
 `fetch_url failed: <reason> (HTTP <status>): <cause> [<code>] Retryable after Ns.`
 (the back-off is stated once; `retry_after_s` is also in `structuredContent`).
 See [errors.md](errors.md).
+
+## Twitter/X posts
+
+x.com walls headless browsers, and crawl4ai fails every `twitter.com` link (the
+anti-bot verdict is a 39-byte page), so the Twitter engine reads public JSON mirrors
+directly, in order, and stops at the first that answers:
+
+1. **FxTwitter API v2**: `/2/conversation/{id}` for the post, its parents and the first
+   page of replies, plus `/2/thread/{id}` when the post belongs to the author's
+   self-thread. Covers long posts, X Articles, quotes, media alt text, community notes,
+   polls and link cards.
+2. **Embed syndication** (`cdn.syndication.twimg.com/tweet-result`). It cuts long posts at
+   about 275 characters, so for those the engine asks **vxTwitter** for the full text. If
+   that fails too, the cut text is served with `text_truncated: true` in `_meta` and a
+   note in the body. vxTwitter alone is tried if syndication fails.
+3. **crawl4ai** on the canonical `https://x.com/i/status/{id}`, which X renders for
+   logged-out readers. X's own error pages are rejected, not returned.
+
+If every source fails, the error says **tweet unavailable** and why: not found (FxTwitter
+and a second source both answered 404: deleted, protected or suspended), blocked or rate
+limited, or the last source's failure. The error is final: the registry does not render
+the URL a second time. `t.co` links are resolved with one `HEAD` whose redirect is **not
+followed**; the destination passes the SSRF check, then renders as a post or, for any
+other site, through the generic engine. A `twitter.com` URL the engine does not claim, such
+as a profile, is rewritten to `x.com` before crawl4ai sees it.
+
+Output is **markdown** by default: a header line (`@handle (Name) · date · x.com URL ·
+likes · reposts · replies · views`), the text with `t.co` links expanded, the quoted post
+as a blockquote, media as `[image: alt]` or `[video, 1:23]`, poll, community note, link
+card, the X Article body, the self-thread numbered, and the top replies as
+`@handle (N likes): text`, with the author's own replies marked `[author]`. Pass
+`format: toon` or `json` for the same data structured. `_meta` carries `upstream`
+(`fxtwitter`, `syndication`, `syndication+vxtwitter`, `vxtwitter` or `crawl4ai`),
+`replies`, `reply_total`, `thread_posts` and `text_truncated`. Fetched posts are cached in
+process for 15 minutes.
+
+FxTwitter, vxTwitter and the syndication endpoint are third-party or unofficial services X
+can break or pressure at any time. A self-hosted FxEmbed
+behind `OMNIFEED_TWITTER_FXTWITTER_URL` removes the first dependency.
 
 ## Reddit anti-bot handling
 
