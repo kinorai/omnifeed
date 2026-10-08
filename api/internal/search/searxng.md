@@ -13,6 +13,7 @@ Package searxng implements domain.Searcher against a SearXNG instance's JSON API
 - [type Config](<#Config>)
 - [type Searcher](<#Searcher>)
   - [func New\(cfg Config\) \*Searcher](<#New>)
+  - [func \(s \*Searcher\) InitEngineMetrics\(ctx context.Context\)](<#Searcher.InitEngineMetrics>)
   - [func \(\*Searcher\) Name\(\) string](<#Searcher.Name>)
   - [func \(s \*Searcher\) Search\(ctx context.Context, query string, opts domain.SearchOptions\) \(\[\]domain.SearchResult, error\)](<#Searcher.Search>)
 
@@ -76,6 +77,15 @@ func New(cfg Config) *Searcher
 ```
 
 New returns a Searcher wired with the given config.
+
+<a name="Searcher.InitEngineMetrics"></a>
+### func \(\*Searcher\) InitEngineMetrics
+
+```go
+func (s *Searcher) InitEngineMetrics(ctx context.Context)
+```
+
+InitEngineMetrics fetches the instance's enabled engines from GET /config and mints their per\-engine series at zero \(see initEngineMetrics\). It is meant to run in its own goroutine after startup: it never touches readiness, retries with backoff while SearXNG is not answering yet, and returns after success, after the retry budget, or when ctx is done. A failure is logged once at WARN; nothing else depends on it — engines still get their series lazily, the first time a search response names them.
 
 <a name="Searcher.Name"></a>
 ### func \(\*Searcher\) Name
