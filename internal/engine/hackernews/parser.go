@@ -11,16 +11,19 @@ import (
 var (
 	hnTagRE      = regexp.MustCompile(`<[^>]+>`)
 	hnBlankRunRE = regexp.MustCompile(`\n{3,}`)
+	// hnAnchorRE captures an anchor's href (group 1) and inner HTML (group 2).
+	hnAnchorRE = regexp.MustCompile(`(?is)<a\s[^>]*?\bhref\s*=\s*"([^"]*)"[^>]*>(.*?)</a\s*>`)
 )
 
-// cleanHTML turns HN's HTML comment text into readable plain text: paragraph
-// tags become blank lines, remaining tags are stripped, HTML entities are
-// unescaped, and runs of blank lines are clamped. HN renders link anchors with
-// the visible URL as their text, so stripping the <a> tag keeps the URL.
+// cleanHTML turns HN's HTML comment text into readable plain text: anchors are
+// rewritten to keep their real target (see rewriteAnchor), paragraph tags
+// become blank lines, remaining tags are stripped, HTML entities are
+// unescaped, and runs of blank lines are clamped.
 func cleanHTML(s string) string {
 	if s == "" {
 		return s
 	}
+	s = hnAnchorRE.ReplaceAllStringFunc(s, rewriteAnchor)
 	// Fence code blocks BEFORE stripping tags so HN's <pre><code> survives as a
 	// Markdown fence — the in-comment code fidelity this engine exists to provide.
 	// (Tag-strip then unescape order means entity-encoded code chars like &lt;
@@ -35,6 +38,31 @@ func cleanHTML(s string) string {
 	s = html.UnescapeString(s)
 	s = hnBlankRunRE.ReplaceAllString(s, "\n\n")
 	return strings.TrimSpace(s)
+}
+
+// rewriteAnchor replaces one <a href="…">text</a> with its link target. HN
+// shortens long URLs in the visible text (`https://host/abc...`) while the
+// href holds the full URL, so the text alone is a dead link. When the text is
+// the URL itself — equal to the href, a prefix of it, or ending in "..."/"…" —
+// the bare href is emitted; otherwise markdown [text](href) keeps both. Other
+// attributes (rel="nofollow") are dropped.
+//
+// The output is still HTML-encoded: cleanHTML strips tags and unescapes the
+// whole string afterwards, so the decoded href is re-escaped here to be
+// decoded exactly once (a literal "&amp;" in a URL must not become "&").
+func rewriteAnchor(a string) string {
+	m := hnAnchorRE.FindStringSubmatch(a)
+	href := html.UnescapeString(m[1])
+	inner := m[2]
+	if href == "" {
+		return inner
+	}
+	text := strings.TrimSpace(html.UnescapeString(hnTagRE.ReplaceAllString(inner, "")))
+	if text == "" || strings.HasPrefix(href, text) ||
+		strings.HasSuffix(text, "...") || strings.HasSuffix(text, "…") {
+		return html.EscapeString(href)
+	}
+	return "[" + inner + "](" + html.EscapeString(href) + ")"
 }
 
 // flattenComments walks the Algolia children tree in pre-order and appends each
