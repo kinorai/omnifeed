@@ -245,6 +245,33 @@ func TestCapComments(t *testing.T) {
 	})
 }
 
+// annotateTotals writes the thread totals into the post header.
+func TestAnnotateTotals(t *testing.T) {
+	thread := Thread{
+		Post:     Post{ID: "p", NumComments: 120},
+		Comments: []Comment{{ID: "a", ParentID: "p"}, {ID: "b", ParentID: "a"}},
+		Gaps:     []Gap{{Type: "more", Count: 30}, {Type: "more", Count: 5}, {Type: "continue"}},
+	}
+	annotateTotals(&thread, 2)
+	p := thread.Post
+	if *p.TotalComments != 120 || *p.ReturnedComments != 2 || *p.HiddenMore != 35 || !*p.Truncated {
+		t.Errorf("got total=%d returned=%d hidden=%d truncated=%v, want 120/2/35/true",
+			*p.TotalComments, *p.ReturnedComments, *p.HiddenMore, *p.Truncated)
+	}
+
+	// Nothing capped, no gaps left: not truncated.
+	thread.Gaps = nil
+	annotateTotals(&thread, 2)
+	if *thread.Post.Truncated || *thread.Post.HiddenMore != 0 {
+		t.Errorf("complete thread: truncated=%v hidden=%d, want false/0", *thread.Post.Truncated, *thread.Post.HiddenMore)
+	}
+	// Caps dropped comments: truncated even with no gaps.
+	annotateTotals(&thread, 5)
+	if !*thread.Post.Truncated {
+		t.Error("capped thread must be truncated")
+	}
+}
+
 func TestCapTopLevel(t *testing.T) {
 	// post p: t1 -> t1a ; t2 -> t2a -> t2a1 ; t3
 	newThread := func() Thread {
