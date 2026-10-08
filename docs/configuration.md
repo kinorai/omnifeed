@@ -58,6 +58,8 @@ engines call their upstream directly: Hacker News reads `hn.algolia.com`, GitHub
 | `OMNIFEED_REDDIT_MAX_TOP_LEVEL` | `0` | Cap on top-level threads, replies included. `0` is unlimited. |
 | `OMNIFEED_REDDIT_KEEP_CREATED` | `true` | Include each comment's `created` timestamp |
 | `OMNIFEED_REDDIT_KEEP_DEPTH` | `false` | Include each comment's `depth` |
+| `OMNIFEED_REDDIT_QUOTA` | `0` (off) | Maximum requests to Reddit in any rolling `OMNIFEED_REDDIT_QUOTA_WINDOW`. It counts **every request**, not every crawl: the thread fetch, each `/api/morechildren` round, a subreddit listing and a share-link resolve each take one, so an `expand=full` crawl can take 41. Shared across replicas when `OMNIFEED_REDIS_URL` is set. Reddit's unauthenticated budget is about 10 requests per minute per IP in practice. On 2026-10-08 Reddit blocked after about 50 requests in 5 minutes, and once at about 3 per minute while other clients shared the egress IP. **Recommended: `6`** with the default `1m` window, or `3` if the IP is shared. A request refused for lack of quota fails with `quota_exhausted` and its `retry_after_s`, and nothing is sent. |
+| `OMNIFEED_REDDIT_QUOTA_WINDOW` | `1m` | Rolling window for `OMNIFEED_REDDIT_QUOTA`. Ignored when the quota is `0`. Must be above `0` when the quota is set. |
 | `OMNIFEED_MAX_URLS_PER_REQUEST` | `30` | Cap on `urls[]` length |
 | `OMNIFEED_PER_DOMAIN_CONCURRENCY` | `2` | Max concurrent requests to one domain |
 | `OMNIFEED_PER_DOMAIN_DELAY` | `1500ms` | Minimum gap between requests to one domain |
@@ -73,6 +75,11 @@ When an upstream answers `429` or `503` with `Retry-After`, omnifeed holds that 
 for the given duration, capped at 5 minutes, across later requests. With
 `OMNIFEED_REDIS_URL` set, the hold spans replicas. It applies only to upstreams an
 engine calls directly, because crawl4ai hides the crawled site's own `Retry-After`.
+Reddit is the exception: its fetch runs inside the browser, so the engine reads
+`Retry-After`, `X-Ratelimit-Reset` and `X-Ratelimit-Remaining` from the in-page
+response. On a `429`, or when `X-Ratelimit-Remaining` reaches `0`, it holds
+`www.reddit.com` for `Retry-After`, else `X-Ratelimit-Reset`, else 60s on a bare
+`429`. The `429` error carries the wait as `retry_after_s`.
 Callers waiting on a held host time out normally at their own budget: the engine
 timeout, about 30s, or `MaxWait`, 15s, for a search.
 
@@ -141,6 +148,28 @@ Hacker News has **no depth cap** on purpose, because depth says nothing about qu
 
 Caps never reorder output. Comments stay in HN's order, and breadth-first selection keeps each comment's ancestors, so the `parent_id` chain never breaks.
 
+## Dedicated-engine fallback
+
+When a dedicated engine (Reddit, Hacker News, GitHub, Discourse, Bluesky) fails,
+the generic browser engine may render the same URL instead. It does so only when
+both of these hold:
+
+- **The failure is transient**: `timeout` or `upstream_error`. A block or rate
+  verdict (`http_429`, `http_403`, `captcha`, `bot_block`), omnifeed's own
+  `quota_exhausted`, and every other kind return the engine's error. A browser
+  render would hit the host that just refused us and prolong the block.
+- **The caller did not pass `format`** (`json` or `toon`, on `fetch_url` or
+  `POST /crawl`). Passing it means the caller parses the reply, so it gets the
+  engine's error rather than markdown in the same success shape.
+
+A fallback result is marked. `_meta` (or the loader's `metadata`) carries
+`fallback_from` (the engine that failed) and `fallback_reason` (its failure kind),
+and the body starts with one line:
+`> Note: the dedicated reddit engine failed (timeout); this is the generic page render instead.`
+
+Errors reach MCP callers as `fetch_url failed: <reason> (HTTP <status>): <cause>`,
+with ` (retry_after_s=N)` appended when the error says how long to back off.
+
 ## Reddit anti-bot handling
 
 Reddit's edge fingerprints the TLS/JA3 handshake and 403-blocks non-browser HTTP clients, so the Reddit engine never calls Reddit directly. It drives a **real headless browser** to a `www.reddit.com` page, which clears the bot wall, then runs a **same-origin `fetch()`** of the `.json` and `/api/morechildren` endpoints from inside it. It needs no Reddit auth, cookies or API key. The default browser is crawl4ai, through its token-gated **`POST /execute_js`** endpoint, so crawl4ai must run with `CRAWL4AI_EXECUTE_JS_ENABLED=true`, and `OMNIFEED_CRAWL4AI_TOKEN` must match its `CRAWL4AI_API_TOKEN`.
@@ -163,10 +192,10 @@ Served at `/metrics` on `OMNIFEED_METRICS_ADDR`, default `:9090`, alongside the 
 | `omnifeed_upstream_seconds` | histogram | `upstream, op, status` | Upstream round-trip per attempt, from start until the body is read: `crawl4ai/crawl`, `crawl4ai/execute_js`, `searxng/search`, `github/api`, `hackernews/api`, `discourse/api` |
 | `omnifeed_domain_limiter_wait_seconds` | histogram | `engine, outcome` | Time blocked acquiring the per-domain limiter, semaphore plus delay. `outcome="canceled"`: the wait died in the queue. `outcome="budget_exceeded"`: the wait exceeded the caller's remaining deadline, so nothing queued; about 0 seconds, with `reason="quota_exhausted"` on the request metric |
 | `omnifeed_ratelimit_backend_errors_total` | counter | `op` | Failed Redis operations in the distributed limiter. On `acquire` the limiter paces in process. `release` and `penalize` failures cost only pacing accuracy |
-| `omnifeed_ratelimit_penalties_total` | counter | `upstream` | Upstream `Retry-After` headers, on 429 or 503, turned into a hold on that host. This often precedes a CAPTCHA or block |
-| `omnifeed_ratelimit_degraded` | gauge | `scope` | `1` while pacing falls back to per-pod limits because Redis is unreachable, `0` while shared. Exists only when `OMNIFEED_REDIS_URL` is set, published at `0` on startup. One series per limiter scope, `domain` for crawling and `searxng` for queries, each degrading and recovering on its own |
+| `omnifeed_ratelimit_penalties_total` | counter | `upstream` | Upstream `Retry-After` headers, on 429 or 503, turned into a hold on that host. `upstream="reddit"` counts Reddit's own back-off headers read inside the browser. This often precedes a CAPTCHA or block |
+| `omnifeed_ratelimit_degraded` | gauge | `scope` | `1` while pacing falls back to per-pod limits because Redis is unreachable, `0` while shared. Exists only when `OMNIFEED_REDIS_URL` is set, published at `0` on startup. One series per limiter scope, `domain` for crawling, `searxng` for queries and `reddit` for the Reddit request quota when set, each degrading and recovering on its own |
 | `omnifeed_response_chars` | histogram | `engine` | Engine output length before any `max_chars` truncation, successful crawls only |
-| `omnifeed_engine_fallbacks_total` | counter | `from_engine, reason` | Dedicated-engine failures re-crawled by the generic fallback |
+| `omnifeed_engine_fallbacks_total` | counter | `from_engine, reason` | Dedicated-engine failures re-crawled by the generic fallback. Only transient reasons (`timeout`, `upstream_error`) appear, see [Dedicated-engine fallback](#dedicated-engine-fallback) |
 | `omnifeed_searxng_unresponsive_engines_total` | counter | `engine, error` | Engines SearXNG reported unresponsive, per search. `error` is one of `timeout`, `captcha`, `suspended`, `too_many_requests`, `access_denied`, `error`, `unknown` |
 | `omnifeed_searxng_engine_results_total` | counter | `engine` | Result rows per SearXNG engine. A blocked engine keeps answering 200 with zero results, so its series goes flat while the rest of the pool moves. Alert on that divergence, and pair it with `absent_over_time()`, because an engine blocked at startup has no series |
 | `omnifeed_searxng_queries_total` | counter | `scoped` | Queries **sent** to SearXNG after the limiter, the rate the engines see. Compare with `omnifeed_search_requests_total` to see what pacing refused |

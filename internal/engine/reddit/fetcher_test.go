@@ -94,7 +94,7 @@ func TestUnwrapEnvelope(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := unwrapEnvelope(tc.env)
+			got, _, err := unwrapEnvelope(tc.env)
 			if tc.wantErr == "" && tc.wantKind == "" {
 				if err != nil || got != tc.wantBody {
 					t.Fatalf("got (%q, %v), want (%q, nil)", got, err, tc.wantBody)
@@ -265,8 +265,13 @@ func TestGetPostJS(t *testing.T) {
 	if !strings.Contains(g, "fetch("+jsLit(u)) {
 		t.Errorf("getJS missing escaped url: %s", g)
 	}
-	if !strings.Contains(g, "JSON.stringify({s: r.status, b: await r.text()})") {
+	if !strings.Contains(g, "JSON.stringify({s: r.status, b: await r.text(), ") {
 		t.Errorf("getJS missing envelope return: %s", g)
+	}
+	for _, h := range []string{`"retry-after"`, `"x-ratelimit-reset"`, `"x-ratelimit-remaining"`} {
+		if !strings.Contains(g, "r.headers.get("+h+")") {
+			t.Errorf("getJS does not capture the %s header: %s", h, g)
+		}
 	}
 
 	body := "api_type=json&children=a%2Cb&link_id=t3_abc"

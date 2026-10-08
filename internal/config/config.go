@@ -177,6 +177,15 @@ type Config struct {
 	RedditKeepCreated bool   // include the per-comment `created` timestamp
 	RedditKeepDepth   bool   // include the per-comment `depth` field
 
+	// RedditQuota / RedditQuotaWindow cap requests to Reddit in a rolling
+	// window: every request, not every crawl — the thread fetch, each
+	// /api/morechildren round, listings and share-link resolves all count.
+	// Reddit's unauthenticated budget is per IP and counted in a window, which
+	// the per-domain delay alone does not bound. Shared across replicas through
+	// Redis when OMNIFEED_REDIS_URL is set. 0 disables it (the default).
+	RedditQuota       int
+	RedditQuotaWindow time.Duration
+
 	// Distributed rate limiting (optional). RedisURL is the single opt-in
 	// switch: unset keeps pacing entirely in process, exactly as before. Set,
 	// the limiters share their state through Redis so every replica counts
@@ -332,6 +341,12 @@ func Load() (Config, error) {
 	if c.RedditKeepDepth, err = envBool("OMNIFEED_REDDIT_KEEP_DEPTH", false); err != nil {
 		return c, err
 	}
+	if c.RedditQuota, err = envInt("OMNIFEED_REDDIT_QUOTA", 0); err != nil {
+		return c, err
+	}
+	if c.RedditQuotaWindow, err = envDuration("OMNIFEED_REDDIT_QUOTA_WINDOW", time.Minute); err != nil {
+		return c, err
+	}
 	if c.MaxURLsPerRequest, err = envInt("OMNIFEED_MAX_URLS_PER_REQUEST", 30); err != nil {
 		return c, err
 	}
@@ -370,6 +385,12 @@ func Load() (Config, error) {
 	// do nothing, which is the failure mode this whole change exists to remove.
 	if c.SearXNGQuota > 0 && c.SearXNGQuotaWindow <= 0 {
 		return c, fmt.Errorf("OMNIFEED_SEARXNG_QUOTA_WINDOW must be > 0 when OMNIFEED_SEARXNG_QUOTA is set, got %s", c.SearXNGQuotaWindow)
+	}
+	if c.RedditQuota < 0 {
+		return c, fmt.Errorf("OMNIFEED_REDDIT_QUOTA must be >= 0 (0 = no quota), got %d", c.RedditQuota)
+	}
+	if c.RedditQuota > 0 && c.RedditQuotaWindow <= 0 {
+		return c, fmt.Errorf("OMNIFEED_REDDIT_QUOTA_WINDOW must be > 0 when OMNIFEED_REDDIT_QUOTA is set, got %s", c.RedditQuotaWindow)
 	}
 	if c.RedditFetchLimit < 1 {
 		return c, fmt.Errorf("OMNIFEED_REDDIT_FETCH_LIMIT must be >= 1, got %d", c.RedditFetchLimit)
