@@ -309,8 +309,10 @@ func ClassifyClientError(err error, fallback domain.FailureKind) *domain.FetchEr
 		// A 5xx after retry exhaustion is ambiguous (infra fault vs. an anti-bot
 		// block served as a 5xx), so let the caller's fallback classify it; a 429
 		// is unambiguous rate limiting.
+		// A 504 is the exception: a gateway timeout is unambiguous (crawl4ai's
+		// wall-clock "Crawl exceeded the time limit"), so it stays a timeout.
 		kind := domain.KindForStatus(se.StatusCode)
-		if se.StatusCode >= 500 {
+		if se.StatusCode >= 500 && se.StatusCode != http.StatusGatewayTimeout {
 			kind = fallback
 		}
 		return &domain.FetchError{Kind: kind, StatusCode: se.StatusCode, Err: err}
