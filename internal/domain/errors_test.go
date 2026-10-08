@@ -12,6 +12,7 @@ func TestKindForStatus(t *testing.T) {
 		429: KindHTTP429,
 		500: KindUpstreamError,
 		503: KindUpstreamError,
+		504: KindTimeout,
 		404: KindError,
 		200: KindError,
 	}
