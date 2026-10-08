@@ -71,6 +71,14 @@ func (r *Redis) Get(ctx context.Context, key string) (Entry, bool, error) {
 		return Entry{}, false, nil
 	}
 	if err != nil {
+		// A caller that hung up mid-GET is not a Redis failure: the client
+		// reports the caller's dead ctx as its own error, and tripping on it
+		// would turn the cache off for every other request. Discriminate on
+		// ctx: the client's own ReadTimeout also surfaces as DeadlineExceeded
+		// while ctx is still alive, and that one IS a backend failure.
+		if ctx.Err() != nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
+			return Entry{}, false, ctx.Err()
+		}
 		r.trip()
 		return Entry{}, false, fmt.Errorf("redis get: %w", err)
 	}

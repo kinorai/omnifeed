@@ -152,6 +152,9 @@ func (c *Cache) Crawl(ctx context.Context, rawURL string, opts domain.EngineOpti
 
 	e, hit, err := c.backend.Get(ctx, key)
 	switch {
+	case err != nil && ctx.Err() != nil:
+		// The caller hung up during the lookup; nobody is left to serve.
+		return domain.Document{}, ctx.Err()
 	case err != nil:
 		c.observe(ResultError)
 		if !errors.Is(err, ErrUnavailable) {
@@ -164,6 +167,10 @@ func (c *Cache) Crawl(ctx context.Context, rawURL string, opts domain.EngineOpti
 	return c.fetchShared(ctx, key, rawURL, opts, err == nil)
 }
 
+// errLeaderAborted is what followers see when the leader's fetch never
+// finished (it panicked); they retry rather than inherit it.
+var errLeaderAborted = errors.New("fetch cache: shared fetch aborted")
+
 // fetchShared runs one upstream fetch per key at a time: the first caller
 // (the leader) fetches, identical callers arriving meanwhile wait for its
 // result instead of spending the upstream's budget again.
@@ -173,7 +180,10 @@ func (c *Cache) fetchShared(ctx context.Context, key, rawURL string, opts domain
 		c.mu.Unlock()
 		return c.follow(ctx, cl, rawURL, opts, key)
 	}
-	cl := &call{done: make(chan struct{})}
+	// Pre-set as an abandoned fetch: if the inner crawl panics, the deferred
+	// close still wakes the followers, and they must fetch for themselves
+	// rather than share a zero Document as a success.
+	cl := &call{done: make(chan struct{}), err: errLeaderAborted, leaderGone: true}
 	c.flight[key] = cl
 	c.mu.Unlock()
 

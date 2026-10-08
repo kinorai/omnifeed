@@ -96,6 +96,11 @@ func TestRegistryCrawl_FallsBackOnEngineError(t *testing.T) {
 	if !strings.HasSuffix(doc.PageContent, "ok") || failing.calls != 1 || !fallback.called {
 		t.Fatalf("want engine tried once then fallback used; got calls=%d fallback=%v", failing.calls, fallback.called)
 	}
+	// The stand-in render names the engine that failed, so the response
+	// cache never stores it under that engine's URL.
+	if got := doc.Metadata[domain.FallbackFromKey]; got != "failing" {
+		t.Fatalf("fallback_from = %q, want failing", got)
+	}
 
 	// Dead context: the error comes back as-is, the fallback is not burned.
 	failing2, fallback2 := &failingEngine{}, &stubEngine{}
