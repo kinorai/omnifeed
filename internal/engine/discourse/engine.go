@@ -88,6 +88,11 @@ func New(cfg Config) *Engine {
 // Name returns the engine identifier ("discourse").
 func (*Engine) Name() string { return "discourse" }
 
+// SameHostAsPage reports true: the engine reads the topic JSON from the forum
+// itself, the page's own host, so a forum's block must not be followed by a
+// browser render of the same forum (domain.SameHostEngine).
+func (*Engine) SameHostAsPage() bool { return true }
+
 // Matches claims topic URLs on the configured hosts only. The host must equal a
 // configured hostname exactly (case-insensitively) — no subdomain wildcarding,
 // because a Discourse install at forum.example.com says nothing about

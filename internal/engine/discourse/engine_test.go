@@ -387,3 +387,14 @@ func TestCrawlSluglessPostNumberFetchesRightTopic(t *testing.T) {
 		t.Fatalf("fetched %d urls (%v), want 1", len(paths), paths)
 	}
 }
+
+// Discourse reads the topic JSON from the forum itself, so it declares the
+// page's host: a forum's block must not be followed by a browser render of
+// the same forum (see engine.Registry).
+func TestSameHostAsPage(t *testing.T) {
+	var e domain.Engine = New(Config{})
+	sh, ok := e.(domain.SameHostEngine)
+	if !ok || !sh.SameHostAsPage() {
+		t.Fatal("discourse engine must report SameHostAsPage() == true")
+	}
+}

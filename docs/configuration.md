@@ -151,16 +151,23 @@ Caps never reorder output. Comments stay in HN's order, and breadth-first select
 ## Dedicated-engine fallback
 
 When a dedicated engine (Reddit, Hacker News, GitHub, Discourse, Bluesky) fails,
-the generic browser engine may render the same URL instead. It does so only when
-both of these hold:
+the generic browser engine renders the same URL instead, with two exceptions:
 
-- **The failure is transient**: `timeout` or `upstream_error`. A block or rate
-  verdict (`http_429`, `http_403`, `captcha`, `bot_block`), omnifeed's own
-  `quota_exhausted`, and every other kind return the engine's error. A browser
-  render would hit the host that just refused us and prolong the block.
-- **The caller did not pass `format`** (`json` or `toon`, on `fetch_url` or
+- **The caller passed `format`** (`json` or `toon`, on `fetch_url` or
   `POST /crawl`). Passing it means the caller parses the reply, so it gets the
-  engine's error rather than markdown in the same success shape.
+  engine's error rather than markdown in the same success shape. This holds for
+  every engine and every failure.
+- **A same-host engine got a block or rate verdict**: `http_429`, `http_403`,
+  `captcha`, `bot_block`, or omnifeed's own `quota_exhausted`. Reddit and
+  Discourse read the page's own host (`www.reddit.com`, the forum), so a browser
+  render would hit the host that just refused us, or that our pacing is holding
+  back, and prolong the block. The engine's error is returned.
+
+GitHub, Hacker News and Bluesky read a separate API host (`api.github.com`,
+`hn.algolia.com`, the Bluesky AppView). Their blocks and quota refusals are about
+that API host, not the page, so they still fall back: an anonymous GitHub
+deployment over its 60 requests per hour renders `github.com` instead. An engine
+declares the page's host by implementing `domain.SameHostEngine`.
 
 A fallback result is marked. `_meta` (or the loader's `metadata`) carries
 `fallback_from` (the engine that failed) and `fallback_reason` (its failure kind),
@@ -195,7 +202,7 @@ Served at `/metrics` on `OMNIFEED_METRICS_ADDR`, default `:9090`, alongside the 
 | `omnifeed_ratelimit_penalties_total` | counter | `upstream` | Upstream `Retry-After` headers, on 429 or 503, turned into a hold on that host. `upstream="reddit"` counts Reddit's own back-off headers read inside the browser. This often precedes a CAPTCHA or block |
 | `omnifeed_ratelimit_degraded` | gauge | `scope` | `1` while pacing falls back to per-pod limits because Redis is unreachable, `0` while shared. Exists only when `OMNIFEED_REDIS_URL` is set, published at `0` on startup. One series per limiter scope, `domain` for crawling, `searxng` for queries and `reddit` for the Reddit request quota when set, each degrading and recovering on its own |
 | `omnifeed_response_chars` | histogram | `engine` | Engine output length before any `max_chars` truncation, successful crawls only |
-| `omnifeed_engine_fallbacks_total` | counter | `from_engine, reason` | Dedicated-engine failures re-crawled by the generic fallback. Only transient reasons (`timeout`, `upstream_error`) appear, see [Dedicated-engine fallback](#dedicated-engine-fallback) |
+| `omnifeed_engine_fallbacks_total` | counter | `from_engine, reason` | Dedicated-engine failures re-crawled by the generic fallback. Block and rate reasons appear only for separate-host engines (GitHub, Hacker News, Bluesky), see [Dedicated-engine fallback](#dedicated-engine-fallback) |
 | `omnifeed_searxng_unresponsive_engines_total` | counter | `engine, error` | Engines SearXNG reported unresponsive, per search. `error` is one of `timeout`, `captcha`, `suspended`, `too_many_requests`, `access_denied`, `error`, `unknown` |
 | `omnifeed_searxng_engine_results_total` | counter | `engine` | Result rows per SearXNG engine. A blocked engine keeps answering 200 with zero results, so its series goes flat while the rest of the pool moves. Alert on that divergence, and pair it with `absent_over_time()`, because an engine blocked at startup has no series |
 | `omnifeed_searxng_queries_total` | counter | `scoped` | Queries **sent** to SearXNG after the limiter, the rate the engines see. Compare with `omnifeed_search_requests_total` to see what pacing refused |
