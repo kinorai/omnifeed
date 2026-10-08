@@ -69,16 +69,17 @@ func (e *FetchError) Error() string {
 // Unwrap exposes the underlying error to errors.Is / errors.As.
 func (e *FetchError) Unwrap() error { return e.Err }
 
-// FallbackEligible reports whether a dedicated engine failing with kind may be
-// re-crawled by the generic browser fallback. Only transient faults qualify: a
-// timeout or an upstream 5xx/unreachable says nothing about whether the site
-// would serve the page to a browser a moment later. Everything else is refused —
-// above all the block and rate kinds (http_429, http_403, captcha, bot_block)
-// and omnifeed's own quota_exhausted, where a browser render would hit the
-// host that just refused us (or that our own pacing is holding back) and
-// prolong the block.
-func FallbackEligible(kind FailureKind) bool {
-	return kind == KindTimeout || kind == KindUpstreamError
+// IsBlockKind reports whether kind is a block or rate verdict: the upstream
+// refused us (http_429, http_403, captcha, bot_block), or omnifeed's own pacing
+// did (quota_exhausted). Such a verdict is about the HOST that was asked, which
+// is what decides whether a browser render of the page may follow it — see
+// SameHostEngine.
+func IsBlockKind(kind FailureKind) bool {
+	switch kind {
+	case KindHTTP429, KindHTTP403, KindCaptcha, KindBotBlock, KindQuotaExhausted:
+		return true
+	}
+	return false
 }
 
 // KindForStatus maps an HTTP status code to the matching FailureKind.

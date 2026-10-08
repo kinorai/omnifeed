@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/kinorai/omnifeed/internal/domain"
+	"github.com/kinorai/omnifeed/internal/engine"
 	"github.com/kinorai/omnifeed/internal/httpx"
 )
 
@@ -152,5 +153,40 @@ func TestFetch_QuotaCountsEveryRequest(t *testing.T) {
 	}
 	if len(sess.evals) != 2 {
 		t.Fatalf("browser saw %d requests, want 2 (the third must be refused before sending)", len(sess.evals))
+	}
+}
+
+// pageStub stands in for the generic browser engine.
+type pageStub struct{ called bool }
+
+func (*pageStub) Name() string        { return "crawl4ai" }
+func (*pageStub) Matches(string) bool { return false }
+func (p *pageStub) Crawl(context.Context, string, domain.EngineOptions) (domain.Document, error) {
+	p.called = true
+	return domain.Document{PageContent: "[ Skip to main content ](…)"}, nil
+}
+
+// Reddit's JSON comes from www.reddit.com, the page's own host: a 429 must
+// reach the caller as the engine's error, never as a browser render that hits
+// Reddit again (the 2026-10-08 incident) — with or without an explicit format.
+func TestRegistry_RedditRateLimitDoesNotFallBack(t *testing.T) {
+	for _, opts := range []domain.EngineOptions{{}, {RedditFormat: "json", FormatExplicit: true}} {
+		sess := &fakeSession{evalFn: func(string) (string, error) {
+			return rlEnv(429, "Too Many Requests", "30", "", "0"), nil
+		}}
+		e := New(Config{
+			Fetcher: NewFetcher(FetcherConfig{Browser: &fakeBrowser{name: "crawl4ai", session: sess}}),
+			Limiter: httpx.NewDomainLimiter(2, 0),
+		})
+		page := &pageStub{}
+		_, err := engine.New().Register(e).Fallback(page).
+			Crawl(context.Background(), "https://www.reddit.com/r/news/comments/abc123/t/", opts)
+		var fe *domain.FetchError
+		if !errors.As(err, &fe) || fe.Kind != domain.KindHTTP429 || fe.RetryAfter != 30*time.Second {
+			t.Fatalf("opts %+v: err = %v, want http_429 with RetryAfter 30s", opts, err)
+		}
+		if page.called {
+			t.Fatalf("opts %+v: fell back to a browser render of Reddit after a 429", opts)
+		}
 	}
 }
