@@ -120,7 +120,9 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, eo domain.EngineOptio
 	// "reddit.com" != "www.reddit.com".
 	release, lerr := e.limiter.Acquire(ctx, e.Name(), redditOrigin+"/")
 	if lerr != nil {
-		return domain.Document{}, lerr
+		// Classified so a hold Reddit asked for (see FetcherConfig.Penalize)
+		// reaches the caller as quota_exhausted with its retry_after_s.
+		return domain.Document{}, httpx.ClassifyClientError(lerr, domain.KindError)
 	}
 	defer release()
 
@@ -322,7 +324,9 @@ func encode[T any](v T, format string) ([]byte, error) {
 func (e *Engine) crawlListing(ctx context.Context, rawURL string, req ListingRequest, opts Options) (domain.Document, error) {
 	release, lerr := e.limiter.Acquire(ctx, e.Name(), redditOrigin+"/r/"+req.Sub+"/"+req.Sort)
 	if lerr != nil {
-		return domain.Document{}, lerr
+		// Classified so a hold Reddit asked for (see FetcherConfig.Penalize)
+		// reaches the caller as quota_exhausted with its retry_after_s.
+		return domain.Document{}, httpx.ClassifyClientError(lerr, domain.KindError)
 	}
 	defer release()
 

@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/kinorai/omnifeed/internal/domain"
 )
@@ -172,6 +173,18 @@ func TestToolsCall_ErrorMessageCarriesReasonAndStatus(t *testing.T) {
 			tool: "fetch_url",
 			err:  &domain.FetchError{Kind: domain.KindCaptcha, StatusCode: 403, Marker: "cf-challenge"},
 			want: `fetch_url failed: captcha (HTTP 403): matched block marker "cf-challenge"`,
+		},
+		{
+			// Reddit's back-off reaches the caller as a parseable hint.
+			name: "rate_limited_with_retry_after",
+			tool: "fetch_url",
+			err: &domain.FetchError{
+				Kind:       domain.KindHTTP429,
+				StatusCode: 429,
+				RetryAfter: 90 * time.Second,
+				Err:        errors.New("reddit rate limited this IP; retry in 90s"),
+			},
+			want: "fetch_url failed: http_429 (HTTP 429): reddit rate limited this IP; retry in 90s (retry_after_s=90)",
 		},
 		{
 			name: "plain_error",

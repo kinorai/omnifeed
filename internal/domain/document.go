@@ -19,6 +19,13 @@ type Document struct {
 // EngineOptions carries per-request knobs an engine may honor. Unknown fields
 // are ignored by engines that don't care.
 type EngineOptions struct {
+	// FormatExplicit is true when the caller explicitly asked for a structured
+	// format (format=json|toon), as opposed to inheriting the deployment
+	// default. Such a caller parses the reply, so a dedicated engine failing
+	// must surface its error instead of handing back the generic engine's
+	// markdown under the same success shape.
+	FormatExplicit bool
+
 	// Reddit-specific.
 	RedditKeepDepth   bool   // include depth field on comments
 	RedditKeepCreated bool   // include created field on comments

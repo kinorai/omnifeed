@@ -307,3 +307,28 @@ func TestFetchURL_CommentCapArgs(t *testing.T) {
 		t.Error("max_per_subtree missing from input schema")
 	}
 }
+
+// format marks the caller as a parser only when it is actually passed: the
+// deployment default must leave FormatExplicit false, or every agent call would
+// lose the transient-fault fallback.
+func TestFetchURL_FormatArgMarksExplicit(t *testing.T) {
+	var got domain.EngineOptions
+	reg := engine.New().Fallback(optsCapturingEngine{got: &got})
+	tool := FetchURL(reg, reddit.Options{Format: "toon"}, nil, 0)
+
+	if _, err := tool.Handle(context.Background(), map[string]any{"url": "https://example.com/"}); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if got.FormatExplicit || got.RedditFormat != "toon" {
+		t.Errorf("absent format: FormatExplicit=%v RedditFormat=%q, want false/toon", got.FormatExplicit, got.RedditFormat)
+	}
+
+	for _, f := range []string{"json", "toon"} {
+		if _, err := tool.Handle(context.Background(), map[string]any{"url": "https://example.com/", "format": f}); err != nil {
+			t.Fatalf("Handle: %v", err)
+		}
+		if !got.FormatExplicit || got.RedditFormat != f {
+			t.Errorf("format=%s: FormatExplicit=%v RedditFormat=%q, want true/%s", f, got.FormatExplicit, got.RedditFormat, f)
+		}
+	}
+}

@@ -149,7 +149,9 @@ func TestBuildEngineOptions(t *testing.T) {
 		{"expand_max", "expand=max", domain.EngineOptions{RedditFormat: "toon", RedditKeepCreated: true, RedditMaxRounds: reddit.MaxExpansionRounds}},
 		{"expand_garbage_falls_back", "expand=abc", base},
 		{"expand_negative_falls_back", "expand=-2", base},
-		{"format_json", "format=json", domain.EngineOptions{RedditFormat: "json", RedditKeepCreated: true, RedditMaxRounds: 3}},
+		// An explicit format marks the caller as a parser: no markdown fallback.
+		{"format_json", "format=json", domain.EngineOptions{RedditFormat: "json", FormatExplicit: true, RedditKeepCreated: true, RedditMaxRounds: 3}},
+		{"format_toon_explicit", "format=toon", domain.EngineOptions{RedditFormat: "toon", FormatExplicit: true, RedditKeepCreated: true, RedditMaxRounds: 3}},
 		{"format_invalid_keeps_default", "format=bogus", base},
 		{"depth_on", "depth=1", domain.EngineOptions{RedditFormat: "toon", RedditKeepDepth: true, RedditKeepCreated: true, RedditMaxRounds: 3}},
 		{"nocreated_off", "nocreated=1", domain.EngineOptions{RedditFormat: "toon", RedditKeepCreated: false, RedditMaxRounds: 3}},
