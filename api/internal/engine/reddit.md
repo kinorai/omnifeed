@@ -23,6 +23,7 @@ Package reddit implements the Reddit\-specific engine: fetches threads via the p
   - [func \(e \*Engine\) Crawl\(ctx context.Context, rawURL string, eo domain.EngineOptions\) \(domain.Document, error\)](<#Engine.Crawl>)
   - [func \(\*Engine\) Matches\(rawURL string\) bool](<#Engine.Matches>)
   - [func \(\*Engine\) Name\(\) string](<#Engine.Name>)
+  - [func \(\*Engine\) SameHostAsPage\(\) bool](<#Engine.SameHostAsPage>)
 - [type Fetcher](<#Fetcher>)
   - [func NewFetcher\(cfg FetcherConfig\) \*Fetcher](<#NewFetcher>)
   - [func \(f \*Fetcher\) Open\(ctx context.Context\) \(\*Session, error\)](<#Fetcher.Open>)
@@ -177,6 +178,15 @@ func (*Engine) Name() string
 
 Name returns the engine identifier.
 
+<a name="Engine.SameHostAsPage"></a>
+### func \(\*Engine\) SameHostAsPage
+
+```go
+func (*Engine) SameHostAsPage() bool
+```
+
+SameHostAsPage reports true: the engine's JSON comes from www.reddit.com, the page's own host, so a Reddit block must not be followed by a browser render of the same host \(domain.SameHostEngine\).
+
 <a name="Fetcher"></a>
 ## type Fetcher
 
@@ -216,6 +226,19 @@ FetcherConfig configures a Fetcher.
 ```go
 type FetcherConfig struct {
     Browser browser.Browser
+
+    // Quota, when non-nil, admits every request that reaches Reddit — the
+    // thread fetch, each /api/morechildren round, a listing, a share-link
+    // resolve — not the crawl as a whole. Reddit counts requests, and one
+    // expand=full crawl can be 40 of them. Nil disables it
+    // (OMNIFEED_REDDIT_QUOTA=0, the default).
+    Quota httpx.Limiter
+
+    // Penalize, when non-nil, is told how long Reddit asked us to stay away
+    // (Retry-After / X-Ratelimit-Reset on a 429, or when X-Ratelimit-Remaining
+    // hits 0), keyed on the Reddit origin. main.go points it at the per-domain
+    // limiter, so the next crawl waits out the block instead of extending it.
+    Penalize func(rawURL string, d time.Duration)
 }
 ```
 

@@ -10,6 +10,7 @@ Package engine defines the dispatch mechanism that picks the right per\-URL hand
 
 ## Index
 
+- [Constants](<#constants>)
 - [type Registry](<#Registry>)
   - [func New\(\) \*Registry](<#New>)
   - [func \(r \*Registry\) BlockPrivateIPs\(block bool\) \*Registry](<#Registry.BlockPrivateIPs>)
@@ -20,6 +21,14 @@ Package engine defines the dispatch mechanism that picks the right per\-URL hand
   - [func \(r \*Registry\) Register\(e domain.Engine\) \*Registry](<#Registry.Register>)
   - [func \(r \*Registry\) Resolve\(rawURL string\) domain.Engine](<#Registry.Resolve>)
 
+
+## Constants
+
+<a name="FallbackNotice"></a>FallbackNotice is the first line of a document the generic fallback rendered for a URL a dedicated engine claimed, so a reader of the text alone \(an AI agent over MCP\) knows it is not looking at the engine's output.
+
+```go
+const FallbackNotice = "> Note: the dedicated %s engine failed (%s); this is the generic page render instead.\n\n"
+```
 
 <a name="Registry"></a>
 ## type Registry

@@ -12,6 +12,7 @@ Package domain holds the core types exchanged between transports and engines. It
 
 - [Constants](<#constants>)
 - [Variables](<#variables>)
+- [func IsBlockKind\(kind FailureKind\) bool](<#IsBlockKind>)
 - [func TruncatableContentType\(contentType string\) bool](<#TruncatableContentType>)
 - [func ValidRedditSort\(s string\) bool](<#ValidRedditSort>)
 - [func ValidSiteFilter\(s string\) bool](<#ValidSiteFilter>)
@@ -24,6 +25,7 @@ Package domain holds the core types exchanged between transports and engines. It
 - [type FetchError](<#FetchError>)
   - [func \(e \*FetchError\) Error\(\) string](<#FetchError.Error>)
   - [func \(e \*FetchError\) Unwrap\(\) error](<#FetchError.Unwrap>)
+- [type SameHostEngine](<#SameHostEngine>)
 - [type SearchOptions](<#SearchOptions>)
 - [type SearchResult](<#SearchResult>)
 - [type Searcher](<#Searcher>)
@@ -72,6 +74,15 @@ var ValidRedditSorts = []string{"confidence", "top", "new", "controversial", "ol
 ```go
 var ValidTimeRanges = []string{"day", "week", "month", "year"}
 ```
+
+<a name="IsBlockKind"></a>
+## func IsBlockKind
+
+```go
+func IsBlockKind(kind FailureKind) bool
+```
+
+IsBlockKind reports whether kind is a block or rate verdict: the upstream refused us \(http\_429, http\_403, captcha, bot\_block\), or omnifeed's own pacing did \(quota\_exhausted\). Such a verdict is about the HOST that was asked, which is what decides whether a browser render of the page may follow it — see SameHostEngine.
 
 <a name="TruncatableContentType"></a>
 ## func TruncatableContentType
@@ -141,6 +152,13 @@ EngineOptions carries per\-request knobs an engine may honor. Unknown fields are
 
 ```go
 type EngineOptions struct {
+    // FormatExplicit is true when the caller explicitly asked for a structured
+    // format (format=json|toon), as opposed to inheriting the deployment
+    // default. Such a caller parses the reply, so a dedicated engine failing
+    // must surface its error instead of handing back the generic engine's
+    // markdown under the same success shape.
+    FormatExplicit bool
+
     // Reddit-specific.
     RedditKeepDepth   bool   // include depth field on comments
     RedditKeepCreated bool   // include created field on comments
@@ -229,6 +247,10 @@ type FetchError struct {
     StatusCode int
     Marker     string // matched anti-bot marker, set when Kind == KindCaptcha
     Err        error  // underlying error, if any
+    // RetryAfter is how long the upstream (or omnifeed's own pacing) asked the
+    // caller to wait before trying again; 0 when nobody said. Transports render
+    // it as retry_after_s so a caller can back off instead of hammering.
+    RetryAfter time.Duration
 }
 ```
 
@@ -249,6 +271,19 @@ func (e *FetchError) Unwrap() error
 ```
 
 Unwrap exposes the underlying error to errors.Is / errors.As.
+
+<a name="SameHostEngine"></a>
+## type SameHostEngine
+
+SameHostEngine is an optional Engine capability: SameHostAsPage reports whether the engine fetches from the same host that serves the page URL \(Reddit's in\-browser .json, a Discourse forum's own topic JSON\), as opposed to a separate API host \(api.github.com, hn.algolia.com, the Bluesky AppView\).
+
+It decides whether a block or rate verdict may be followed by the generic browser render. For a same\-host engine the render would hit the host that just refused us — or that our own pacing is holding back — and prolong the block, so it is refused. For a separate\-host engine the API's quota says nothing about the page host, so the render is still the right answer \(e.g. an anonymous GitHub deployment over its 60/h API quota renders github.com\). Engines that do not implement it are treated as separate\-host.
+
+```go
+type SameHostEngine interface {
+    SameHostAsPage() bool
+}
+```
 
 <a name="SearchOptions"></a>
 ## type SearchOptions
