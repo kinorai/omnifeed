@@ -51,6 +51,24 @@ const (
 )
 ```
 
+<a name="PartialKey"></a>Document metadata keys that more than one layer reads. Engines and the registry write them; the response cache and the transports read them.
+
+```go
+const (
+    // PartialKey is "true" on a document an engine returned successfully but
+    // incompletely (e.g. a Reddit morechildren round was blocked mid-crawl).
+    // PartialReasonKey carries the classified reason. Partial documents are
+    // never cached: the next call should get a chance at the whole thing.
+    PartialKey       = "partial"
+    PartialReasonKey = "partial_reason"
+
+    // FallbackFromKey names the dedicated engine that failed when the generic
+    // fallback rendered the document instead. A fallback render is a stand-in,
+    // so it is never cached either.
+    FallbackFromKey = "fallback_from"
+)
+```
+
 <a name="ContentTypeMarkdown"></a>Content types engines report under ContentTypeKey. The Reddit engine also reports its format knob verbatim \("json"\), which is simply not markdown.
 
 ```go
@@ -208,6 +226,12 @@ type EngineOptions struct {
     // multiple seconds and corrupts virtualized pages, so it's for feed/gallery
     // URLs specifically.
     ScanFullPage *bool
+
+    // NoCache skips the fetch_url response cache for this request: the URL is
+    // fetched fresh, and a cacheable result still refreshes the cache entry.
+    // It never changes what an engine renders, so it is not part of the cache
+    // key.
+    NoCache bool
 }
 ```
 

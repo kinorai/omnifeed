@@ -32,7 +32,7 @@ Config configures the Server.
 
 ```go
 type Config struct {
-    Registry          *engine.Registry
+    Registry          engine.Dispatcher
     Authenticator     auth.Authenticator
     Logger            *slog.Logger
     Metrics           *observability.Metrics
