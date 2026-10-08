@@ -190,6 +190,15 @@ type Config struct {
     RedditKeepCreated bool   // include the per-comment `created` timestamp
     RedditKeepDepth   bool   // include the per-comment `depth` field
 
+    // RedditQuota / RedditQuotaWindow cap requests to Reddit in a rolling
+    // window: every request, not every crawl — the thread fetch, each
+    // /api/morechildren round, listings and share-link resolves all count.
+    // Reddit's unauthenticated budget is per IP and counted in a window, which
+    // the per-domain delay alone does not bound. Shared across replicas through
+    // Redis when OMNIFEED_REDIS_URL is set. 0 disables it (the default).
+    RedditQuota       int
+    RedditQuotaWindow time.Duration
+
     // Distributed rate limiting (optional). RedisURL is the single opt-in
     // switch: unset keeps pacing entirely in process, exactly as before. Set,
     // the limiters share their state through Redis so every replica counts

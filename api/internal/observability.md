@@ -48,7 +48,7 @@ Package observability wires structured logging, Prometheus metrics, and Kubernet
 func Explain(err error) string
 ```
 
-Explain renders a failed crawl/search error as a short, caller\-safe explanation: the classified reason, the upstream HTTP status when the error carries one, and the root cause with internal endpoints redacted. Transports prefix their own context \("fetch\_url failed: " \+ Explain\(err\)\) so an MCP or HTTP client sees what metrics already know instead of an opaque failure. Returns "" only when err is nil.
+Explain renders a failed crawl/search error as a short, caller\-safe explanation: the classified reason, the upstream HTTP status when the error carries one, the root cause with internal endpoints redacted, and a trailing "\(retry\_after\_s=N\)" when the error says how long to back off. Transports prefix their own context \("fetch\_url failed: " \+ Explain\(err\)\) so an MCP or HTTP client sees what metrics already know instead of an opaque failure. Returns "" only when err is nil.
 
 <a name="NewLogger"></a>
 ## func NewLogger

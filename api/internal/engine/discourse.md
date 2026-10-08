@@ -20,6 +20,7 @@ Discourse is self\-hosted software running on arbitrary domains, so there is no 
   - [func \(e \*Engine\) Crawl\(ctx context.Context, rawURL string, \_ domain.EngineOptions\) \(domain.Document, error\)](<#Engine.Crawl>)
   - [func \(e \*Engine\) Matches\(rawURL string\) bool](<#Engine.Matches>)
   - [func \(\*Engine\) Name\(\) string](<#Engine.Name>)
+  - [func \(\*Engine\) SameHostAsPage\(\) bool](<#Engine.SameHostAsPage>)
 - [type Post](<#Post>)
 - [type Thread](<#Thread>)
 - [type Topic](<#Topic>)
@@ -88,6 +89,15 @@ func (*Engine) Name() string
 ```
 
 Name returns the engine identifier \("discourse"\).
+
+<a name="Engine.SameHostAsPage"></a>
+### func \(\*Engine\) SameHostAsPage
+
+```go
+func (*Engine) SameHostAsPage() bool
+```
+
+SameHostAsPage reports true: the engine reads the topic JSON from the forum itself, the page's own host, so a forum's block must not be followed by a browser render of the same forum \(domain.SameHostEngine\).
 
 <a name="Post"></a>
 ## type Post
