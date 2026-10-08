@@ -92,6 +92,22 @@ var siteFilterPattern = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9
 // search filter (e.g. "reddit.com", "forums.plex.tv").
 func ValidSiteFilter(s string) bool { return siteFilterPattern.MatchString(s) }
 
+// SameHostEngine is an optional Engine capability: SameHostAsPage reports
+// whether the engine fetches from the same host that serves the page URL
+// (Reddit's in-browser .json, a Discourse forum's own topic JSON), as opposed
+// to a separate API host (api.github.com, hn.algolia.com, the Bluesky AppView).
+//
+// It decides whether a block or rate verdict may be followed by the generic
+// browser render. For a same-host engine the render would hit the host that
+// just refused us — or that our own pacing is holding back — and prolong the
+// block, so it is refused. For a separate-host engine the API's quota says
+// nothing about the page host, so the render is still the right answer (e.g.
+// an anonymous GitHub deployment over its 60/h API quota renders github.com).
+// Engines that do not implement it are treated as separate-host.
+type SameHostEngine interface {
+	SameHostAsPage() bool
+}
+
 // Engine renders a single URL into a Document. Implementations should respect
 // the caller-provided ctx for cancellation and deadlines.
 type Engine interface {

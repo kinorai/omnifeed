@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -60,14 +61,18 @@ func TestRegistryCrawl_AllowsPublic(t *testing.T) {
 }
 
 // failingEngine claims every URL and always errors with kind (upstream_error
-// when unset — a transient fault the fallback may cover).
+// when unset). sameHost is its domain.SameHostEngine answer: false models an
+// API-host engine (GitHub, HN, Bluesky), true a page-host one (Reddit,
+// Discourse).
 type failingEngine struct {
-	calls int
-	kind  domain.FailureKind
+	calls    int
+	kind     domain.FailureKind
+	sameHost bool
 }
 
-func (*failingEngine) Name() string        { return "failing" }
-func (*failingEngine) Matches(string) bool { return true }
+func (f *failingEngine) SameHostAsPage() bool { return f.sameHost }
+func (*failingEngine) Name() string           { return "failing" }
+func (*failingEngine) Matches(string) bool    { return true }
 func (f *failingEngine) Crawl(context.Context, string, domain.EngineOptions) (domain.Document, error) {
 	f.calls++
 	kind := f.kind
@@ -139,37 +144,40 @@ func TestRegistryCrawl_CountsFallbacks(t *testing.T) {
 }
 
 // A caller that explicitly asked for a structured format parses the reply, so
-// a dedicated engine failing — even transiently — must surface its own error,
-// never the fallback's markdown. Regression guard for the 2026-10-08 incident:
-// a format=json Reddit request got "[ Skip to main content ](…)" back.
+// a dedicated engine failing — whatever the kind, whichever host it reads —
+// must surface its own error, never the fallback's markdown. Regression guard
+// for the 2026-10-08 incident: a format=json Reddit request got
+// "[ Skip to main content ](…)" back.
 func TestRegistryCrawl_NoFallbackOnExplicitFormat(t *testing.T) {
-	for _, kind := range []domain.FailureKind{domain.KindTimeout, domain.KindUpstreamError, domain.KindHTTP429} {
-		t.Run(string(kind), func(t *testing.T) {
-			failing, fallback := &failingEngine{kind: kind}, &stubEngine{}
-			r := New().Register(failing).Fallback(fallback)
-			_, err := r.Crawl(context.Background(), "http://8.8.8.8/",
-				domain.EngineOptions{RedditFormat: "json", FormatExplicit: true})
-			var fe *domain.FetchError
-			if !errors.As(err, &fe) || fe.Kind != kind {
-				t.Fatalf("Crawl err = %v, want the engine's %s error", err, kind)
-			}
-			if fallback.called {
-				t.Fatal("fallback ran despite an explicit structured format")
-			}
-		})
+	for _, sameHost := range []bool{false, true} {
+		for _, kind := range []domain.FailureKind{domain.KindTimeout, domain.KindUpstreamError, domain.KindHTTP429, domain.KindBadResponse} {
+			t.Run(fmt.Sprintf("sameHost=%v/%s", sameHost, kind), func(t *testing.T) {
+				failing, fallback := &failingEngine{kind: kind, sameHost: sameHost}, &stubEngine{}
+				r := New().Register(failing).Fallback(fallback)
+				_, err := r.Crawl(context.Background(), "http://8.8.8.8/",
+					domain.EngineOptions{RedditFormat: "json", FormatExplicit: true})
+				var fe *domain.FetchError
+				if !errors.As(err, &fe) || fe.Kind != kind {
+					t.Fatalf("Crawl err = %v, want the engine's %s error", err, kind)
+				}
+				if fallback.called {
+					t.Fatal("fallback ran despite an explicit structured format")
+				}
+			})
+		}
 	}
 }
 
-// Block and rate verdicts (and omnifeed's own spent quota) never fall back,
-// even for an AI-agent caller with no explicit format: the browser render
-// would hit the host that just refused us and prolong the block.
-func TestRegistryCrawl_NoFallbackOnBlockKinds(t *testing.T) {
+// A block or rate verdict (or our own spent quota) from an engine that reads
+// the page's own host never falls back: the browser render would hit the host
+// that just refused us and prolong the block.
+func TestRegistryCrawl_SameHostNoFallbackOnBlockKinds(t *testing.T) {
 	m := observability.NewMetrics()
 	for _, kind := range []domain.FailureKind{
 		domain.KindHTTP429, domain.KindHTTP403, domain.KindCaptcha, domain.KindBotBlock, domain.KindQuotaExhausted,
 	} {
 		t.Run(string(kind), func(t *testing.T) {
-			failing, fallback := &failingEngine{kind: kind}, &stubEngine{}
+			failing, fallback := &failingEngine{kind: kind, sameHost: true}, &stubEngine{}
 			r := New().Register(failing).Fallback(fallback).Metrics(m)
 			_, err := r.Crawl(context.Background(), "http://8.8.8.8/", domain.EngineOptions{})
 			var fe *domain.FetchError
@@ -177,7 +185,7 @@ func TestRegistryCrawl_NoFallbackOnBlockKinds(t *testing.T) {
 				t.Fatalf("Crawl err = %v, want the engine's %s error", err, kind)
 			}
 			if fallback.called {
-				t.Fatalf("fallback ran on a %s failure", kind)
+				t.Fatalf("fallback ran on a same-host %s failure", kind)
 			}
 			var dm dto.Metric
 			if err := m.EngineFallbacks.WithLabelValues("failing", string(kind)).Write(&dm); err != nil {
@@ -190,37 +198,59 @@ func TestRegistryCrawl_NoFallbackOnBlockKinds(t *testing.T) {
 	}
 }
 
-// A transient failure with no explicit format still falls back for an AI
-// agent, and the result says so: _meta fallback_from/fallback_reason plus one
-// notice line on top of the body.
-func TestRegistryCrawl_FallbackOnTimeoutIsMarked(t *testing.T) {
-	failing := &failingEngine{kind: domain.KindTimeout}
-	fallback := &metaStubEngine{meta: map[string]string{"source": "http://8.8.8.8/"}}
-	r := New().Register(failing).Fallback(fallback)
+// Every other (engine, kind) pair without an explicit format falls back, and
+// the result is marked: an API-host engine's block is about its API host
+// (e.g. anonymous GitHub over its 60/h quota), not the page host; and a
+// same-host engine's non-block failure is no reason to withhold the page.
+func TestRegistryCrawl_FallbackIsMarked(t *testing.T) {
+	cases := []struct {
+		sameHost bool
+		kind     domain.FailureKind
+	}{
+		{false, domain.KindHTTP403},
+		{false, domain.KindHTTP429},
+		{false, domain.KindCaptcha},
+		{false, domain.KindQuotaExhausted},
+		{false, domain.KindBadResponse},
+		{false, domain.KindError},
+		{false, domain.KindThinContent},
+		{false, domain.KindUpstreamRejected},
+		{false, domain.KindTimeout},
+		{true, domain.KindTimeout},
+		{true, domain.KindUpstreamError},
+		{true, domain.KindBadResponse},
+	}
+	for _, tc := range cases {
+		t.Run(fmt.Sprintf("sameHost=%v/%s", tc.sameHost, tc.kind), func(t *testing.T) {
+			failing := &failingEngine{kind: tc.kind, sameHost: tc.sameHost}
+			fallback := &metaStubEngine{meta: map[string]string{"source": "http://8.8.8.8/"}}
+			r := New().Register(failing).Fallback(fallback)
 
-	doc, err := r.Crawl(context.Background(), "http://8.8.8.8/", domain.EngineOptions{RedditFormat: "toon"})
-	if err != nil {
-		t.Fatalf("Crawl = %v, want the fallback's success", err)
-	}
-	if got := doc.Metadata["fallback_from"]; got != "failing" {
-		t.Errorf("fallback_from = %q, want failing", got)
-	}
-	if got := doc.Metadata["fallback_reason"]; got != "timeout" {
-		t.Errorf("fallback_reason = %q, want timeout", got)
-	}
-	if doc.Metadata["source"] != "http://8.8.8.8/" {
-		t.Errorf("fallback metadata lost: %v", doc.Metadata)
-	}
-	if _, mutated := fallback.meta["fallback_from"]; mutated {
-		t.Error("markFallback mutated the fallback engine's metadata map")
-	}
-	first, rest, _ := strings.Cut(doc.PageContent, "\n")
-	want := "> Note: the dedicated failing engine failed (timeout); this is the generic page render instead."
-	if first != want {
-		t.Errorf("first line = %q, want %q", first, want)
-	}
-	if !strings.HasSuffix(rest, "page body") {
-		t.Errorf("body lost after the notice: %q", doc.PageContent)
+			doc, err := r.Crawl(context.Background(), "http://8.8.8.8/", domain.EngineOptions{RedditFormat: "toon"})
+			if err != nil {
+				t.Fatalf("Crawl = %v, want the fallback's success", err)
+			}
+			if got := doc.Metadata["fallback_from"]; got != "failing" {
+				t.Errorf("fallback_from = %q, want failing", got)
+			}
+			if got := doc.Metadata["fallback_reason"]; got != string(tc.kind) {
+				t.Errorf("fallback_reason = %q, want %s", got, tc.kind)
+			}
+			if doc.Metadata["source"] != "http://8.8.8.8/" {
+				t.Errorf("fallback metadata lost: %v", doc.Metadata)
+			}
+			if _, mutated := fallback.meta["fallback_from"]; mutated {
+				t.Error("markFallback mutated the fallback engine's metadata map")
+			}
+			first, rest, _ := strings.Cut(doc.PageContent, "\n")
+			want := "> Note: the dedicated failing engine failed (" + string(tc.kind) + "); this is the generic page render instead."
+			if first != want {
+				t.Errorf("first line = %q, want %q", first, want)
+			}
+			if !strings.HasSuffix(rest, "page body") {
+				t.Errorf("body lost after the notice: %q", doc.PageContent)
+			}
+		})
 	}
 }
 

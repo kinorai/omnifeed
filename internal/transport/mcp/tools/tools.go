@@ -65,9 +65,9 @@ func FetchURL(reg *engine.Registry, defaults reddit.Options, metrics *observabil
 					"type": "string",
 					"description": "Reddit output format: 'toon' (default, token-efficient) or 'json'; other engines ignore the value. " +
 						"Setting it at all means you parse the reply: if a dedicated engine (Reddit, Hacker News, …) fails, you get " +
-						"its error instead of a generic page render. Without it, a timeout or upstream fault falls back to the " +
-						"generic render, marked by _meta fallback_from/fallback_reason and a note on the first line; a block or " +
-						"rate limit never falls back.",
+						"its error instead of a generic page render. Without it, a failed engine falls back to the generic render, " +
+						"marked by _meta fallback_from/fallback_reason and a note on the first line — except after a block or " +
+						"rate limit from Reddit or a Discourse forum, which returns the error.",
 					"enum": []string{"toon", "json"},
 				},
 				"expand": map[string]any{
