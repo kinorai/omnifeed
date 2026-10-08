@@ -283,7 +283,8 @@ successful results and serves repeats from the cache.
   `NOAUTH`, `WRONGPASS`) or gives any other answer that will not change on
   retry (e.g. `READONLY`, or the value is not read back), the pod logs one
   `ERROR` naming the prefix to grant and uses the in-process LRU instead. If
-  Redis does not answer (timeout, connection refused, `LOADING`), the pod keeps
+  Redis does not answer or asks to retry (timeout, connection refused, `LOADING`,
+  `OOM`, `MISCONF`), the pod keeps
   the Redis backend and the rule below applies until it does.
 - **Permission errors at runtime.** A `NOPERM`/`NOAUTH`/`WRONGPASS` on a later
   `GET` or `SET` (an ACL tightened under a running pod) does the same: one
