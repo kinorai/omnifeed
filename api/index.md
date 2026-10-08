@@ -16,6 +16,7 @@ Generated from the Go source by [gomarkdoc](https://github.com/princjef/gomarkdo
 - [internal/engine/github](internal/engine/github.md)
 - [internal/engine/hackernews](internal/engine/hackernews.md)
 - [internal/engine/reddit](internal/engine/reddit.md)
+- [internal/engine/twitter](internal/engine/twitter.md)
 - [internal/httpx](internal/httpx.md)
 - [internal/httpx/redislimit](internal/httpx/redislimit.md)
 - [internal/linkfmt](internal/linkfmt.md)

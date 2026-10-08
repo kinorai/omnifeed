@@ -30,7 +30,7 @@ const MaxFetchChars = 500000
 func FetchURL(reg *engine.Registry, defaults reddit.Options, metrics *observability.Metrics, defaultMaxChars int) mcp.Tool
 ```
 
-FetchURL returns the \`fetch\_url\` tool: URL → LLM\-friendly content via the engine registry \(Reddit engine for reddit.com, Hacker News engine for news.ycombinator.com, crawl4ai fallback for the rest\). defaultMaxChars caps markdown content when the caller omits \`max\_chars\` \(0 = unlimited\); it comes from OMNIFEED\_FETCH\_MAX\_CHARS.
+FetchURL returns the \`fetch\_url\` tool: URL → LLM\-friendly content via the engine registry \(Reddit engine for reddit.com, Hacker News engine for news.ycombinator.com, Twitter engine for X posts, crawl4ai fallback for the rest\). defaultMaxChars caps markdown content when the caller omits \`max\_chars\` \(0 = unlimited\); it comes from OMNIFEED\_FETCH\_MAX\_CHARS.
 
 <a name="WebSearch"></a>
 ## func WebSearch

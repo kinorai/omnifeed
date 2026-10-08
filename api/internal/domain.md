@@ -13,6 +13,8 @@ Package domain holds the core types exchanged between transports and engines. It
 - [Constants](<#constants>)
 - [Variables](<#variables>)
 - [func IsBlockKind\(kind FailureKind\) bool](<#IsBlockKind>)
+- [func IsNoFallback\(err error\) bool](<#IsNoFallback>)
+- [func NoFallback\(err error\) error](<#NoFallback>)
 - [func TruncatableContentType\(contentType string\) bool](<#TruncatableContentType>)
 - [func ValidRedditSort\(s string\) bool](<#ValidRedditSort>)
 - [func ValidSiteFilter\(s string\) bool](<#ValidSiteFilter>)
@@ -86,6 +88,24 @@ func IsBlockKind(kind FailureKind) bool
 ```
 
 IsBlockKind reports whether kind is a block or rate verdict: the upstream refused us \(http\_429, http\_403, captcha, bot\_block\), or omnifeed's own pacing did \(quota\_exhausted\). Such a verdict is about the HOST that was asked, which is what decides whether a browser render of the page may follow it — see SameHostEngine.
+
+<a name="IsNoFallback"></a>
+## func IsNoFallback
+
+```go
+func IsNoFallback(err error) bool
+```
+
+IsNoFallback reports whether err was marked with NoFallback.
+
+<a name="NoFallback"></a>
+## func NoFallback
+
+```go
+func NoFallback(err error) error
+```
+
+NoFallback marks err as final: the engine already ran the generic fallback itself \(on a URL it rewrote\) or knows the content does not exist, so the registry must not spend another browser render on the original URL. The message and the wrapped chain — FetchError included — are unchanged.
 
 <a name="TruncatableContentType"></a>
 ## func TruncatableContentType
