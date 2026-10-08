@@ -204,6 +204,10 @@ func TestCrawl_ErrorDocCarriesReasonAndStatus(t *testing.T) {
 			if len(got) != 1 || got[0].PageContent != tc.want {
 				t.Fatalf("page content:\n got %+v\nwant %q", got, tc.want)
 			}
+			// The stable code mirrors the MCP structuredContent verdict.
+			if m := got[0].Metadata; m["error_code"] != "upstream_error" || m["retryable"] == "" {
+				t.Fatalf("metadata = %v, want error_code upstream_error and a retryable flag", m)
+			}
 		})
 	}
 }
