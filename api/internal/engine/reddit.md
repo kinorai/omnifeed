@@ -323,10 +323,20 @@ type Post struct {
     Score       int     `json:"score" toon:"score"`
     UpvoteRatio float64 `json:"upvote_ratio" toon:"upvote_ratio"`
     NumComments int     `json:"num_comments" toon:"num_comments"`
-    Created     int64   `json:"created" toon:"created"`
-    URL         string  `json:"url" toon:"url"`
-    Selftext    string  `json:"selftext,omitempty" toon:"selftext,omitempty"`
-    Permalink   string  `json:"permalink" toon:"permalink"`
+    // Thread totals, set only on a thread's post header (nil, so omitted, on
+    // subreddit listings). They sit in the body because AI agents see the TOON
+    // text, not the response _meta. TotalComments is Reddit's num_comments
+    // (deleted/removed included); ReturnedComments is the comments emitted;
+    // HiddenMore is the sum of the remaining "more" gaps' counts; Truncated is
+    // true when omnifeed's caps dropped comments or any gap is left unexpanded.
+    TotalComments    *int   `json:"total_comments,omitempty" toon:"total_comments,omitempty"`
+    ReturnedComments *int   `json:"returned_comments,omitempty" toon:"returned_comments,omitempty"`
+    HiddenMore       *int   `json:"hidden_more,omitempty" toon:"hidden_more,omitempty"`
+    Truncated        *bool  `json:"truncated,omitempty" toon:"truncated,omitempty"`
+    Created          int64  `json:"created" toon:"created"`
+    URL              string `json:"url" toon:"url"`
+    Selftext         string `json:"selftext,omitempty" toon:"selftext,omitempty"`
+    Permalink        string `json:"permalink" toon:"permalink"`
 }
 ```
 

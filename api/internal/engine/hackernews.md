@@ -28,10 +28,13 @@ Unlike the Reddit and generic engines, this engine fetches its upstream DIRECTLY
 
 ## Constants
 
-<a name="MaxThreadComments"></a>MaxThreadComments is the ceiling on comments emitted for one thread, so a megathread can't blow the consumer's context. A caller's max\_comments can only lower it. Exported because the fetch\_url tool schema states the number.
+<a name="DefaultThreadComments"></a>DefaultThreadComments is the cap on comments emitted for one thread when the caller sets no max\_comments, so a megathread can't blow the consumer's context by default. AbsoluteMaxThreadComments is the most a caller can ask for: Algolia returns the whole tree in one request, so a bigger cap costs no extra fetches. Exported because the fetch\_url tool schema states both numbers.
 
 ```go
-const MaxThreadComments = 500
+const (
+    DefaultThreadComments     = 500
+    AbsoluteMaxThreadComments = 5000
+)
 ```
 
 <a name="Comment"></a>
@@ -136,7 +139,12 @@ type Item struct {
     URL     string `json:"url,omitempty" toon:"url,omitempty"`
     Points  int    `json:"points" toon:"points"`
     Created int64  `json:"created" toon:"created"`
-    Text    string `json:"text,omitempty" toon:"text,omitempty"`
+    // TotalComments is how many live comments the Algolia tree held before any
+    // cap; Truncated reports whether the caps dropped some of them. They sit in
+    // the body because AI agents see the TOON text, not the response _meta.
+    TotalComments int    `json:"total_comments" toon:"total_comments"`
+    Truncated     bool   `json:"truncated" toon:"truncated"`
+    Text          string `json:"text,omitempty" toon:"text,omitempty"`
 }
 ```
 
