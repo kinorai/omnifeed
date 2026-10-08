@@ -10,6 +10,7 @@ func TestLink(t *testing.T) {
 		{"unicode ellipsis", "example.com/a/very…", "https://example.com/a/very/long", "https://example.com/a/very/long"},
 		{"schemeless prefix", "example.com/a", "https://example.com/a", "https://example.com/a"},
 		{"www stripped prefix", "example.com", "http://www.example.com/", "http://www.example.com/"},
+		{"ellipsis on a label keeps it", "Continue reading…", "https://go.dev/blog/x", "[Continue reading…](https://go.dev/blog/x)"},
 		{"custom text", "the Go blog", "https://go.dev/blog", "[the Go blog](https://go.dev/blog)"},
 		{"custom text trimmed", "  the blog ", "https://go.dev/blog", "[the blog](https://go.dev/blog)"},
 		{"empty text", "", "https://go.dev/", "https://go.dev/"},
