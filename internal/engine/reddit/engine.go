@@ -164,9 +164,18 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, eo domain.EngineOptio
 		return domain.Document{}, fmt.Errorf("parse thread: %w", err)
 	}
 
-	rounds := e.expandGaps(ctx, sess, &thread, opts)
+	rounds, partialReason := e.expandGaps(ctx, sess, &thread, opts)
 	if e.metrics != nil {
 		e.metrics.RedditRounds.Observe(float64(rounds))
+	}
+	// A round that failed mid-crawl (block, rate limit, timeout) leaves gaps
+	// the caller asked us to fill. The crawl still succeeds with what it has,
+	// but says so — in _meta for clients and in the body for agents that only
+	// read text — and the response cache refuses to keep it.
+	missing := 0
+	if partialReason != "" {
+		missing = missingReplies(thread.Gaps)
+		thread.Note = fmt.Sprintf("%d more replies could not be loaded (%s)", missing, partialReason)
 	}
 
 	// Post-fetch size caps: applied after expansion so they bound the final
@@ -199,22 +208,43 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, eo domain.EngineOptio
 		"rounds", rounds,
 		"comments", len(thread.Comments),
 		"gaps_left", len(thread.Gaps),
+		"partial_reason", partialReason,
 		"format", opts.Format,
 		"bytes", len(encoded),
 	)
 
-	return domain.Document{
-		PageContent: string(encoded),
-		Metadata: map[string]string{
-			"source":              "https://www.reddit.com" + thread.Post.Permalink,
-			"status_code":         "200",
-			"format":              opts.Format,
-			domain.ContentTypeKey: opts.Format,
-			"comments":            strconv.Itoa(len(thread.Comments)),
-			"gaps":                strconv.Itoa(len(thread.Gaps)),
-			"total_comments":      strconv.Itoa(thread.Post.NumComments),
-		},
-	}, nil
+	meta := map[string]string{
+		"source":              "https://www.reddit.com" + thread.Post.Permalink,
+		"status_code":         "200",
+		"format":              opts.Format,
+		domain.ContentTypeKey: opts.Format,
+		"comments":            strconv.Itoa(len(thread.Comments)),
+		"gaps":                strconv.Itoa(len(thread.Gaps)),
+		"total_comments":      strconv.Itoa(thread.Post.NumComments),
+	}
+	if partialReason != "" {
+		meta[domain.PartialKey] = "true"
+		meta[domain.PartialReasonKey] = partialReason
+		meta["missing_replies"] = strconv.Itoa(missing)
+	}
+	return domain.Document{PageContent: string(encoded), Metadata: meta}, nil
+}
+
+// missingReplies counts the replies still behind "more" gaps: Reddit's own
+// descendant count when it gave one, else the number of child IDs.
+func missingReplies(gaps []Gap) int {
+	n := 0
+	for _, g := range gaps {
+		if g.Type != "more" {
+			continue
+		}
+		if g.Count > 0 {
+			n += g.Count
+		} else {
+			n += len(g.Children)
+		}
+	}
+	return n
 }
 
 // resolveOptions merges per-request options on top of the engine's defaults.
@@ -269,8 +299,11 @@ func (e *Engine) resolveOptions(eo domain.EngineOptions) Options {
 }
 
 // expandGaps walks the gap list and calls /api/morechildren up to
-// opts.MaxRounds times. Returns the number of rounds actually performed.
-func (e *Engine) expandGaps(ctx context.Context, sess *Session, thread *Thread, opts Options) int {
+// opts.MaxRounds times. It returns the number of rounds actually performed and,
+// when a round failed before the budget or the gaps ran out, the classified
+// reason (e.g. "http_429", "timeout", "parse_error"); "" means the expansion
+// was not cut short by a failure.
+func (e *Engine) expandGaps(ctx context.Context, sess *Session, thread *Thread, opts Options) (int, string) {
 	linkFullID := kindPostPrefix + thread.Post.ID
 	rounds := 0
 	for round := 0; round < opts.MaxRounds; round++ {
@@ -298,12 +331,12 @@ func (e *Engine) expandGaps(ctx context.Context, sess *Session, thread *Thread, 
 		moreJSON, err := sess.FetchMoreChildren(ctx, linkFullID, batchIDs, opts.Sort)
 		if err != nil {
 			e.logger.Warn("morechildren round failed", "round", round, "err", err)
-			break
+			return rounds, observability.Reason(err)
 		}
 		newComments, newGaps, perr := ParseMoreChildren(moreJSON, opts)
 		if perr != nil {
 			e.logger.Warn("morechildren parse failed", "round", round, "err", perr)
-			break
+			return rounds, "parse_error"
 		}
 		MergeExpanded(thread, newComments, newGaps, batchIDs, usedGapIdx)
 		rounds = round + 1
@@ -311,7 +344,7 @@ func (e *Engine) expandGaps(ctx context.Context, sess *Session, thread *Thread, 
 			break
 		}
 	}
-	return rounds
+	return rounds, ""
 }
 
 // encode serializes v as TOON (default) or JSON. Generic over the output shape

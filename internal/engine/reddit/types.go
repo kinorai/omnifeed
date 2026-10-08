@@ -60,6 +60,10 @@ type Gap struct {
 
 // Thread groups a Reddit post with its comment tree and remaining gaps.
 type Thread struct {
+	// Note is set only when the crawl came back incomplete (a morechildren
+	// round failed mid-expansion). It is the FIRST field so it is the first
+	// line an agent reads in TOON and the first key in JSON.
+	Note     string    `json:"note,omitempty" toon:"note,omitempty"`
 	Post     Post      `json:"post" toon:"post"`
 	Comments []Comment `json:"comments" toon:"comments"`
 	Gaps     []Gap     `json:"gaps,omitempty" toon:"gaps,omitempty"`
