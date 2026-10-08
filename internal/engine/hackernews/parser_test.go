@@ -25,6 +25,95 @@ func TestCleanHTML(t *testing.T) {
 	}
 }
 
+// HN anchors must keep their real target: Algolia's comment HTML shortens long
+// URLs in the visible text, so stripping the tag alone produced dead links.
+// Inputs are the shapes Algolia actually returns (entity-encoded "/" as &#x2F;,
+// rel="nofollow", <p> with no closing tag).
+func TestCleanHTMLLinks(t *testing.T) {
+	cases := []struct{ name, in, want string }{
+		{
+			name: "shortened link keeps the full href",
+			in:   `Report: <a href="https:&#x2F;&#x2F;www-cdn.anthropic.com&#x2F;fc1b44717c85dc068bc6ba50242199f4c1a1a7f4.pdf" rel="nofollow">https:&#x2F;&#x2F;www-cdn.anthropic.com&#x2F;fc1b44717c85dc068bc6ba50242199...</a>`,
+			want: "Report: https://www-cdn.anthropic.com/fc1b44717c85dc068bc6ba50242199f4c1a1a7f4.pdf",
+		},
+		{
+			name: "unicode ellipsis shortening",
+			in:   `<a href="https:&#x2F;&#x2F;example.com&#x2F;a&#x2F;very&#x2F;long&#x2F;path">example.com&#x2F;a&#x2F;very…</a>`,
+			want: "https://example.com/a/very/long/path",
+		},
+		{
+			name: "short link where text equals href",
+			in:   `see <a href="https:&#x2F;&#x2F;go.dev&#x2F;doc" rel="nofollow">https:&#x2F;&#x2F;go.dev&#x2F;doc</a> first`,
+			want: "see https://go.dev/doc first",
+		},
+		{
+			name: "text is a prefix of the href",
+			in:   `<a href="https:&#x2F;&#x2F;go.dev&#x2F;doc&#x2F;faq" rel="nofollow">https:&#x2F;&#x2F;go.dev&#x2F;doc</a>`,
+			want: "https://go.dev/doc/faq",
+		},
+		{
+			name: "custom text becomes a markdown link",
+			in:   `read <a href="https:&#x2F;&#x2F;go.dev&#x2F;blog" rel="nofollow">the Go blog</a>.`,
+			want: "read [the Go blog](https://go.dev/blog).",
+		},
+		{
+			name: "href entities decoded exactly once",
+			in:   `<a href="https:&#x2F;&#x2F;www.google.com&#x2F;search?q=a&amp;hl=en&amp;x=a%26b&amp;amp" rel="nofollow">https:&#x2F;&#x2F;www.google.com&#x2F;search?q=a&amp;hl=en&amp;x=a%26b&amp;amp</a>`,
+			want: "https://www.google.com/search?q=a&hl=en&x=a%26b&amp",
+		},
+		{
+			name: "multiple links in one comment",
+			in:   `<p>A: <a href="https:&#x2F;&#x2F;a.example&#x2F;one&#x2F;two&#x2F;three" rel="nofollow">https:&#x2F;&#x2F;a.example&#x2F;one&#x2F;tw...</a><p>B: <a href="https:&#x2F;&#x2F;b.example" rel="nofollow">https:&#x2F;&#x2F;b.example</a> and <a href="https:&#x2F;&#x2F;c.example&#x2F;x">this</a>`,
+			want: "A: https://a.example/one/two/three\n\nB: https://b.example and [this](https://c.example/x)",
+		},
+		{
+			name: "link inside italics",
+			in:   `<i>see <a href="https:&#x2F;&#x2F;example.com&#x2F;long&#x2F;path&#x2F;here" rel="nofollow">https:&#x2F;&#x2F;example.com&#x2F;long&#x2F;pa...</a></i>`,
+			want: "see https://example.com/long/path/here",
+		},
+		{
+			name: "italics inside custom link text",
+			in:   `<a href="https:&#x2F;&#x2F;example.com&#x2F;x"><i>the paper</i></a>`,
+			want: "[the paper](https://example.com/x)",
+		},
+		{
+			name: "link text with entities compared decoded",
+			in:   `<a href="https:&#x2F;&#x2F;example.com&#x2F;?a=1&amp;b=2">https:&#x2F;&#x2F;example.com&#x2F;?a=1&amp;b=2</a>`,
+			want: "https://example.com/?a=1&b=2",
+		},
+		{
+			name: "anchor without href keeps its text",
+			in:   `<a name="x">anchor</a> text`,
+			want: "anchor text",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := cleanHTML(tc.in); got != tc.want {
+				t.Errorf("cleanHTML(%q)\n got %q\nwant %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// The story's own text (Ask HN / Show HN) goes through the same path.
+func TestParseThreadStoryTextLinks(t *testing.T) {
+	raw := []byte(`{"id":1,"type":"story","title":"Ask HN: x","author":"op","created_at_i":1,
+		"text":"<p>Context: <a href=\"https:&#x2F;&#x2F;www-cdn.anthropic.com&#x2F;fc1b44717c85dc068bc6ba50242199f4c1a1a7f4.pdf\" rel=\"nofollow\">https:&#x2F;&#x2F;www-cdn.anthropic.com&#x2F;fc1b44717c85dc068bc6ba50242199...</a>",
+		"children":[{"id":2,"type":"comment","author":"a","created_at_i":2,
+			"text":"Also <a href=\"https:&#x2F;&#x2F;go.dev&#x2F;blog\" rel=\"nofollow\">this post</a>","children":[]}]}`)
+	th, err := parseThread(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "Context: https://www-cdn.anthropic.com/fc1b44717c85dc068bc6ba50242199f4c1a1a7f4.pdf"; th.Story.Text != want {
+		t.Errorf("story text = %q, want %q", th.Story.Text, want)
+	}
+	if len(th.Comments) != 1 || th.Comments[0].Body != "Also [this post](https://go.dev/blog)" {
+		t.Errorf("comments = %+v", th.Comments)
+	}
+}
+
 // flattenComments must produce a pre-order, parent_id-linked list and skip
 // deleted nodes while preserving their subtree's structure.
 func TestFlattenComments(t *testing.T) {
