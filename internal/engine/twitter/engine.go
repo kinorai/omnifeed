@@ -185,6 +185,11 @@ func (e *Engine) crawlPost(ctx context.Context, rawURL, id string, opts domain.E
 	if e.generic == nil {
 		return domain.Document{}, failed.classify()
 	}
+	if opts.FormatExplicit {
+		// The caller parses TOON/JSON: an x.com page render (markdown) under
+		// the same success shape would break it, here or in the registry.
+		return domain.Document{}, domain.NoFallback(failed.classify())
+	}
 
 	canonical := canonicalURL(id)
 	doc, gerr := e.generic.Crawl(ctx, canonical, opts)
@@ -299,7 +304,9 @@ func (e *Engine) resolveShortLink(ctx context.Context, rawURL string) (string, e
 	}
 	dest := loc.String()
 	if err := httpx.ValidateURL(dest, e.blockPrivate); err != nil {
-		return "", &domain.FetchError{Kind: domain.KindError, Err: fmt.Errorf("t.co destination rejected: %w", err)}
+		// Final: the registry's fallback would hand the t.co URL to a browser
+		// that follows the redirect to the destination just rejected.
+		return "", domain.NoFallback(&domain.FetchError{Kind: domain.KindError, Err: fmt.Errorf("t.co destination rejected: %w", err)})
 	}
 	return dest, nil
 }
