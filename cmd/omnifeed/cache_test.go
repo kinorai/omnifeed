@@ -8,6 +8,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
+	dto "github.com/prometheus/client_model/go"
+	"github.com/redis/go-redis/v9"
+
 	"github.com/kinorai/omnifeed/internal/config"
 	"github.com/kinorai/omnifeed/internal/domain"
 	"github.com/kinorai/omnifeed/internal/engine"
@@ -46,5 +50,37 @@ func TestFetchCacheWiring(t *testing.T) {
 	}
 	if threadCalls.Load() != 2 {
 		t.Errorf("thread engine calls = %d, want 2 (threads TTL 0 = uncached)", threadCalls.Load())
+	}
+}
+
+// The 2026-10-08 wiring: a Redis whose ACL user may not touch the cache prefix.
+// fetchCache probes it at build time and serves from the in-process LRU, so a
+// repeated fetch is a hit (in the incident, every one was a miss).
+func TestFetchCacheWiring_RedisNOPERMFallsBackToMemory(t *testing.T) {
+	mr := miniredis.RunT(t)
+	mr.SetError("NOPERM No permissions to access a key")
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr(), MaxRetries: -1})
+	t.Cleanup(func() { _ = rdb.Close() })
+
+	var calls atomic.Int32
+	thread := countedEngine{name: "reddit", calls: &calls}
+	reg := engine.New().Register(thread).Fallback(countedEngine{name: "crawl4ai", calls: new(atomic.Int32)})
+	cfg := config.Config{CacheTTLThreads: time.Minute, CacheTTLPages: time.Hour, CacheMaxBytes: 1 << 20,
+		CacheMaxItemBytes: 1 << 20, CacheKeyPrefix: "omnifeed:cache", RedisTimeout: 250 * time.Millisecond}
+	m := observability.NewMetrics()
+	c := fetchCache(cfg, reg, rdb, m, slog.New(slog.NewTextHandler(io.Discard, nil)), thread)
+
+	for i, want := range []string{fetchcache.ResultMiss, fetchcache.ResultHit, fetchcache.ResultHit, fetchcache.ResultHit} {
+		doc, err := c.Crawl(context.Background(), "https://www.reddit.com/r/x/comments/abc/", domain.EngineOptions{})
+		if err != nil || doc.Metadata[fetchcache.MetaCache] != want || doc.Metadata[fetchcache.MetaCachedAt] == "" {
+			t.Fatalf("fetch %d: err=%v meta=%v, want %s with cached_at", i, err, doc.Metadata, want)
+		}
+	}
+	if calls.Load() != 1 {
+		t.Errorf("engine calls = %d, want 1", calls.Load())
+	}
+	var g dto.Metric
+	if err := m.CacheBackend.WithLabelValues("memory").Write(&g); err != nil || g.GetGauge().GetValue() != 1 {
+		t.Errorf(`omnifeed_cache_backend{backend="memory"} = %v (err %v), want 1`, g.GetGauge().GetValue(), err)
 	}
 }

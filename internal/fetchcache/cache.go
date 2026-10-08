@@ -12,7 +12,8 @@
 // (domain.PartialKey) are never stored, so the next caller gets a fresh chance
 // at the real thing. Concurrent identical requests share one upstream fetch
 // (singleflight). Backend failures degrade to a miss, never to a failed
-// request.
+// request; a Redis that refuses the cache's keys (ACL) is replaced by the
+// in-process backend (Failover).
 package fetchcache
 
 import (

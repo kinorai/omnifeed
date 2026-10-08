@@ -37,6 +37,8 @@ type Metrics struct {
 	SearchEngineUnique  *prometheus.CounterVec   // engine
 	CacheRequests       *prometheus.CounterVec   // result
 	CacheBytes          prometheus.Gauge
+	CacheBackend        *prometheus.GaugeVec   // backend
+	CacheBackendErrors  *prometheus.CounterVec // op, kind
 }
 
 // NewMetrics builds and registers all collectors.
@@ -165,13 +167,22 @@ func NewMetrics() *Metrics {
 			Name: "omnifeed_cache_bytes",
 			Help: "Approximate bytes held by the in-process fetch_url response cache (LRU backend only; the Redis backend is shared and not measured per pod).",
 		}),
+		CacheBackend: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "omnifeed_cache_backend",
+			Help: `The fetch_url response cache's active backend: 1 on "redis" or "memory", 0 on the other. memory with OMNIFEED_REDIS_URL set means Redis refused the cache (see omnifeed_cache_backend_errors_total{kind="noperm"}).`,
+		}, []string{"backend"}),
+		CacheBackendErrors: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "omnifeed_cache_backend_errors_total",
+			Help: `Redis errors in the fetch_url response cache by op (get|set|probe) and kind: noperm (ACL/auth refusal; the cache switches to the in-process backend), transient (timeout, refused connection…; cooldown and retry), other (startup probe: an answer the cache cannot use).`,
+		}, []string{"op", "kind"}),
 	}
 	reg.MustRegister(m.RequestsTotal, m.RequestAttempts, m.RequestSecs, m.UpstreamSecs,
 		m.LimiterWaitSecs, m.RatelimitErrors, m.RatelimitPenalties, m.RatelimitDegraded,
 		m.ResponseChars, m.EngineFallbacks, m.SearxngUnresponsive,
 		m.SearxngEngineHits, m.SearxngEmpty, m.SearxngQueries, m.SearxngEngineZero,
 		m.RedditRounds, m.SearchesTotal, m.SearchSecs,
-		m.SearchEnginePos, m.SearchEngineUnique, m.CacheRequests, m.CacheBytes)
+		m.SearchEnginePos, m.SearchEngineUnique, m.CacheRequests, m.CacheBytes,
+		m.CacheBackend, m.CacheBackendErrors)
 	reg.MustRegister(
 		collectors.NewGoCollector(),
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
@@ -260,6 +271,24 @@ func (m *Metrics) ObserveCache(result string) {
 // SetCacheBytes publishes the in-process response cache's approximate size.
 func (m *Metrics) SetCacheBytes(n int) {
 	m.CacheBytes.Set(float64(n))
+}
+
+// SetCacheBackend marks name (redis|memory) as the response cache's active
+// backend.
+func (m *Metrics) SetCacheBackend(name string) {
+	for _, b := range []string{"redis", "memory"} {
+		v := 0.0
+		if b == name {
+			v = 1
+		}
+		m.CacheBackend.WithLabelValues(b).Set(v)
+	}
+}
+
+// ObserveCacheBackendError counts one response-cache Redis error by op
+// (get|set|probe) and kind (noperm|transient|other).
+func (m *Metrics) ObserveCacheBackendError(op, kind string) {
+	m.CacheBackendErrors.WithLabelValues(op, kind).Inc()
 }
 
 // ObserveFallback counts one engine→generic-fallback handoff: fromEngine is the

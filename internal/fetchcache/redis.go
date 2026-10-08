@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -21,6 +22,23 @@ var ErrUnavailable = errors.New("fetch cache backend unavailable (cooling down)"
 // ErrTooLarge is returned by Set for an entry over the backend's item cap. The
 // response is still served; it just is not cached.
 var ErrTooLarge = errors.New("fetch cache entry over the item size cap")
+
+// ErrPermission wraps a Redis error that retrying will not fix: the ACL user
+// may not touch the cache's keys (NOPERM), or the connection is not
+// authenticated (NOAUTH, WRONGPASS). It does not trip the cooldown — a
+// Failover answers it by switching to its in-process backend for good.
+var ErrPermission = errors.New("fetch cache: redis permission denied")
+
+// Kinds of backend error, the values of the
+// omnifeed_cache_backend_errors_total `kind` label.
+const (
+	ErrKindNoPerm    = "noperm"    // permission/auth: permanent until the ACL changes
+	ErrKindTransient = "transient" // timeouts, refused connections, LOADING…: cooldown and retry
+	ErrKindOther     = "other"     // startup probe only: Redis answered, but not as a cache can use
+)
+
+// probeTTL bounds how long the startup probe's key outlives a crashed probe.
+const probeTTL = 10 * time.Second
 
 // defaultCooldown matches the rate limiter's fail-open cooldown: a dead Redis
 // costs one operation timeout per cooldown, not one per request.
@@ -37,6 +55,7 @@ type Redis struct {
 	maxItem  int
 	cooldown time.Duration
 	now      func() time.Time
+	onError  func(op, kind string)
 
 	downUntil atomic.Int64 // unix nanos; 0 = healthy
 }
@@ -48,6 +67,11 @@ type RedisConfig struct {
 	MaxItemBytes int              // compressed size cap per entry; <= 0 = no cap
 	Cooldown     time.Duration    // defaults to 30s
 	Now          func() time.Time // defaults to time.Now
+	// OnError, when set, is called once per Redis error with the operation
+	// ("get", "set", "probe") and its kind (ErrKindNoPerm, ErrKindTransient,
+	// ErrKindOther). Cooldown fast-fails, oversize entries, corrupt values
+	// and callers hanging up are not Redis errors and are not reported.
+	OnError func(op, kind string)
 }
 
 // NewRedis builds a Redis backend.
@@ -58,7 +82,11 @@ func NewRedis(cfg RedisConfig) *Redis {
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
-	return &Redis{client: cfg.Client, prefix: cfg.Prefix, maxItem: cfg.MaxItemBytes, cooldown: cfg.Cooldown, now: cfg.Now}
+	if cfg.OnError == nil {
+		cfg.OnError = func(string, string) {}
+	}
+	return &Redis{client: cfg.Client, prefix: cfg.Prefix, maxItem: cfg.MaxItemBytes,
+		cooldown: cfg.Cooldown, now: cfg.Now, onError: cfg.OnError}
 }
 
 // Get reads and decodes key.
@@ -79,8 +107,7 @@ func (r *Redis) Get(ctx context.Context, key string) (Entry, bool, error) {
 		if ctx.Err() != nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
 			return Entry{}, false, ctx.Err()
 		}
-		r.trip()
-		return Entry{}, false, fmt.Errorf("redis get: %w", err)
+		return Entry{}, false, r.fail("get", err)
 	}
 	e, err := decode(b)
 	if err != nil {
@@ -103,10 +130,87 @@ func (r *Redis) Set(ctx context.Context, key string, e Entry, ttl time.Duration)
 		return ErrTooLarge
 	}
 	if err := r.client.Set(ctx, r.prefix+":"+key, b, ttl).Err(); err != nil {
-		r.trip()
-		return fmt.Errorf("redis set: %w", err)
+		return r.fail("set", err)
 	}
 	return nil
+}
+
+// fail classifies a Redis error from op. A permission error is permanent and
+// is returned wrapped in ErrPermission without a cooldown (the Failover above
+// stops calling Redis); anything else trips the cooldown, as before.
+func (r *Redis) fail(op string, err error) error {
+	if isPermission(err) {
+		r.onError(op, ErrKindNoPerm)
+		return fmt.Errorf("redis %s: %w: %w", op, ErrPermission, err)
+	}
+	r.onError(op, ErrKindTransient)
+	r.trip()
+	return fmt.Errorf("redis %s: %w", op, err)
+}
+
+// isPermission reports an ACL or authentication refusal: retrying the same
+// command as the same user gets the same answer until an operator steps in.
+func isPermission(err error) bool {
+	if redis.IsPermissionError(err) || redis.IsAuthError(err) {
+		return true
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "no permissions")
+}
+
+// errProbeMismatch: the probe's SET was accepted but its GET did not return
+// the value — something between omnifeed and Redis (a proxy, a renamed
+// command) is not storing what the cache writes.
+var errProbeMismatch = errors.New("probe value not read back")
+
+// Probe checks, once at startup, that this Redis user can do what the cache
+// does: SET a key under the prefix (with a short TTL, so nothing needs
+// deleting) and GET it back. Each command is bounded by timeout. The returned
+// kind is "" on success, ErrKindNoPerm for a permission error, ErrKindOther for
+// any other answer Redis will keep giving (an error reply such as READONLY or
+// an unknown command, or a value not read back), and ErrKindTransient for a
+// Redis that did not answer (timeout, refused connection) or answered with a
+// retryable error (LOADING, TRYAGAIN, BUSY, CLUSTERDOWN, MASTERDOWN).
+func (r *Redis) Probe(ctx context.Context, timeout time.Duration) (kind string, err error) {
+	key := r.prefix + ":probe:" + fmt.Sprint(r.now().UnixNano())
+	want := "ok"
+	defer func() {
+		if kind != "" {
+			r.onError("probe", kind)
+		}
+	}()
+	setCtx, cancel := context.WithTimeout(ctx, timeout)
+	err = r.client.Set(setCtx, key, want, probeTTL).Err()
+	cancel()
+	if err != nil {
+		return probeKind(err), fmt.Errorf("redis probe set %s: %w", key, err)
+	}
+	getCtx, cancel := context.WithTimeout(ctx, timeout)
+	got, err := r.client.Get(getCtx, key).Result()
+	cancel()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return probeKind(err), fmt.Errorf("redis probe get %s: %w", key, err)
+	}
+	if got != want {
+		return ErrKindOther, fmt.Errorf("redis probe get %s: %w", key, errProbeMismatch)
+	}
+	return "", nil
+}
+
+func probeKind(err error) string {
+	if isPermission(err) {
+		return ErrKindNoPerm
+	}
+	var rerr redis.Error
+	if !errors.As(err, &rerr) {
+		return ErrKindTransient // no reply at all: network, timeout, dial
+	}
+	msg := rerr.Error()
+	for _, p := range []string{"LOADING", "TRYAGAIN", "BUSY", "CLUSTERDOWN", "MASTERDOWN"} {
+		if strings.HasPrefix(msg, p) {
+			return ErrKindTransient
+		}
+	}
+	return ErrKindOther
 }
 
 func (r *Redis) coolingDown() bool {
