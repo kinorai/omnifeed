@@ -263,3 +263,31 @@ func (*metaStubEngine) Matches(string) bool { return false }
 func (s *metaStubEngine) Crawl(context.Context, string, domain.EngineOptions) (domain.Document, error) {
 	return domain.Document{PageContent: "page body", Metadata: s.meta}, nil
 }
+
+// finalEngine claims every URL and fails with an error marked
+// domain.NoFallback — an engine that already ran the fallback itself.
+type finalEngine struct{}
+
+func (*finalEngine) Name() string        { return "final" }
+func (*finalEngine) Matches(string) bool { return true }
+func (*finalEngine) Crawl(context.Context, string, domain.EngineOptions) (domain.Document, error) {
+	return domain.Document{}, domain.NoFallback(&domain.FetchError{Kind: domain.KindError, StatusCode: 404})
+}
+
+// An error marked NoFallback comes back as-is: the fallback is not run again
+// on the original URL, and the classified FetchError is still reachable.
+func TestRegistryCrawl_NoFallbackIsFinal(t *testing.T) {
+	fallback := &stubEngine{}
+	r := New().Register(&finalEngine{}).Fallback(fallback)
+
+	_, err := r.Crawl(context.Background(), "http://8.8.8.8/", domain.EngineOptions{})
+	if err == nil {
+		t.Fatal("Crawl = nil error, want the engine's final error")
+	}
+	if fallback.called {
+		t.Fatal("fallback ran despite a NoFallback error")
+	}
+	if got := observability.Reason(err); got != string(domain.KindError) {
+		t.Fatalf("Reason = %q, want %q", got, domain.KindError)
+	}
+}

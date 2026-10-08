@@ -95,7 +95,7 @@ func (r *Registry) Crawl(ctx context.Context, rawURL string, opts domain.EngineO
 		// gone: the fallback would only burn a browser render on a dead request.
 		if err != nil && r.fallback != nil && ctx.Err() == nil {
 			reason := observability.Reason(err)
-			if why := fallbackRefused(e, opts, reason); why != "" {
+			if why := fallbackRefused(e, opts, err, reason); why != "" {
 				r.logger.Warn("engine failed, not falling back to generic crawl",
 					"engine", e.Name(), "url", rawURL, "reason", reason, "why", why, "err", err)
 				return doc, err
@@ -139,7 +139,14 @@ func (r *Registry) Crawl(ctx context.Context, rawURL string, opts domain.EngineO
 // "[ Skip to main content ](…)" to a JSON caller and kept the IP blocked. A
 // separate-host engine's block is about its API host, not the page host, so
 // the render still follows it.
-func fallbackRefused(e domain.Engine, opts domain.EngineOptions, reason string) string {
+//
+// An engine that already ran the generic render itself (on a URL it rewrote),
+// or knows the content is gone, marks its error final (domain.NoFallback): a
+// second render of the original URL would only repeat the work.
+func fallbackRefused(e domain.Engine, opts domain.EngineOptions, err error, reason string) string {
+	if domain.IsNoFallback(err) {
+		return "engine marked its error final"
+	}
 	if opts.FormatExplicit {
 		return "explicit structured format requested"
 	}
