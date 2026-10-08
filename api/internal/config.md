@@ -178,6 +178,14 @@ type Config struct {
     // goes to the generic browser fallback.
     DiscourseHosts []string
 
+    // Twitter/X engine. TwitterEnabled off sends every x.com/twitter.com URL
+    // to the generic fallback. TwitterFxTwitterURL is the FxTwitter API base —
+    // the public api.fxtwitter.com, or a self-hosted FxEmbed. TwitterMaxReplies
+    // caps the replies rendered under a post.
+    TwitterEnabled      bool
+    TwitterFxTwitterURL string
+    TwitterMaxReplies   int
+
     // Reddit engine defaults.
     RedditTimeout     time.Duration
     RedditMaxRounds   int
