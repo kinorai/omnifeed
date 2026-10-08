@@ -8,7 +8,7 @@ message is for humans and changes wording between releases.
 
 | Code | Meaning | Retryable | What to do |
 | --- | --- | --- | --- |
-| `rate_limited` | The site (or an API it sits behind) answered HTTP 429. | yes | Wait `retry_after_s` when given, then retry. |
+| `rate_limited` | The site (or an API it sits behind) answered HTTP 429. | yes | Back off, then retry (no `retry_after_s`: the upstream's `Retry-After` is not forwarded). |
 | `blocked` | The site refused the request: HTTP 403, or a bot wall without a clean status. | no | Use another URL or source. |
 | `captcha` | A CAPTCHA or human-verification challenge was served in place of the page. | no | Use another URL or source. |
 | `timeout` | The fetch ran out of time (omnifeed's budget, a navigation timeout, or crawl4ai's own time limit / HTTP 504). | yes | Retry once; a page that times out twice is likely to keep doing so. |
@@ -74,14 +74,13 @@ JSON-RPC error:
   "id": 7,
   "result": {
     "content": [
-      {"type": "text", "text": "fetch_url failed: http_429 (HTTP 429): crawl failed: HTTP 429 Too Many Requests [rate_limited] Retryable after 90s."},
-      {"type": "text", "text": "{\"code\":\"rate_limited\",\"retry_after_s\":90,\"retryable\":true,\"upstream_status\":429,\"url\":\"https://example.com/a\"}"}
+      {"type": "text", "text": "fetch_url failed: quota_exhausted: pacing quota exhausted; retry in 90s [quota_exhausted] Retryable after 90s."},
+      {"type": "text", "text": "{\"code\":\"quota_exhausted\",\"retry_after_s\":90,\"retryable\":true,\"url\":\"https://example.com/a\"}"}
     ],
     "structuredContent": {
-      "code": "rate_limited",
+      "code": "quota_exhausted",
       "retryable": true,
       "retry_after_s": 90,
-      "upstream_status": 429,
       "url": "https://example.com/a"
     },
     "isError": true
@@ -90,8 +89,8 @@ JSON-RPC error:
 ```
 
 - `content[0]` is a short human-readable sentence: what failed, why, and whether to retry.
-- `structuredContent` always has `code` and `retryable`; `retry_after_s` and
-  `upstream_status` appear only when known; `url` appears when the call had a `url`
+- `structuredContent` always has `code` and `retryable`; `retry_after_s` (today only
+  on `quota_exhausted`) and `upstream_status` appear only when known; `url` appears when the call had a `url`
   argument (`fetch_url`).
 - `content[1]` repeats `structuredContent` as JSON text, as the MCP spec recommends for
   clients that predate `structuredContent` (added in protocol 2025-06-18). Older clients
