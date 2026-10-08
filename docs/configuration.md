@@ -307,6 +307,36 @@ returned with the comments loaded so far. omnifeed flags it:
 A thread that simply used up its `expand` budget is not partial. Partial
 threads are never cached.
 
+## Timeouts
+
+Each engine has its own time budget. A client calling omnifeed should wait
+**longer** than the budget of the engine it is calling, or it gives up on a
+request that would have succeeded and, for Reddit, spends the rate budget for
+nothing.
+
+| Engine | Budget | Set by | Notes |
+|---|---|---|---|
+| Hacker News | 30 s per crawl | fixed (`internal/engine/hackernews`) | Wall clock for the whole crawl, including the pacing wait and retries against `hn.algolia.com`. |
+| GitHub, Discourse, Bluesky | 30 s per crawl | fixed, per engine | Same shape as Hacker News. |
+| Reddit | 4 min per crawl | `OMNIFEED_REDDIT_TIMEOUT` | Wall clock for the whole crawl: pacing wait, share-link resolve, thread fetch and every `morechildren` round. A round cut off by the deadline returns what was loaded, flagged [partial](#partial-reddit-threads). Each browser call inside it is also bounded by `OMNIFEED_CRAWL4AI_TIMEOUT`. |
+| Generic page (crawl4ai) | 90 s per crawl4ai call | `OMNIFEED_CRAWL4AI_TIMEOUT` | Inside each call, crawl4ai's own `page_timeout` is 60 s (the most crawl4ai accepts over REST), so crawl4ai normally answers before omnifeed's 90 s run out. There is no overall cap on a generic crawl: a transient failure is retried once, and a thin page is re-crawled once without the excluded selector, so the worst case is several 90 s calls. |
+| SearXNG search | 15 s per attempt | `OMNIFEED_SEARXNG_TIMEOUT` | Up to 3 attempts with backoff, after a pacing wait of up to `OMNIFEED_SEARXNG_MAX_WAIT` (15 s by default). |
+
+Suggested client timeouts:
+
+- **Reddit: at least 270 s** (the 4-minute budget plus margin for the pacing
+  queue and the response). If you raise `OMNIFEED_REDDIT_TIMEOUT`, raise the
+  client by the same amount.
+- **Generic pages: at least 200 s.** Most pages take seconds, but a slow page
+  with a retry can take two crawl4ai calls.
+- **Hacker News, GitHub, Discourse, Bluesky: at least 45 s.**
+- **web_search / `POST /search`: at least 75 s.**
+
+The loader (`/crawl`, `/search`) and MCP listeners stop writing a response after
+300 s, so waiting longer than that gains nothing, and an
+`OMNIFEED_REDDIT_TIMEOUT` above about 4m30s gets cut by the server first. A
+cached result returns in milliseconds whatever the engine.
+
 ## Raw-text bypass
 
 Raw code, JSON, markdown and plain text have nothing for a browser to render, and Chromium's page-idle wait makes them slow: a raw `githubusercontent.com` file takes 30 to 39 s in the browser and about 200 ms direct. When a URL's extension looks raw (`.md`, `.txt`, `.json`, source files), the generic engine sends a HEAD request. If the server confirms a non-HTML text type, a plain GET fetches the body and returns it unchanged. Anything uncertain, such as a failed probe, `text/html`, binary bytes or blocked egress, falls back to the browser. With `OMNIFEED_BLOCK_PRIVATE_IPS` on, direct fetches refuse private and reserved addresses **when dialing**, so DNS rebinding can't bypass URL validation. This needs outbound access to the **target sites**, not just crawl4ai. Without it the probe fails and everything goes through crawl4ai.
