@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -54,7 +55,7 @@ func TestPageStatusPropagates(t *testing.T) {
 	for _, tc := range []struct {
 		status int
 		want   domain.FailureKind
-	}{{404, domain.KindNotFound}, {410, domain.KindNotFound}, {405, domain.KindBotBlock}, {401, domain.KindBotBlock}, {400, domain.KindError}, {503, domain.KindUpstreamError}} {
+	}{{404, domain.KindNotFound}, {410, domain.KindNotFound}, {405, domain.KindBotBlock}, {401, domain.KindBotBlock}, {400, domain.KindError}, {503, domain.KindSiteError}, {500, domain.KindSiteError}} {
 		e, _ := fakeCrawl(t, func(int32, map[string]any) map[string]any { return page(tc.status, "# Page Not Found\n"+realProse) })
 		_, err := e.Crawl(context.Background(), deadTargetURL+"/x", domain.EngineOptions{})
 		if kindOf(err) != tc.want {
@@ -178,6 +179,8 @@ func TestSilentFailureRules(t *testing.T) {
 		// MDN's 404 reference: a "Page not found" section heading after prose.
 		{"# 404 Not Found\nThe HTTP **`404 Not Found`** client error response status code indicates that the server cannot find the requested resource, and links to it are broken.\n## Status\n## Examples\n### [Page not found](https://x/#page_not_found)\n" + realProse, ""},
 		{"  * English\n  * Français\nHello!\n# Choose a country.\n#### [Canada](https://www.bestbuy.ca/)\n#### [United States](https://www.bestbuy.com/)", domain.KindBotBlock},
+		// A locale switcher in a short page's header is a link, not a heading.
+		{"[Select your country](https://shop.example/locale)\n# Wireless earbuds\nTwelve hours of battery, USB-C charging, and a case that fits a pocket.", ""},
 		{realProse + "\n" + strings.Repeat("Page not found errors are discussed below. ", 20), ""},
 		{"## Filter Results\n" + strings.Repeat("Loading\n", 40) + realProse, domain.KindThinContent},
 		{realProse + "\nLoading\n" + realProse, ""},
@@ -301,6 +304,57 @@ func TestLoginRedirectIsBlock(t *testing.T) {
 	for p, want := range map[string]bool{"/login.html": true, "/authwall": true, "/signin": true, "/blog/login-best-practices": false, "/loginradius-review": false} {
 		if loginPath.MatchString(p) != want {
 			t.Errorf("loginPath(%q) = %v, want %v", p, !want, want)
+		}
+	}
+}
+
+func TestCrawl4AIServer404IsNotPageNotFound(t *testing.T) {
+	// A wrong OMNIFEED_CRAWL4AI_URL path 404s on crawl4ai's own API: that is
+	// a misconfiguration, never "the page does not exist".
+	srv := httptest.NewServer(http.NotFoundHandler())
+	t.Cleanup(srv.Close)
+	e := New(Config{Endpoint: srv.URL, Client: httpx.New(nil), Limiter: httpx.NewDomainLimiter(2, 0)})
+	if _, err := e.Crawl(context.Background(), deadTargetURL+"/x", domain.EngineOptions{}); kindOf(err) == domain.KindNotFound {
+		t.Errorf("crawl4ai API 404 classified as not_found")
+	}
+}
+
+func TestPDFURLServingHTMLFallsBackToBrowser(t *testing.T) {
+	var strategies []any
+	e, _ := fakeCrawl(t, func(_ int32, req map[string]any) map[string]any {
+		params := req["crawler_config"].(map[string]any)["params"].(map[string]any)
+		strategies = append(strategies, params["scraping_strategy"])
+		if params["scraping_strategy"] != nil { // the PDF strategy chokes on HTML
+			return map[string]any{"success": true, "results": []any{map[string]any{"success": false,
+				"error_message": "Process HTML, Failed to extract content from the website"}}}
+		}
+		return page(200, "# Landing page\n"+realProse)
+	})
+	doc, err := e.Crawl(context.Background(), deadTargetURL+"/paper.pdf", domain.EngineOptions{})
+	if err != nil || !strings.Contains(doc.PageContent, "Landing page") {
+		t.Fatalf("Crawl() = %v, want the browser render after the PDF strategy failed", err)
+	}
+	if len(strategies) != 2 || strategies[1] != nil {
+		t.Errorf("scraping strategies sent = %v, want [PDF, none]", strategies)
+	}
+}
+
+func TestChallengeTitleMatchesOnlyChallenges(t *testing.T) {
+	// The constant is a JS regex literal; its body and flags are valid RE2.
+	body := strings.TrimSuffix(strings.TrimPrefix(challengeTitle, "/"), "/i")
+	re := regexp.MustCompile("(?i)" + body)
+	for title, want := range map[string]bool{
+		"Just a moment...":                 true,
+		"Un instant…":                      true,
+		"Einen Moment…":                    true,
+		"Attention Required! | Cloudflare": true,
+		"Please Wait... | Cloudflare":      true,
+		"Please wait for our autumn sale":  false,
+		"Un instant de bonheur - Le Monde": false,
+		"Just a moment of silence":         false,
+	} {
+		if re.MatchString(title) != want {
+			t.Errorf("challengeTitle(%q) = %v, want %v", title, !want, want)
 		}
 	}
 }

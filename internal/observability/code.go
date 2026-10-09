@@ -54,6 +54,7 @@ var codeFor = map[domain.FailureKind]struct {
 	domain.KindCanceled:         {CodeTimeout, true},
 	domain.KindThinContent:      {CodeThinContent, false},
 	domain.KindNotFound:         {CodeNotFound, false},
+	domain.KindSiteError:        {CodeUpstreamError, true},
 	domain.KindUpstreamError:    {CodeUpstreamError, true},
 	domain.KindUpstreamRejected: {CodeUpstreamError, false},
 	domain.KindBadResponse:      {CodeUpstreamError, true},
