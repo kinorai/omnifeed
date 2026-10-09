@@ -2,11 +2,13 @@ package hackernews
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -54,26 +56,61 @@ var feedQuery = map[string]struct{ endpoint, tag string }{
 
 // Engine implements domain.Engine for Hacker News URLs via the Algolia API.
 type Engine struct {
-	client  *httpx.Client
-	limiter httpx.Limiter
-	apiBase string
-	timeout time.Duration
-	logger  *slog.Logger
+	client   *httpx.Client
+	limiter  httpx.Limiter
+	apiBase  string
+	timeout  time.Duration
+	logger   *slog.Logger
+	rankBase string
+}
+
+const defaultRankBase = "https://hacker-news.firebaseio.com/v0"
+
+// rankFrontPage reorders Algolia's front_page hits (which carry no position)
+// by HN's real ranking from topstories.json. Best effort: on any failure the
+// Algolia order is kept.
+func (e *Engine) rankFrontPage(ctx context.Context, fp *FrontPage) {
+	if e.rankBase == "-" || len(fp.Stories) < 2 {
+		return
+	}
+	raw, err := e.get(ctx, e.rankBase+"/topstories.json")
+	if err != nil {
+		return
+	}
+	var ids []int
+	if json.Unmarshal(raw, &ids) != nil {
+		return
+	}
+	pos := make(map[int]int, len(ids))
+	for i, id := range ids {
+		pos[id] = i
+	}
+	rank := func(s Story) int {
+		if p, ok := pos[s.ID]; ok {
+			return p
+		}
+		return len(ids) + 1
+	}
+	sort.SliceStable(fp.Stories, func(a, b int) bool { return rank(fp.Stories[a]) < rank(fp.Stories[b]) })
 }
 
 // Config configures a Hacker News Engine.
 type Config struct {
-	Client  *httpx.Client
-	Limiter httpx.Limiter
-	APIBase string        // defaults to the public Algolia API; overridden in tests
-	Timeout time.Duration // wall-clock budget per crawl; defaults to defaultTimeout
-	Logger  *slog.Logger
+	Client   *httpx.Client
+	Limiter  httpx.Limiter
+	APIBase  string        // defaults to the public Algolia API; overridden in tests
+	RankBase string        // HN Firebase API, source of the real front-page order; "" = default, "-" = disabled
+	Timeout  time.Duration // wall-clock budget per crawl; defaults to defaultTimeout
+	Logger   *slog.Logger
 }
 
 // New returns a Hacker News Engine configured per cfg.
 func New(cfg Config) *Engine {
 	if cfg.APIBase == "" {
 		cfg.APIBase = defaultAPIBase
+		if cfg.RankBase == "" {
+			cfg.RankBase = defaultRankBase
+		}
 	}
 	if cfg.Timeout == 0 {
 		cfg.Timeout = defaultTimeout
@@ -81,12 +118,16 @@ func New(cfg Config) *Engine {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
+	if cfg.RankBase == "" {
+		cfg.RankBase = "-" // test/custom API bases: no live ranking calls
+	}
 	return &Engine{
-		client:  cfg.Client.WithUpstream("hackernews", "api"),
-		limiter: cfg.Limiter,
-		apiBase: strings.TrimRight(cfg.APIBase, "/"),
-		timeout: cfg.Timeout,
-		logger:  cfg.Logger,
+		rankBase: strings.TrimRight(cfg.RankBase, "/"),
+		client:   cfg.Client.WithUpstream("hackernews", "api"),
+		limiter:  cfg.Limiter,
+		apiBase:  strings.TrimRight(cfg.APIBase, "/"),
+		timeout:  cfg.Timeout,
+		logger:   cfg.Logger,
 	}
 }
 
@@ -192,6 +233,9 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, eo domain.EngineOptio
 	fp, perr := parseFrontPage(raw, t.feed)
 	if perr != nil {
 		return domain.Document{}, &domain.FetchError{Kind: domain.KindBadResponse, Err: fmt.Errorf("parse feed: %w", perr)}
+	}
+	if t.feed == "front_page" {
+		e.rankFrontPage(ctx, &fp)
 	}
 	return e.document(fp, rawURL, map[string]string{
 		"feed":    t.feed,
