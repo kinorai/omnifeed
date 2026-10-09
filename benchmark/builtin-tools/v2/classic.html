@@ -351,9 +351,9 @@ function renderRouter(){
 
   const DF=D.diff||[],chip=document.getElementById('diffChips');
   const kinds=['fixed','regressed','regrade'],cnt=k=>DF.filter(x=>x.kind===k).length;
-  const show=chip.dataset.show||'fixed,regressed';
+  const show=chip.dataset.show??'fixed,regressed';
   chip.innerHTML=kinds.map(k=>`<button class="chip" aria-pressed="${show.split(',').includes(k)}" data-k="${k}">${k} <b>${cnt(k)}</b></button>`).join('');
-  chip.querySelectorAll('button').forEach(bt=>bt.onclick=()=>{const cur=new Set((chip.dataset.show||'fixed,regressed').split(','));cur.has(bt.dataset.k)?cur.delete(bt.dataset.k):cur.add(bt.dataset.k);chip.dataset.show=[...cur].join(',');renderRouter()});
+  chip.querySelectorAll('button').forEach(bt=>bt.onclick=()=>{const cur=new Set((chip.dataset.show??'fixed,regressed').split(',').filter(Boolean));cur.has(bt.dataset.k)?cur.delete(bt.dataset.k):cur.add(bt.dataset.k);chip.dataset.show=[...cur].join(',');renderRouter()});
   const order={regressed:0,fixed:1,regrade:2};
   document.getElementById('fixTable').innerHTML='<tr><th>Site</th><th>Tool</th><th>v1</th><th>v2</th><th>Change</th><th>v2 note</th></tr>'+
    DF.filter(x=>show.split(',').includes(x.kind)).sort((a,b)=>order[a.kind]-order[b.kind]||a.tool.localeCompare(b.tool)).map(x=>`<tr><td>${host(x.url)}</td><td>${x.tool==='builtin'?'Built-in':'omnifeed'}</td><td>${OUT[x.v1]?OUT[x.v1].label:x.v1}</td><td>${OUT[x.v2]?OUT[x.v2].label:x.v2}</td><td>${x.kind}</td><td class="note">${x.v2note}</td></tr>`).join('');

@@ -1,7 +1,7 @@
 import json, bisect, collections, re
 from datetime import datetime, timezone
 from urllib.parse import urlparse
-ts = lambda s: datetime.fromisoformat(s[:26].rstrip('Z')).timestamp()
+ts = lambda s: datetime.fromisoformat(s[:26].rstrip('Z')).replace(tzinfo=timezone.utc).timestamp()
 BLOCK = ('bot_block', 'captcha', 'http_403', 'http_429')
 rows = []
 for l in open('calls.jsonl'):
