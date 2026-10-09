@@ -21,10 +21,11 @@ Package crawl4ai implements the fallback engine: dispatches generic URLs to an u
 
 ## Constants
 
-<a name="DefaultExcludedSelector"></a>DefaultExcludedSelector is the conservative chrome selector list sent as crawl4ai's excluded\_selector when the operator hasn't set one. It names only chrome\-shaped classes/ids \(sidebars, tables of contents, related\-post and newsletter boxes, cookie banners\). On the rare page whose main content IS one of these \(a docs index living in \`\#toc\`, say\), the crawl comes back empty — Crawl retries once without the selector rather than erroring, so the default can stay aggressive.
+<a name="DefaultExcludedSelector"></a>DefaultExcludedSelector is the conservative chrome selector list sent as crawl4ai's excluded\_selector when the operator hasn't set one. It names only chrome\-shaped classes/ids \(sidebars, tables of contents, related\-post and newsletter boxes, cookie banners\). On the rare page whose main content IS one of these \(a docs index living in \`\#toc\`, say\), the crawl comes back empty — Crawl retries once without the selector rather than erroring, so the default can stay aggressive. The second half drops text that is never content: SVG and icon\-font \<title\> labels \(Kickstarter's sprite sheet alone is 12k chars of "arrow\-left icon Fill 1 Copy 5"\), chart axis labels, and the root nodes of the common consent managers.
 
 ```go
-const DefaultExcludedSelector = ".sidebar,.toc,#toc,.related,.newsletter,.cookie-banner,[aria-label*='cookie']"
+const DefaultExcludedSelector = ".sidebar,.toc,#toc,.related,.newsletter,.cookie-banner,[aria-label*='cookie']," +
+    "svg title,[class*='icon'] title,.highcharts-axis-labels,#didomi-host,#onetrust-consent-sdk,#usercentrics-root,.truste_box_overlay"
 ```
 
 <a name="Config"></a>
@@ -84,6 +85,24 @@ type Config struct {
     // whole page — the default is off (OMNIFEED_CRAWL4AI_REMOVE_OVERLAYS);
     // remove_consent_popups stays on regardless and covers cookie modals.
     RemoveOverlays bool
+    // UserAgent is sent as BrowserConfig.user_agent. crawl4ai's own default is
+    // a malformed Chrome/116 string (no "KHTML, like Gecko") that several
+    // sites reject as an outdated browser; it should match the Chromium the
+    // crawl4ai image bundles (OMNIFEED_CRAWL4AI_USER_AGENT, "" = crawl4ai's).
+    UserAgent string
+    // Stealth sends BrowserConfig.enable_stealth (playwright-stealth patches)
+    // (OMNIFEED_CRAWL4AI_STEALTH).
+    Stealth bool
+    // ChallengeWait waits up to this long for an interstitial bot challenge
+    // ("Just a moment…") to clear by itself before extraction; 0 disables it
+    // (OMNIFEED_CRAWL4AI_CHALLENGE_WAIT). Pages without a challenge title pay
+    // nothing: the wait_for predicate is true on the first poll.
+    ChallengeWait time.Duration
+    // MinProseChars rejects a rendered page whose human-readable text (link
+    // targets, URLs and markdown syntax removed) is shorter than this, as
+    // thin_content: nav-only shells and empty app frames otherwise reach the
+    // caller as success. 0 disables the floor (OMNIFEED_CRAWL4AI_MIN_PROSE_CHARS).
+    MinProseChars int
     // BlockPrivateIPs hardens the raw-text bypass's direct fetches: resolved
     // private/reserved addresses are refused at dial time (mirrors
     // OMNIFEED_BLOCK_PRIVATE_IPS, which the registry enforces pre-dispatch via
