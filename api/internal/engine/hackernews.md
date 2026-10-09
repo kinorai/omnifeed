@@ -59,11 +59,12 @@ Config configures a Hacker News Engine.
 
 ```go
 type Config struct {
-    Client  *httpx.Client
-    Limiter httpx.Limiter
-    APIBase string        // defaults to the public Algolia API; overridden in tests
-    Timeout time.Duration // wall-clock budget per crawl; defaults to defaultTimeout
-    Logger  *slog.Logger
+    Client   *httpx.Client
+    Limiter  httpx.Limiter
+    APIBase  string        // defaults to the public Algolia API; overridden in tests
+    RankBase string        // HN Firebase API, source of the real front-page order; "" = default, "-" = disabled
+    Timeout  time.Duration // wall-clock budget per crawl; defaults to defaultTimeout
+    Logger   *slog.Logger
 }
 ```
 

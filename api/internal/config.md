@@ -10,10 +10,19 @@ Package config loads all runtime configuration from OMNIFEED\_\-prefixed environ
 
 ## Index
 
+- [Constants](<#constants>)
 - [Variables](<#variables>)
 - [type Config](<#Config>)
   - [func Load\(\) \(Config, error\)](<#Load>)
 
+
+## Constants
+
+<a name="DefaultCrawl4AIUserAgent"></a>DefaultCrawl4AIUserAgent matches the Chromium bundled in crawl4ai 0.9.4.
+
+```go
+const DefaultCrawl4AIUserAgent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36"
+```
 
 ## Variables
 
@@ -84,6 +93,21 @@ type Config struct {
     // several news fronts return only their <title>. Off by default;
     // remove_consent_popups stays on regardless and covers cookie modals.
     Crawl4AIRemoveOverlays bool
+    // Crawl4AIUserAgent is the browser identity crawl4ai presents. crawl4ai's
+    // own default is a malformed Chrome/116 string that Cloudflare challenges
+    // and some sites reject as an outdated browser. Keep the version in step
+    // with the Chromium the crawl4ai image bundles (153 in 0.9.4): a UA that
+    // disagrees with the engine is itself a bot signal. Set it empty to keep
+    // crawl4ai's own (and disable the alternate-identity retry).
+    Crawl4AIUserAgent string
+    // Crawl4AIStealth turns on crawl4ai's playwright-stealth patches.
+    Crawl4AIStealth bool
+    // Crawl4AIChallengeWait waits up to this long for a self-clearing bot
+    // challenge ("Just a moment...") to pass before extraction; 0 disables.
+    Crawl4AIChallengeWait time.Duration
+    // Crawl4AIMinProseChars rejects pages whose prose (link targets, URLs and
+    // markdown syntax removed) is shorter than this; 0 disables the floor.
+    Crawl4AIMinProseChars int
 
     // Upstream SearXNG (optional). Empty disables the `search` MCP tool.
     SearXNGURL     string

@@ -13,6 +13,7 @@ message is for humans and changes wording between releases.
 | `captcha` | A CAPTCHA or human-verification challenge was served in place of the page. | no | Use another URL or source. |
 | `timeout` | The fetch ran out of time (omnifeed's budget, a navigation timeout, or crawl4ai's own time limit / HTTP 504). | yes | Retry once; a page that times out twice is likely to keep doing so. |
 | `thin_content` | The page rendered, but with too little usable content (a JS-only shell, a PDF, a near-empty page). | no | Use another URL; for feeds try `scan_full_page`. |
+| `not_found` | The page does not exist: HTTP 404/410, or a "page not found" page served with a success status (soft 404). | no | Check the URL; search for the current location. |
 | `upstream_error` | crawl4ai, SearXNG or a source API failed, or the failure could not be classified. | see the `retryable` flag | Retry when `retryable` is true. |
 | `quota_exhausted` | omnifeed's own per-host pacing quota is spent; nothing was sent. | yes | Wait `retry_after_s`, then retry. |
 | `invalid_request` | The request itself is wrong: a malformed URL, a non-http(s) scheme, or a private address. | no | Fix the request. |
@@ -31,6 +32,8 @@ finer-grained than the codes. Each reason maps to exactly one code:
 | `timeout` | `timeout` | yes |
 | `canceled` | `timeout` | yes |
 | `thin_content` | `thin_content` | no |
+| `not_found` | `not_found` | no |
+| `site_error` | `upstream_error` | yes (the requested site answered 5xx; not an omnifeed or crawl4ai fault) |
 | `upstream_error` | `upstream_error` | yes |
 | `upstream_rejected` | `upstream_error` | no (already retried once; usually a per-page verdict) |
 | `bad_response` | `upstream_error` | yes |
