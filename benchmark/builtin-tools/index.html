@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>omnifeed vs Claude Code built-in tools — benchmark versions</title>
+<style>
+:root{color-scheme:light dark;--page:#f9f9f7;--card:#fcfcfb;--ink:#0b0b0b;--ink2:#52514e;--line:rgba(11,11,11,.1);--b:#2a78d6;--o:#eb6834;--good:#0ca30c;--bad:#d03b3b}
+@media (prefers-color-scheme:dark){:root{--page:#0d0d0d;--card:#1a1a19;--ink:#fff;--ink2:#c3c2b7;--line:rgba(255,255,255,.1);--b:#3987e5;--o:#d95926}}
+*{box-sizing:border-box}body{margin:0;background:var(--page);color:var(--ink);font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:1000px;margin:0 auto;padding:48px 24px 80px}
+h1{font-size:32px;margin:0 0 6px;letter-spacing:-.02em}
+.sub{color:var(--ink2);margin:0 0 28px;max-width:760px}
+a.ver{display:block;text-decoration:none;color:inherit;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:22px;margin:0 0 16px;transition:transform .15s,box-shadow .15s}
+a.ver:hover{transform:translateY(-2px);box-shadow:0 10px 30px rgba(0,0,0,.12)}
+.ver h2{margin:0 0 4px;font-size:21px}.ver .when{color:var(--ink2);font-size:13px;margin:0 0 14px}
+.nums{display:flex;gap:28px;flex-wrap:wrap}.nums div{font-size:13px;color:var(--ink2)}.nums b{display:block;font-size:24px;color:var(--ink);font-weight:650;font-variant-numeric:tabular-nums}
+.ver p{margin:14px 0 0;color:var(--ink2);font-size:14px}
+.tag{font-size:11px;font-weight:650;letter-spacing:.04em;text-transform:uppercase;border-radius:999px;padding:3px 9px;border:1px solid var(--o);color:var(--o);margin-left:8px;vertical-align:middle}
+.delta{font-size:13px;font-weight:600}.up{color:var(--good)}.down{color:var(--bad)}
+footer{margin-top:32px;color:var(--ink2);font-size:13px}
+</style>
+</head>
+<body>
+<main>
+<h1>omnifeed vs Claude Code WebSearch / WebFetch</h1>
+<p class="sub">The same 272 sites and 40 search queries, each hit once by each tool from the same home connection. Every version re-runs the full set against the omnifeed release of the day, so the versions show what changed. Rate limits seen during the runs are in <a href="../../docs/rate-limits.md">docs/rate-limits.md</a>.</p>
+<div id="versions"></div>
+<footer>Methodology and caveats are on each version's dashboard. <a href="README.md">How to re-run</a>.</footer>
+</main>
+<script>
+const VERSIONS=[
+ {v:'v2',dir:'v2/',release:'omnifeed v0.35.0',latest:true,
+  blurb:'Paced run (about 2 fetches a minute, one search every 3 to 6 minutes) to stay under every rate limit. Adds a v1 → v2 diff and the block log.'},
+ {v:'v1',dir:'v1/',release:'omnifeed v0.34.2',
+  blurb:'First run, 2026-10-08. Found the silent failures, the stale Chrome fingerprint, the crashes and the link-only content loss that v0.35.0 fixed.'},
+];
+const USE=o=>o==='success'||o==='partial';
+const med=a=>{const s=[...a].sort((x,y)=>x-y);return s.length?s[Math.floor((s.length-1)/2)]:NaN};
+Promise.all(VERSIONS.map(V=>fetch(V.dir+'data.json').then(r=>r.json()).then(D=>({V,D})))).then(rows=>{
+  const st=rows.map(({V,D})=>{const S=D.sites,Q=D.searches;return{V,D,
+    b:S.filter(s=>USE(s.builtin.outcome)).length,o:S.filter(s=>USE(s.omnifeed.outcome)).length,
+    soft:S.filter(s=>s.omnifeed.outcome==='softblock').length,
+    wins:Q.filter(q=>/^omnifeed/.test(q.winner)).length,nq:Q.length,
+    sB:med(Q.flatMap(q=>q.builtin.ms)),sO:med(Q.flatMap(q=>q.omnifeed.ms))}});
+  const d=(a,b,goodUp=true)=>{if(b===undefined)return'';const x=a-b;if(!x)return'';const good=goodUp?x>0:x<0;return ` <span class="delta ${good?'up':'down'}">${x>0?'+':''}${x}</span>`};
+  document.getElementById('versions').innerHTML=st.map((r,i)=>{const p=st[i+1];return`<a class="ver" href="${r.V.dir}">
+   <h2>${r.V.v}${r.V.latest?'<span class="tag">latest</span>':''}</h2>
+   <div class="when">${r.D.generated} · ${r.V.release} · ${r.D.sites.length} sites · ${r.nq} queries</div>
+   <div class="nums">
+    <div>omnifeed usable<b>${r.o}${d(r.o,p&&p.o)}</b></div>
+    <div>built-in usable<b>${r.b}${d(r.b,p&&p.b)}</b></div>
+    <div>omnifeed silent failures<b>${r.soft}${d(r.soft,p&&p.soft,false)}</b></div>
+    <div>search wins (omnifeed)<b>${r.wins}/${r.nq}</b></div>
+    <div>median search, built-in / omnifeed<b>${(r.sB/1000).toFixed(1)} / ${(r.sO/1000).toFixed(1)} s</b></div>
+   </div><p>${r.V.blurb}</p></a>`}).join('');
+});
+</script>
+</body>
+</html>
