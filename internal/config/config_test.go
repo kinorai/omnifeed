@@ -374,3 +374,37 @@ func TestLoad_Twitter(t *testing.T) {
 		}
 	}
 }
+
+func TestLoad_Crawl4AIBrowserIdentity(t *testing.T) {
+	t.Run("defaults", func(t *testing.T) {
+		cfg, err := loadWith(t, "", "")
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.Crawl4AIUserAgent != DefaultCrawl4AIUserAgent || !cfg.Crawl4AIStealth ||
+			cfg.Crawl4AIChallengeWait != 8*time.Second || cfg.Crawl4AIMinProseChars != 100 {
+			t.Errorf("got ua=%q stealth=%v wait=%v floor=%d, want default UA/true/8s/100",
+				cfg.Crawl4AIUserAgent, cfg.Crawl4AIStealth, cfg.Crawl4AIChallengeWait, cfg.Crawl4AIMinProseChars)
+		}
+	})
+	t.Run("empty user agent hands the identity back to crawl4ai", func(t *testing.T) {
+		cfg, err := loadWith(t, "OMNIFEED_CRAWL4AI_USER_AGENT", "")
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.Crawl4AIUserAgent != "" {
+			t.Errorf("Crawl4AIUserAgent = %q, want empty", cfg.Crawl4AIUserAgent)
+		}
+	})
+	for _, tc := range []struct{ key, value string }{
+		{"OMNIFEED_CRAWL4AI_CHALLENGE_WAIT", "-1s"},
+		{"OMNIFEED_CRAWL4AI_CHALLENGE_WAIT", "61s"},
+		{"OMNIFEED_CRAWL4AI_MIN_PROSE_CHARS", "-1"},
+	} {
+		t.Run(tc.key+"="+tc.value+" is a config error", func(t *testing.T) {
+			if _, err := loadWith(t, tc.key, tc.value); err == nil {
+				t.Fatalf("want error for %s=%s", tc.key, tc.value)
+			}
+		})
+	}
+}
