@@ -245,10 +245,12 @@ type crawlRequest struct {
 	CrawlerConfig map[string]interface{} `json:"crawler_config,omitempty"`
 }
 
-// challengeTitle matches the <title> of interstitial bot challenges that clear
-// by themselves after a few seconds of JS (Cloudflare "Just a moment...", its
-// localized variants, and the older "Attention Required").
-const challengeTitle = `/just a moment|un instant|einen moment|attention required|checking your browser|please wait/i`
+// challengeTitle matches the whole <title> of a self-clearing bot challenge:
+// Cloudflare's "Just a moment..." and its localized forms, and the older
+// "Attention Required! | Cloudflare" / "Please Wait... | Cloudflare". It is
+// anchored to the full title so an ordinary page whose title merely contains
+// "please wait" or "un instant" does not wait out the timeout.
+const challengeTitle = `/^\s*(just a moment|un instant|einen moment|un momento|um momento|attention required! \| cloudflare|please wait\.\.\. \| cloudflare)\s*(\.\.\.|…)?\s*$/i` //nolint:misspell // Spanish/Portuguese "un/um momento", not "memento"
 
 type crawlResponse struct {
 	Success bool          `json:"success"`
@@ -307,8 +309,13 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, opts domain.EngineOpt
 		scan = *opts.ScanFullPage
 	}
 
+	// A .pdf URL that serves HTML instead (a landing page, a paywall, a
+	// redirect to an error page) fails the PDF strategy; render it normally.
 	if looksLikePDF(rawURL) {
-		return e.crawlOnce(ctx, rawURL, crawlOpts{pdf: true})
+		doc, err := e.crawlOnce(ctx, rawURL, crawlOpts{pdf: true})
+		if err == nil || ctx.Err() != nil || isBlock(err) {
+			return doc, err
+		}
 	}
 
 	base := crawlOpts{excludedSelector: e.excludedSelector, scanFullPage: scan}
@@ -380,6 +387,27 @@ func (e *Engine) servesPDF(ctx context.Context, rawURL string) bool {
 	}
 	_ = resp.Body.Close()
 	return resp.StatusCode == http.StatusOK && rawContentType(resp) == "application/pdf"
+}
+
+// pageStatusKind classifies the status of the requested PAGE (not of
+// crawl4ai's own API reply, which keeps domain.KindForStatus): 404/410 is
+// not_found; a 5xx is the site's own fault (site_error), kept apart from
+// upstream_error, which means crawl4ai or omnifeed failed; and a public page
+// answering 401/402/405/… to a plain GET is refusing the visitor (AWS WAF
+// challenges answer 405), so it is a block, which also earns the alternate
+// fingerprint a try.
+func pageStatusKind(status int) domain.FailureKind {
+	switch {
+	case status == http.StatusNotFound || status == http.StatusGone:
+		return domain.KindNotFound
+	case status == http.StatusGatewayTimeout || status >= 500:
+		return domain.KindSiteError
+	}
+	kind := domain.KindForStatus(status)
+	if kind == domain.KindError && status != http.StatusBadRequest {
+		return domain.KindBotBlock
+	}
+	return kind
 }
 
 // isBlock reports a bot wall: a challenge, a block page or a 403. A 429 is
@@ -459,8 +487,9 @@ func silentFailure(content, scan string) (domain.FailureKind, string) {
 		}
 	}
 	// Geo country picker served in place of the page (Best Buy from an EU
-	// egress): short, and leads with the picker.
-	if head := strings.ToLower(firstLines(content, 10)); proseChars(content) < 1500 && (strings.Contains(head, "choose a country") || strings.Contains(head, "select your country")) {
+	// egress): short, and leads with the picker AS A HEADING — a locale
+	// switcher in a page header is a link or a button, not a heading.
+	if proseChars(content) < 1500 && pickerHeading.MatchString(firstLines(content, 10)) {
 		return domain.KindBotBlock, "country picker interstitial"
 	}
 	lines, loading := 0, 0
@@ -727,14 +756,7 @@ func (e *Engine) crawlOnce(ctx context.Context, rawURL string, o crawlOpts) (dom
 	// 451 legal block, 5xx). Serving its markdown as success is a silent
 	// failure the caller can't detect — and so can't fall back from.
 	if result.StatusCode >= 400 {
-		kind := domain.KindForStatus(result.StatusCode)
-		// A public page answering 401/402/405/… to a plain GET is refusing
-		// the visitor (AWS WAF challenges answer 405, Cloudflare-fronted
-		// logins 401), not reporting a fault: classify it as a block so the
-		// caller switches source and the alternate fingerprint gets a try.
-		if kind == domain.KindError && result.StatusCode != http.StatusBadRequest {
-			kind = domain.KindBotBlock
-		}
+		kind := pageStatusKind(result.StatusCode)
 		return domain.Document{}, &domain.FetchError{
 			Kind:       kind,
 			StatusCode: result.StatusCode,
@@ -815,6 +837,10 @@ func firstLines(s string, n int) string {
 	}
 	return strings.Join(out, "\n")
 }
+
+// pickerHeading matches a markdown heading that asks the visitor to pick a
+// country.
+var pickerHeading = regexp.MustCompile(`(?im)^#{1,6}\s+(choose|select) (a|your) country\b`)
 
 // loginPath matches a sign-in wall a site redirects anonymous visitors to.
 var loginPath = regexp.MustCompile(`(?i)/(login|signin|sign-in|sign_in|authwall)(/|$|\.|\?)`)

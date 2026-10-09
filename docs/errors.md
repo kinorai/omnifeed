@@ -33,6 +33,7 @@ finer-grained than the codes. Each reason maps to exactly one code:
 | `canceled` | `timeout` | yes |
 | `thin_content` | `thin_content` | no |
 | `not_found` | `not_found` | no |
+| `site_error` | `upstream_error` | yes (the requested site answered 5xx; not an omnifeed or crawl4ai fault) |
 | `upstream_error` | `upstream_error` | yes |
 | `upstream_rejected` | `upstream_error` | no (already retried once; usually a per-page verdict) |
 | `bad_response` | `upstream_error` | yes |
