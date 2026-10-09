@@ -21,6 +21,7 @@ const (
 	CodeCaptcha        ErrorCode = "captcha"
 	CodeTimeout        ErrorCode = "timeout"
 	CodeThinContent    ErrorCode = "thin_content"
+	CodeNotFound       ErrorCode = "not_found"
 	CodeUpstreamError  ErrorCode = "upstream_error"
 	CodeQuotaExhausted ErrorCode = "quota_exhausted"
 	CodeInvalidRequest ErrorCode = "invalid_request"
@@ -52,6 +53,7 @@ var codeFor = map[domain.FailureKind]struct {
 	domain.KindTimeout:          {CodeTimeout, true},
 	domain.KindCanceled:         {CodeTimeout, true},
 	domain.KindThinContent:      {CodeThinContent, false},
+	domain.KindNotFound:         {CodeNotFound, false},
 	domain.KindUpstreamError:    {CodeUpstreamError, true},
 	domain.KindUpstreamRejected: {CodeUpstreamError, false},
 	domain.KindBadResponse:      {CodeUpstreamError, true},

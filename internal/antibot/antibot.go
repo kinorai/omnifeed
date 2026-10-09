@@ -23,6 +23,17 @@ const scanLimit = 64 << 10
 // markdown filtering; the markup/script markers only survive on raw HTML (the
 // Reddit in-page fetch path). Add new walls here as they are observed.
 var markers = []string{
+	// Retail/CDN interstitials and "unsupported browser" walls served as 200
+	// (measured 2026-10-08: Amazon .com/.fr, USA Today, idealo/Akamai, Khan Academy).
+	"click the button below to continue shopping",
+	// AWS WAF CAPTCHA (IMDb, measured 2026-10-09).
+	"let's confirm you are human",
+	"you need to solve a puzzle",
+	"cliquez sur le bouton ci-dessous pour continuer vos achats",
+	"we're unable to allow access to this page",
+	"make sure your browser is updated to the latest version",
+	"does not support this browser",
+	"something went wrong and this page crashed",
 	// Reddit network-security wall (Anubis-style) — the current reddit.com block.
 	"you've been blocked by network security",
 	"prove you're a human",
@@ -115,7 +126,8 @@ func Detect(body string) (marker string, blocked bool) {
 	if len(body) > scanLimit {
 		body = body[:scanLimit]
 	}
-	lower := strings.ToLower(body)
+	// Typographic apostrophes (U+2019/U+2018) would defeat the ASCII markers.
+	lower := strings.NewReplacer("\u2019", "'", "\u2018", "'").Replace(strings.ToLower(body))
 	for _, m := range markers {
 		if strings.Contains(lower, m) {
 			return m, true

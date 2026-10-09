@@ -150,6 +150,10 @@ func run(cfg config.Config, logger *slog.Logger) error {
 		ScrollDelay:      cfg.Crawl4AIScrollDelay,
 		DelayBeforeHTML:  cfg.Crawl4AIDelayBeforeHTML,
 		RemoveOverlays:   cfg.Crawl4AIRemoveOverlays,
+		UserAgent:        cfg.Crawl4AIUserAgent,
+		Stealth:          cfg.Crawl4AIStealth,
+		ChallengeWait:    cfg.Crawl4AIChallengeWait,
+		MinProseChars:    cfg.Crawl4AIMinProseChars,
 		BlockPrivateIPs:  cfg.BlockPrivateIPs,
 	})
 
