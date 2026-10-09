@@ -11,7 +11,9 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/kinorai/omnifeed/internal/antibot"
@@ -30,8 +32,17 @@ const maxPageTimeoutMS = 60000
 // newsletter boxes, cookie banners). On the rare page whose main content IS one
 // of these (a docs index living in `#toc`, say), the crawl comes back empty —
 // Crawl retries once without the selector rather than erroring, so the default
-// can stay aggressive.
-const DefaultExcludedSelector = ".sidebar,.toc,#toc,.related,.newsletter,.cookie-banner,[aria-label*='cookie']"
+// can stay aggressive. The second half drops text that is never content: SVG
+// and icon-font <title> labels (Kickstarter's sprite sheet alone is 12k chars
+// of "arrow-left icon Fill 1 Copy 5"), chart axis labels, and the root nodes of
+// the common consent managers.
+const DefaultExcludedSelector = ".sidebar,.toc,#toc,.related,.newsletter,.cookie-banner,[aria-label*='cookie']," +
+	"svg title,[class*='icon'] title,.highcharts-axis-labels,#didomi-host,#onetrust-consent-sdk,#usercentrics-root,.truste_box_overlay"
+
+// maxResponseBytes caps the crawl4ai JSON read. The response carries html,
+// cleaned_html and links next to the markdown, so a long page (fr.wikipedia
+// "Paris": 12 MB, redis.io streams docs: 20 MB) outgrows a 10 MiB cap.
+const maxResponseBytes = 32 << 20
 
 // Engine sends URLs to crawl4ai's /crawl endpoint and extracts the best-fit
 // markdown body. It is registered as the Registry fallback.
@@ -51,6 +62,11 @@ type Engine struct {
 	scrollDelay     float64
 	delayBeforeHTML float64
 	removeOverlays  bool
+
+	userAgent     string
+	stealth       bool
+	challengeWait time.Duration
+	minProseChars int
 
 	// direct fetches raw non-HTML text without the browser (see rawtext.go).
 	// Its underlying http.Client refuses private/reserved dials post-DNS when
@@ -110,6 +126,24 @@ type Config struct {
 	// whole page — the default is off (OMNIFEED_CRAWL4AI_REMOVE_OVERLAYS);
 	// remove_consent_popups stays on regardless and covers cookie modals.
 	RemoveOverlays bool
+	// UserAgent is sent as BrowserConfig.user_agent. crawl4ai's own default is
+	// a malformed Chrome/116 string (no "KHTML, like Gecko") that several
+	// sites reject as an outdated browser; it should match the Chromium the
+	// crawl4ai image bundles (OMNIFEED_CRAWL4AI_USER_AGENT, "" = crawl4ai's).
+	UserAgent string
+	// Stealth sends BrowserConfig.enable_stealth (playwright-stealth patches)
+	// (OMNIFEED_CRAWL4AI_STEALTH).
+	Stealth bool
+	// ChallengeWait waits up to this long for an interstitial bot challenge
+	// ("Just a moment…") to clear by itself before extraction; 0 disables it
+	// (OMNIFEED_CRAWL4AI_CHALLENGE_WAIT). Pages without a challenge title pay
+	// nothing: the wait_for predicate is true on the first poll.
+	ChallengeWait time.Duration
+	// MinProseChars rejects a rendered page whose human-readable text (link
+	// targets, URLs and markdown syntax removed) is shorter than this, as
+	// thin_content: nav-only shells and empty app frames otherwise reach the
+	// caller as success. 0 disables the floor (OMNIFEED_CRAWL4AI_MIN_PROSE_CHARS).
+	MinProseChars int
 	// BlockPrivateIPs hardens the raw-text bypass's direct fetches: resolved
 	// private/reserved addresses are refused at dial time (mirrors
 	// OMNIFEED_BLOCK_PRIVATE_IPS, which the registry enforces pre-dispatch via
@@ -148,6 +182,10 @@ func New(cfg Config) *Engine {
 		scrollDelay:      cfg.ScrollDelay,
 		delayBeforeHTML:  cfg.DelayBeforeHTML,
 		removeOverlays:   cfg.RemoveOverlays,
+		userAgent:        cfg.UserAgent,
+		stealth:          cfg.Stealth,
+		challengeWait:    cfg.ChallengeWait,
+		minProseChars:    cfg.MinProseChars,
 		direct:           direct,
 	}
 }
@@ -203,8 +241,14 @@ func (e *Engine) headers() map[string]string {
 
 type crawlRequest struct {
 	URLs          []string               `json:"urls"`
+	BrowserConfig map[string]interface{} `json:"browser_config,omitempty"`
 	CrawlerConfig map[string]interface{} `json:"crawler_config,omitempty"`
 }
+
+// challengeTitle matches the <title> of interstitial bot challenges that clear
+// by themselves after a few seconds of JS (Cloudflare "Just a moment...", its
+// localized variants, and the older "Attention Required").
+const challengeTitle = `/just a moment|un instant|einen moment|attention required|checking your browser|please wait/i`
 
 type crawlResponse struct {
 	Success bool          `json:"success"`
@@ -218,9 +262,10 @@ type crawlResult struct {
 	CleanedHTML string        `json:"cleaned_html"`
 	// Success is a pointer so a result that omits the field (older fixtures,
 	// pre-0.9.3 shapes) is not read as a failure — only an explicit false is.
-	Success      *bool  `json:"success"`
-	StatusCode   int    `json:"status_code"`
-	ErrorMessage string `json:"error_message"`
+	Success       *bool  `json:"success"`
+	StatusCode    int    `json:"status_code"`
+	ErrorMessage  string `json:"error_message"`
+	RedirectedURL string `json:"redirected_url"`
 }
 
 type crawlMarkdown struct {
@@ -240,7 +285,7 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, opts domain.EngineOpt
 		return domain.Document{}, fmt.Errorf("crawl4ai endpoint not configured (set OMNIFEED_CRAWL4AI_URL)")
 	}
 
-	rawURL = xcomURL(rawURL)
+	rawURL = consentBypassURL(xcomURL(rawURL))
 
 	release, err := e.limiter.Acquire(ctx, e.Name(), rawURL)
 	if err != nil {
@@ -262,9 +307,32 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, opts domain.EngineOpt
 		scan = *opts.ScanFullPage
 	}
 
-	doc, err := e.crawlOnce(ctx, rawURL, e.excludedSelector, scan)
+	if looksLikePDF(rawURL) {
+		return e.crawlOnce(ctx, rawURL, crawlOpts{pdf: true})
+	}
+
+	base := crawlOpts{excludedSelector: e.excludedSelector, scanFullPage: scan}
+	doc, err := e.crawlOnce(ctx, rawURL, base)
+	// Playwright's "page is navigating" race: a JS challenge or client redirect
+	// reloaded the page between load and extraction. One retry that waits for
+	// the network to settle is the upstream-recommended remedy.
+	if err != nil && isNavigationRace(err) && ctx.Err() == nil {
+		settled := base
+		settled.waitUntil = "networkidle"
+		doc, err = e.crawlOnce(ctx, rawURL, settled)
+	}
+	// A bot wall on the modern identity: retry once on crawl4ai's default
+	// one (see browserParams). Only blocks qualify — a 404 or a thin page
+	// would come back the same.
+	if err != nil && e.userAgent != "" && isBlock(err) && ctx.Err() == nil {
+		alt := base
+		alt.altFingerprint = true
+		if altDoc, altErr := e.crawlOnce(ctx, rawURL, alt); altErr == nil {
+			doc, err = altDoc, nil
+		}
+	}
 	if err != nil && e.excludedSelector != "" && isThinContent(err) && ctx.Err() == nil {
-		doc, err = e.crawlOnce(ctx, rawURL, "", scan)
+		doc, err = e.crawlOnce(ctx, rawURL, crawlOpts{scanFullPage: scan})
 	}
 	// Last resort: crawl4ai's content gate rejects a body it cannot render as a
 	// page — which is every JSON/plain-text API response served from a path with
@@ -277,7 +345,139 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, opts domain.EngineOpt
 			return rescued, nil
 		}
 	}
+	// A PDF behind an extensionless URL fails the browser path: Chromium
+	// starts a download ("Download is starting") or crawl4ai's content gate
+	// rejects the body. One header-only probe confirms it before the PDF
+	// retry; pages that crawled fine, and walls, never pay for it.
+	if err != nil && (isRescuable(err) || strings.Contains(err.Error(), "Download is starting")) && ctx.Err() == nil && e.servesPDF(ctx, rawURL) {
+		return e.crawlOnce(ctx, rawURL, crawlOpts{pdf: true})
+	}
 	return doc, err
+}
+
+// looksLikePDF reports a URL whose path names a PDF (".pdf", or arXiv's
+// /pdf/<id> form), routed to the PDF strategy without probing.
+func looksLikePDF(rawURL string) bool {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	p := strings.ToLower(u.Path)
+	return strings.HasSuffix(p, ".pdf") || (strings.HasSuffix(u.Hostname(), "arxiv.org") && strings.HasPrefix(p, "/pdf/"))
+}
+
+// servesPDF probes rawURL's Content-Type with a GET whose body is never read.
+func (e *Engine) servesPDF(ctx context.Context, rawURL string) bool {
+	if e.direct == nil {
+		return false
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	resp, err := e.direct.DoRetry(probeCtx, http.MethodGet, rawURL, nil,
+		map[string]string{"User-Agent": rawUserAgent}, httpx.RetryConfig{MaxAttempts: 1})
+	if err != nil {
+		return false
+	}
+	_ = resp.Body.Close()
+	return resp.StatusCode == http.StatusOK && rawContentType(resp) == "application/pdf"
+}
+
+// isBlock reports a bot wall: a challenge, a block page or a 403. A 429 is
+// left out on purpose — it asks us to slow down, not to come back as someone
+// else.
+func isBlock(err error) bool {
+	var fe *domain.FetchError
+	if !errors.As(err, &fe) {
+		return false
+	}
+	switch fe.Kind {
+	case domain.KindCaptcha, domain.KindBotBlock, domain.KindHTTP403:
+		return true
+	}
+	return false
+}
+
+// isNavigationRace reports whether err is Playwright's "page is navigating
+// and changing the content" failure.
+func isNavigationRace(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "page is navigating")
+}
+
+var (
+	mdLinkTarget = regexp.MustCompile(`\]\([^)]*\)`)
+	bareURL      = regexp.MustCompile(`https?://\S+`)
+	mdSyntax     = regexp.MustCompile("[#*_\\[\\]|`>\u200b-\u200f\u2060\ufeff-]+")
+	spaces       = regexp.MustCompile(`\s+`)
+)
+
+// proseText reduces markdown to human-readable text: link targets, bare URLs,
+// markdown syntax and zero-width runes are dropped.
+func proseText(s string) string {
+	s = mdLinkTarget.ReplaceAllString(s, "]")
+	s = bareURL.ReplaceAllString(s, "")
+	s = mdSyntax.ReplaceAllString(s, " ")
+	return strings.TrimSpace(spaces.ReplaceAllString(s, " "))
+}
+
+func proseChars(s string) int { return len([]rune(proseText(s))) }
+
+// softNotFound matches a "not found" page served with a 2xx/3xx status (soft
+// 404). Only the page's opening prose is checked, so an article that merely
+// discusses 404s further down is not caught; bare "404 Not Found" is left out
+// because it is also the title of HTTP reference pages.
+var softNotFound = regexp.MustCompile(`(?i)\bpage not found\b|\bpage (you|you're|you are) (were |are )?looking for\b|\bthis page (doesn't|does not|no longer) exists?\b|\bthis page is not available\b|\bpage introuvable\b|\bseite nicht gefunden\b`)
+
+// silentFailure classifies a 2xx page whose content is not the requested
+// content: a soft 404, or a client-rendered skeleton captured before hydration
+// (a wall of "Loading" placeholders).
+func silentFailure(content, scan string) (domain.FailureKind, string) {
+	// Akamai Bot Manager's interstitial: the whole page is its logo line.
+	// The markdown keeps only "Powered and protected by" (the Akamai logo is
+	// an external image, stripped), so the vendor is read from scan (cleaned
+	// HTML + markdown). A real page may credit its CDN in a footer, so only a
+	// near-empty page counts.
+	if strings.Contains(strings.ToLower(content), "powered and protected by") && strings.Contains(strings.ToLower(scan), "akamai") && proseChars(content) < 300 {
+		return domain.KindBotBlock, "akamai bot manager interstitial"
+	}
+	// Soft 404: the phrase must stand as its own short line (a heading or
+	// banner) BEFORE the page's first real paragraph. An error page leads
+	// with it; an article that has a "Page not found" section (MDN's 404
+	// reference) reaches it only after prose, so scanning stops there.
+	seen := 0
+	for _, l := range strings.Split(content, "\n") {
+		l = proseText(l)
+		if l == "" {
+			continue
+		}
+		if seen++; seen > 12 || len([]rune(l)) >= 120 {
+			break
+		}
+		if len([]rune(l)) <= 60 {
+			if m := softNotFound.FindString(l); m != "" {
+				return domain.KindNotFound, "soft 404: " + m
+			}
+		}
+	}
+	// Geo country picker served in place of the page (Best Buy from an EU
+	// egress): short, and leads with the picker.
+	if head := strings.ToLower(firstLines(content, 10)); proseChars(content) < 1500 && (strings.Contains(head, "choose a country") || strings.Contains(head, "select your country")) {
+		return domain.KindBotBlock, "country picker interstitial"
+	}
+	lines, loading := 0, 0
+	for _, l := range strings.Split(content, "\n") {
+		l = strings.ToLower(strings.Trim(strings.TrimSpace(l), ".…#* "))
+		if l == "" {
+			continue
+		}
+		lines++
+		if l == "loading" {
+			loading++
+		}
+	}
+	if loading >= 10 && loading*10 > lines*3 {
+		return domain.KindThinContent, fmt.Sprintf("skeleton: %d/%d lines are Loading placeholders", loading, lines)
+	}
+	return "", ""
 }
 
 // isThinContent reports whether err is the thin-content classification.
@@ -298,9 +498,38 @@ func isRescuable(err error) bool {
 	return fe.Kind == domain.KindThinContent || fe.Kind == domain.KindUpstreamRejected
 }
 
-// crawlOnce performs one crawl4ai request with the given excluded selector
-// ("" omits the field — exclude nothing) and full-page-scan setting.
-func (e *Engine) crawlOnce(ctx context.Context, rawURL, excludedSelector string, scanFullPage bool) (domain.Document, error) {
+// browserParams builds the BrowserConfig overrides. altFingerprint keeps
+// crawl4ai's own default user agent: Cloudflare-fronted sites reject that
+// default while Akamai-fronted ones reject the modern UA (measured
+// 2026-10-08: lequipe, boulanger, lesechos), so a block on one identity is
+// retried once on the other.
+func (e *Engine) browserParams(altFingerprint bool) map[string]interface{} {
+	bp := map[string]interface{}{}
+	if e.userAgent != "" && !altFingerprint {
+		bp["user_agent"] = e.userAgent
+	}
+	if e.stealth {
+		bp["enable_stealth"] = true
+	}
+	return bp
+}
+
+// crawlOpts are the per-attempt variations of one crawl4ai request.
+type crawlOpts struct {
+	excludedSelector string // "" omits the field: exclude nothing
+	scanFullPage     bool
+	waitUntil        string // "" = the engine's configured wait_until
+	pdf              bool   // browserless PDF strategy instead of a page render
+	altFingerprint   bool   // crawl4ai's default user agent (see browserParams)
+}
+
+// crawlOnce performs one crawl4ai request.
+func (e *Engine) crawlOnce(ctx context.Context, rawURL string, o crawlOpts) (domain.Document, error) {
+	excludedSelector, scanFullPage, pdf := o.excludedSelector, o.scanFullPage, o.pdf
+	waitUntil := e.waitUntil
+	if o.waitUntil != "" {
+		waitUntil = o.waitUntil
+	}
 	// Dropping links silently loses the primary content on link-dense pages —
 	// e.g. every story title on a Hacker News front page is an external link.
 	// keepLinks renders anchor text (ignore_links=false) and retains external
@@ -310,7 +539,7 @@ func (e *Engine) crawlOnce(ctx context.Context, rawURL, excludedSelector string,
 
 	params := map[string]interface{}{
 		"word_count_threshold":     10,
-		"wait_until":               e.waitUntil,
+		"wait_until":               waitUntil,
 		"delay_before_return_html": e.delayBeforeHTML,
 		// crawl4ai silently clamps page_timeout from an untrusted REST body to
 		// 60000 ms, so anything higher is a lie we'd tell ourselves in logs.
@@ -342,7 +571,11 @@ func (e *Engine) crawlOnce(ctx context.Context, rawURL, excludedSelector string,
 						// the filter skip those subtrees whole (available since
 						// crawl4ai 0.9.1; upstream bug unclecode/crawl4ai#2110).
 						// "table" stays OUT: it would re-admit chrome tables.
-						"preserve_tags":    []string{"pre", "code"},
+						// ul/ol go IN: link-only list items (package deps, index
+						// pages) score below the threshold and vanish. Benchmark
+						// 2026-10-08: recovers Arch deps / gov.uk / OCW, prose pages
+						// grow 0-13%.
+						"preserve_tags":    []string{"pre", "code", "ul", "ol"},
 						"preserve_classes": []string{"highlight", "chroma", "highlighter-rouge", "codehilite"},
 					},
 				},
@@ -374,9 +607,30 @@ func (e *Engine) crawlOnce(ctx context.Context, rawURL, excludedSelector string,
 		params["target_elements"] = e.targetElements
 	}
 
+	// PDFs: crawl4ai switches to its browserless PDFCrawlerStrategy (pypdf)
+	// when the scraping strategy is PDFContentScrapingStrategy. The pruning
+	// filter and the browser-only knobs mean nothing there, and pruning drops
+	// most of a paper's paragraphs, so only the strategy and timeout go out.
+	if pdf {
+		params = map[string]interface{}{
+			"page_timeout":      maxPageTimeoutMS,
+			"scraping_strategy": map[string]interface{}{"type": "PDFContentScrapingStrategy", "params": map[string]interface{}{}},
+		}
+	}
+	if e.challengeWait > 0 && !pdf {
+		params["wait_for"] = "js:() => !" + challengeTitle + ".test(document.title)"
+		params["wait_for_timeout"] = int(e.challengeWait / time.Millisecond)
+	}
+
 	req := crawlRequest{
 		URLs:          []string{rawURL},
 		CrawlerConfig: map[string]interface{}{"type": "CrawlerRunConfig", "params": params},
+	}
+	// Both keys are on crawl4ai's untrusted-body allowlist (cookies/headers
+	// are not — they 400). An identical browser_config on every call keeps
+	// crawl4ai's pool on one warm browser.
+	if bp := e.browserParams(o.altFingerprint); len(bp) > 0 && !pdf {
+		req.BrowserConfig = map[string]interface{}{"type": "BrowserConfig", "params": bp}
 	}
 
 	body, err := json.Marshal(req)
@@ -396,9 +650,15 @@ func (e *Engine) crawlOnce(ctx context.Context, rawURL, excludedSelector string,
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
 	if err != nil {
 		return domain.Document{}, fmt.Errorf("read response: %w", err)
+	}
+	// A body cut at the cap fails json.Unmarshal as "unexpected end of JSON
+	// input", which hides the real cause; say so explicitly instead.
+	if len(respBody) > maxResponseBytes {
+		return domain.Document{}, &domain.FetchError{Kind: domain.KindBadResponse,
+			Err: fmt.Errorf("crawl4ai response exceeds %d MiB", maxResponseBytes>>20)}
 	}
 	if resp.StatusCode != http.StatusOK {
 		return domain.Document{}, &domain.FetchError{
@@ -439,9 +699,6 @@ func (e *Engine) crawlOnce(ctx context.Context, rawURL, excludedSelector string,
 	if strings.TrimSpace(content) == "" {
 		content = result.Markdown.RawMarkdown
 	}
-	if strings.TrimSpace(content) == "" {
-		content = result.CleanedHTML
-	}
 
 	// A bot wall often arrives as a "successful" HTTP 200 whose body is a
 	// challenge page, so a crawl that succeeded can still be a block. Reclassify
@@ -454,12 +711,39 @@ func (e *Engine) crawlOnce(ctx context.Context, rawURL, excludedSelector string,
 	if marker, blocked := antibot.Detect(scan); blocked {
 		return domain.Document{}, &domain.FetchError{Kind: domain.KindCaptcha, StatusCode: result.StatusCode, Marker: marker}
 	}
+	// Google's EU consent interstitial is served from consent.<site> after a
+	// redirect: the page is a language picker, never the requested content.
+	if u, err := url.Parse(result.RedirectedURL); err == nil && strings.HasPrefix(u.Hostname(), "consent.") {
+		return domain.Document{}, &domain.FetchError{Kind: domain.KindCaptcha, StatusCode: result.StatusCode, Marker: "consent redirect " + u.Hostname()}
+	}
 	if result.StatusCode == http.StatusForbidden || result.StatusCode == http.StatusTooManyRequests {
 		return domain.Document{}, &domain.FetchError{
 			Kind:       domain.KindForStatus(result.StatusCode),
 			StatusCode: result.StatusCode,
 			Err:        fmt.Errorf("crawl4ai page returned %d (blocked)", result.StatusCode),
 		}
+	}
+	// Any other error status means the page itself is an error page (404 body,
+	// 451 legal block, 5xx). Serving its markdown as success is a silent
+	// failure the caller can't detect — and so can't fall back from.
+	if result.StatusCode >= 400 {
+		kind := domain.KindForStatus(result.StatusCode)
+		// A public page answering 401/402/405/… to a plain GET is refusing
+		// the visitor (AWS WAF challenges answer 405, Cloudflare-fronted
+		// logins 401), not reporting a fault: classify it as a block so the
+		// caller switches source and the alternate fingerprint gets a try.
+		if kind == domain.KindError && result.StatusCode != http.StatusBadRequest {
+			kind = domain.KindBotBlock
+		}
+		return domain.Document{}, &domain.FetchError{
+			Kind:       kind,
+			StatusCode: result.StatusCode,
+			Err:        fmt.Errorf("crawl4ai page returned %d", result.StatusCode),
+		}
+	}
+
+	if kind, why := silentFailure(content, scan); kind != "" {
+		return domain.Document{}, &domain.FetchError{Kind: kind, StatusCode: result.StatusCode, Err: errors.New(why)}
 	}
 
 	// crawl4ai has no "extracted nothing" flag: a page it failed to render comes
@@ -477,14 +761,80 @@ func (e *Engine) crawlOnce(ctx context.Context, rawURL, excludedSelector string,
 		}
 	}
 
-	return domain.Document{
-		PageContent: content,
-		Metadata: map[string]string{
-			"source":              rawURL,
-			"status_code":         fmt.Sprintf("%d", result.StatusCode),
-			domain.ContentTypeKey: domain.ContentTypeMarkdown,
-		},
-	}, nil
+	if n := proseChars(content); e.minProseChars > 0 && n < e.minProseChars {
+		return domain.Document{}, &domain.FetchError{
+			Kind:       domain.KindThinContent,
+			StatusCode: result.StatusCode,
+			Err:        fmt.Errorf("crawl4ai extracted %d prose chars (< %d)", n, e.minProseChars),
+		}
+	}
+
+	meta := map[string]string{
+		"source":              rawURL,
+		"status_code":         fmt.Sprintf("%d", result.StatusCode),
+		domain.ContentTypeKey: domain.ContentTypeMarkdown,
+	}
+	// A redirect to a different page (a hotel URL landing on a city search, a
+	// retired article landing on the section front) still renders fine, so
+	// nothing above fails it — but the caller only sees the content, not
+	// _meta. Say it in-band, once, so the agent can tell it got another page.
+	if final := result.RedirectedURL; final != "" && redirectedElsewhere(rawURL, final) {
+		// A redirect INTO a verification page (Temu's /bgn_verification.html,
+		// Google's /sorry/) is a wall even when its body passes every check.
+		if u, err := url.Parse(final); err == nil && verificationPath.MatchString(u.Path) {
+			return domain.Document{}, &domain.FetchError{Kind: domain.KindCaptcha, StatusCode: result.StatusCode, Marker: "redirect to " + u.Path}
+		}
+		// Redirected into a sign-in page the caller did not ask for (Temu,
+		// LinkedIn's /authwall): the content is a login form.
+		if u, err := url.Parse(final); err == nil && loginPath.MatchString(u.Path) && !loginPath.MatchString(rawPath(rawURL)) {
+			return domain.Document{}, &domain.FetchError{Kind: domain.KindBotBlock, StatusCode: result.StatusCode, Err: fmt.Errorf("redirected to sign-in page %s", u.Path)}
+		}
+		meta["final_url"] = final
+		content = "> Redirected from " + rawURL + " to " + final + "\n\n" + content
+	}
+	return domain.Document{PageContent: content, Metadata: meta}, nil
+}
+
+func rawPath(rawURL string) string {
+	if u, err := url.Parse(rawURL); err == nil {
+		return u.Path
+	}
+	return ""
+}
+
+// firstLines returns the first n non-empty lines of s.
+func firstLines(s string, n int) string {
+	var out []string
+	for _, l := range strings.Split(s, "\n") {
+		if strings.TrimSpace(l) == "" {
+			continue
+		}
+		if out = append(out, l); len(out) == n {
+			break
+		}
+	}
+	return strings.Join(out, "\n")
+}
+
+// loginPath matches a sign-in wall a site redirects anonymous visitors to.
+var loginPath = regexp.MustCompile(`(?i)/(login|signin|sign-in|sign_in|authwall)(/|$|\.|\?)`)
+
+// verificationPath matches the path of a bot-check page a site redirects to.
+var verificationPath = regexp.MustCompile(`(?i)captcha|_verification\b|/(verify|challenge)(/|$|\.)|/sorry/`)
+
+// redirectedElsewhere reports a redirect that changed the page itself: another
+// host (www. ignored) or another path (trailing slash and case ignored).
+// Query and fragment changes are not reported: tracking parameters and
+// consent bypasses rewrite them on every hop.
+func redirectedElsewhere(from, to string) bool {
+	a, errA := url.Parse(from)
+	b, errB := url.Parse(to)
+	if errA != nil || errB != nil {
+		return false
+	}
+	host := func(u *url.URL) string { return strings.TrimPrefix(strings.ToLower(u.Hostname()), "www.") }
+	path := func(u *url.URL) string { return strings.TrimSuffix(strings.ToLower(u.EscapedPath()), "/") }
+	return host(a) != host(b) || path(a) != path(b)
 }
 
 // verdictError turns a crawl4ai failure message into a classified FetchError
@@ -581,5 +931,28 @@ func xcomURL(rawURL string) string {
 		return rawURL
 	}
 	u.Host = "x.com"
+	return u.String()
+}
+
+// consentBypassURL adds ucbcb=1 to Google and YouTube URLs. From an EU egress
+// those hosts 302 every cookieless visitor to consent.<host>, a language
+// picker; ucbcb=1 serves the page itself. crawl4ai refuses request-supplied
+// cookies (the SOCS consent cookie is not an option), so the URL is the lever.
+func consentBypassURL(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return rawURL
+	}
+	h := strings.TrimPrefix(strings.ToLower(u.Hostname()), "www.")
+	h = strings.TrimPrefix(h, "m.")
+	if h != "youtube.com" && h != "google.com" && h != "news.google.com" {
+		return rawURL
+	}
+	q := u.Query()
+	if q.Has("ucbcb") {
+		return rawURL
+	}
+	q.Set("ucbcb", "1")
+	u.RawQuery = q.Encode()
 	return u.String()
 }
