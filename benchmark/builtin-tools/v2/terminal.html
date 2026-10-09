@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>TERMINAL — omnifeed vs built-in</title>
+<style>
+:root{--g:#39ff6a;--g2:#1f9e40;--amber:#ffb347;--red:#ff3b3b;--blue:#6fb6ff;--bg:#020a02}
+*{box-sizing:border-box}html,body{height:100%}body{margin:0;background:#000;display:flex;align-items:center;justify-content:center;font:15px/1.45 "VT323",ui-monospace,"SFMono-Regular",Menlo,Consolas,monospace;color:var(--g)}
+.bezel{width:min(1100px,96vw);height:min(760px,92vh);background:#111;border-radius:34px;padding:34px;box-shadow:0 0 0 2px #222,0 30px 80px #000,inset 0 0 40px #000;position:relative}
+.screen{position:relative;width:100%;height:100%;border-radius:26px;overflow:hidden;background:radial-gradient(ellipse at center,#062a0d 0%,var(--bg) 70%);box-shadow:inset 0 0 120px rgba(0,0,0,.9);animation:flicker 4s infinite}
+.screen::before{content:"";position:absolute;inset:0;pointer-events:none;z-index:3;background:repeating-linear-gradient(0deg,rgba(0,0,0,.28) 0 1px,transparent 1px 3px)}
+.screen::after{content:"";position:absolute;inset:0;pointer-events:none;z-index:4;background:radial-gradient(ellipse at center,transparent 60%,rgba(0,0,0,.7) 100%)}
+@keyframes flicker{0%,100%{opacity:1}48%{opacity:.97}50%{opacity:.92}52%{opacity:.98}}
+.top{position:absolute;top:0;left:0;right:0;z-index:2;padding:14px 22px 8px;border-bottom:1px dashed var(--g2);background:rgba(2,10,2,.85);text-shadow:0 0 6px var(--g)}
+.row{display:flex;justify-content:space-between;gap:20px;white-space:nowrap}
+.bar{letter-spacing:-1px}
+#out{position:absolute;top:96px;bottom:34px;left:0;right:0;padding:0 22px;overflow:hidden;white-space:pre;text-shadow:0 0 5px var(--g),0 0 12px rgba(57,255,106,.35)}
+.foot{position:absolute;bottom:0;left:0;right:0;padding:6px 22px;z-index:2;font-size:13px;color:var(--g2);border-top:1px dashed var(--g2);background:rgba(2,10,2,.85)}
+.bad{color:var(--red);text-shadow:0 0 6px var(--red)}.warn{color:var(--amber);text-shadow:0 0 6px var(--amber)}.ok{color:var(--g)}.dim{color:var(--g2)}.b{color:var(--blue);text-shadow:0 0 6px var(--blue)}.o{color:var(--amber)}
+.cursor{display:inline-block;width:9px;height:16px;background:var(--g);vertical-align:-3px;animation:blink 1s steps(1) infinite;box-shadow:0 0 8px var(--g)}
+@keyframes blink{50%{opacity:0}}
+.glitch{animation:glitch .18s steps(2) 1}
+@keyframes glitch{0%{transform:translate(2px,-1px);filter:hue-rotate(90deg) contrast(1.6)}50%{transform:translate(-3px,1px);text-shadow:3px 0 var(--red),-3px 0 var(--blue)}100%{transform:none}}
+a{color:var(--g2)}
+.banner{color:var(--amber);text-shadow:0 0 10px var(--amber)}
+@media (prefers-reduced-motion:reduce){.screen,.cursor,.glitch{animation:none!important}}
+</style>
+</head>
+<body>
+<div class="bezel"><div class="screen" id="scr">
+  <div class="top">
+    <div class="row"><span>■ BENCH-OS v2.6 // OMNIFEED vs BUILT-IN</span><span id="clk">T+000.0</span></div>
+    <div class="row"><span><span class="o">OMNIFEED</span> <span id="so">000</span> <span class="bar o" id="bo"></span></span><span><span class="b">BUILT-IN</span> <span id="sb">000</span> <span class="bar b" id="bb"></span></span></div>
+  </div>
+  <div id="out"></div>
+  <div class="foot">[SPACE] pause · [F] turbo · [S] skip to end · [R] restart · <a href="./">[ESC] exit to all versions</a></div>
+</div></div>
+<script src="stats.js"></script>
+<script>
+const reduce=matchMedia('(prefers-reduced-motion: reduce)').matches;
+BENCH.load().then(R=>{
+  const {host,pct}=BENCH,out=document.getElementById('out'),scr=document.getElementById('scr');
+  const pad=(s,n)=>(s+' '.repeat(n)).slice(0,n),code=o=>({success:['OK','ok'],partial:['PARTIAL','warn'],softblock:['"OK" (LIE)','bad'],blocked:['BLOCKED','bad'],error:['CRASH','bad'],refused:['REFUSED','dim']})[o];
+  const why=n=>(n.match(/DataDome|PerimeterX|Akamai|Cloudflare|HTTP \d{3}|blocklist|402|403|429|451|404|timeout|Timeout|consent|crash|JSON|navigat/i)||[''])[0];
+  const lines=[];
+  const add=(html,ev)=>lines.push({html,ev});
+  ['BENCH-OS BIOS v2.6  (c) 2026 omnifeed','CHECKING MEMORY ........ 15000000 TOKENS OK','MOUNTING data.json ...... OK',`LOADING TARGETS ......... ${R.n} SITES, ${R.nq} QUERIES`,'EGRESS .................. FR / home connection','WEBFETCH UA ............. Claude-User (claude-code/2.1.288)','OMNIFEED UA ............. Chrome/116 <span class="warn">[STALE]</span>','','> run benchmark --sequential --no-retries',''].forEach(l=>add(l));
+  add('<span class="dim">== PHASE 1: SEARCH (40 queries) =====================================</span>');
+  R.Q.forEach((q,i)=>{const w=/^omnifeed/.test(q.winner)?'o':/^builtin/.test(q.winner)?'b':'t';
+    add(`<span class="dim">[Q${String(i+1).padStart(2,'0')}]</span> ${pad(q.query,46)} <span class="b">${pad((q.builtin.ms[q.builtin.ms.length-1]/1000).toFixed(2)+'s',7)}</span> <span class="o">${pad((q.omnifeed.ms[0]/1000).toFixed(2)+'s',6)}</span> ${w==='o'?'<span class="o">◀ OMNIFEED</span>':w==='b'?'<span class="b">◀ BUILT-IN</span>':'<span class="dim">= TIE</span>'}`,{sq:w})});
+  add('');add(`<span class="dim">   search p50 :: built-in ${(pct(R.lat.sB,50)/1000).toFixed(2)}s  vs  omnifeed ${(pct(R.lat.sO,50)/1000).toFixed(2)}s   → ${Math.round(pct(R.lat.sB,50)/pct(R.lat.sO,50))}x FASTER</span>`);add('');
+  add('<span class="dim">== PHASE 2: FETCH (272 sites) ========================================</span>');
+  R.S.forEach((s,i)=>{const cb=code(s.builtin.outcome),co=code(s.omnifeed.outcome);
+    add(`<span class="dim">$</span> webfetch  ${pad(host(s.url),30)} <span class="${cb[1]}">${pad(cb[0],10)}</span> ${pad((s.builtin.ms/1000).toFixed(2)+'s',7)} <span class="dim">${why(s.builtin.note)}</span>`,{t:'b',o:s.builtin.outcome});
+    add(`<span class="dim">$</span> omnifeed  ${pad(host(s.url),30)} <span class="${co[1]}">${pad(co[0],10)}</span> ${pad((s.omnifeed.ms/1000).toFixed(2)+'s',7)} <span class="dim">${why(s.omnifeed.note)}</span>`,{t:'o',o:s.omnifeed.outcome});
+  });
+  const big=`
+   ██████╗ ███╗   ███╗███╗   ██╗██╗███████╗███████╗███████╗██████╗
+  ██╔═══██╗████╗ ████║████╗  ██║██║██╔════╝██╔════╝██╔════╝██╔══██╗
+  ██║   ██║██╔████╔██║██╔██╗ ██║██║█████╗  █████╗  █████╗  ██║  ██║
+  ██║   ██║██║╚██╔╝██║██║╚██╗██║██║██╔══╝  ██╔══╝  ██╔══╝  ██║  ██║
+  ╚██████╔╝██║ ╚═╝ ██║██║ ╚████║██║██║     ███████╗███████╗██████╔╝
+   ╚═════╝ ╚═╝     ╚═╝╚═╝  ╚═══╝╚═╝╚═╝     ╚══════╝╚══════╝╚═════╝  WINS`;
+  add('');add(`<span class="banner">${big}</span>`);
+  add('');add(`  USABLE SITES   omnifeed <span class="o">${R.usableO}</span>  vs  built-in <span class="b">${R.usableB}</span>   (of ${R.n})`);
+  add(`  SEARCH         omnifeed <span class="o">${R.searchWins.o}</span>  vs  built-in <span class="b">${R.searchWins.b}</span>   (${R.searchWins.t} ties)`);
+  add(`  NEWS           omnifeed <span class="o">${R.news.o}</span>  vs  built-in <span class="b">${R.news.b}</span>   (of ${R.news.n})`);
+  add(`  <span class="bad">WARNING: omnifeed lied ${R.soft.length} times (silent failures reported as success)</span>`);
+  add(`  <span class="ok">PATCH AVAILABLE: report failures + fallback → ${R.fallbackFixed}/${R.n} coverage</span>`);
+  add('');add('> _');
+  let li=0,ci=0,paused=false,turbo=false,sb=0,so=0,t0=performance.now();const shown=[];
+  const MAXL=Math.floor((out.clientHeight||560)/21.75);
+  function plain(h){const d=document.createElement('div');d.innerHTML=h;return d.textContent}
+  function render(partial){const vis=shown.slice(-MAXL+1);out.innerHTML=vis.join('\n')+(partial!==undefined?'\n'+partial:'')+'<span class="cursor"></span>'}
+  function score(ev){if(!ev)return;if(ev.sq){if(ev.sq==='o')so++;if(ev.sq==='b')sb++}
+    if(ev.t){if(BENCH.USE(ev.o)){ev.t==='o'?so++:sb++}else if(!reduce&&(ev.o==='softblock'||ev.o==='blocked'||ev.o==='error')){scr.classList.remove('glitch');void scr.offsetWidth;scr.classList.add('glitch')}}
+    const mx=R.usableO+R.searchWins.o;document.getElementById('so').textContent=String(so).padStart(3,'0');document.getElementById('sb').textContent=String(sb).padStart(3,'0');
+    document.getElementById('bo').textContent='▓'.repeat(Math.round(so/mx*24));document.getElementById('bb').textContent='▓'.repeat(Math.round(sb/mx*24))}
+  function step(){if(paused||li>=lines.length)return schedule();
+    const L=lines[li],txt=plain(L.html);
+    if(turbo||reduce||ci>=txt.length){shown.push(L.html);score(L.ev);li++;ci=0;render()}
+    else{ci+=Math.max(1,Math.ceil(txt.length/12));render(`<span>${txt.slice(0,ci)}</span>`)}
+    document.getElementById('clk').textContent='T+'+((performance.now()-t0)/1000).toFixed(1).padStart(5,'0');schedule()}
+  function schedule(){setTimeout(step,turbo?4:li<10?40:16)}
+  addEventListener('keydown',e=>{const k=e.key.toLowerCase();if(k===' '){paused=!paused;e.preventDefault()}if(k==='f')turbo=!turbo;
+    if(k==='s'){while(li<lines.length){shown.push(lines[li].html);score(lines[li].ev);li++}render()}
+    if(k==='r'){li=0;ci=0;shown.length=0;sb=0;so=0;t0=performance.now();score({})}if(e.key==='Escape')location.href='./'});
+  if(reduce){lines.forEach(L=>{shown.push(L.html);score(L.ev)});li=lines.length;render()}else step();
+});
+</script>
+</body>
+</html>

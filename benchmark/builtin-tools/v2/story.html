@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>The story — omnifeed vs built-in</title>
+<style>
+:root{color-scheme:light dark;--page:#f9f9f7;--card:#fcfcfb;--ink:#0b0b0b;--ink2:#52514e;--line:#e1e0d9;--b:#2a78d6;--o:#eb6834;--both:#0ca30c;--none:#c3c2b7;--bad:#d03b3b}
+@media (prefers-color-scheme:dark){:root{--page:#0d0d0d;--card:#1a1a19;--ink:#fff;--ink2:#c3c2b7;--line:#2c2c2a;--b:#3987e5;--o:#d95926;--none:#383835}}
+*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:var(--page);color:var(--ink);font:17px/1.6 system-ui,-apple-system,"Segoe UI",sans-serif}
+nav{position:fixed;top:14px;left:18px;z-index:5;font-size:13px}nav a{color:var(--ink2)}
+.progress{position:fixed;top:0;left:0;height:3px;background:linear-gradient(90deg,var(--b),var(--o));width:0;z-index:6}
+section{min-height:100vh;display:flex;flex-direction:column;justify-content:center;max-width:980px;margin:0 auto;padding:80px 28px}
+.ch{font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink2);margin-bottom:10px}
+h1{font-size:clamp(40px,7vw,84px);line-height:1;margin:0 0 18px;letter-spacing:-.03em}
+h2{font-size:clamp(30px,4.5vw,54px);line-height:1.05;margin:0 0 16px;letter-spacing:-.02em}
+p{color:var(--ink2);max-width:680px;margin:0 0 18px}
+.big{font-size:clamp(56px,10vw,128px);font-weight:800;font-variant-numeric:tabular-nums;line-height:1}
+.b{color:var(--b)}.o{color:var(--o)}
+.reveal{opacity:0;transform:translateY(40px);transition:opacity .9s ease,transform .9s cubic-bezier(.2,.8,.2,1)}
+.in .reveal,.reveal.in{opacity:1;transform:none}
+.in .reveal:nth-child(2){transition-delay:.12s}.in .reveal:nth-child(3){transition-delay:.24s}.in .reveal:nth-child(4){transition-delay:.36s}
+.bars{display:grid;gap:14px;margin-top:20px;max-width:760px}
+.bar{display:grid;grid-template-columns:110px 1fr 90px;align-items:center;gap:12px;font-size:15px}
+.track{height:22px;background:var(--line);border-radius:6px;overflow:hidden}
+.fill{height:100%;width:0;border-radius:6px;transition:width 1.6s cubic-bezier(.2,.8,.2,1)}
+.val{font-variant-numeric:tabular-nums;font-weight:650;text-align:right}
+.waffle{display:grid;grid-template-columns:repeat(34,1fr);gap:3px;max-width:820px;margin:18px 0}
+.waffle i{aspect-ratio:1;border-radius:3px;background:var(--line);transform:scale(.2);opacity:0;transition:transform .4s,opacity .4s,background .4s}
+.waffle.in i{transform:none;opacity:1}
+.legend{display:flex;gap:18px;flex-wrap:wrap;font-size:14px;color:var(--ink2)}.legend span{display:flex;align-items:center;gap:6px}.legend i{width:12px;height:12px;border-radius:3px;display:inline-block}
+.rain{position:relative;height:340px;overflow:hidden;border:1px solid var(--line);border-radius:14px;background:var(--card);margin-top:10px}
+.rain span{position:absolute;top:-30px;font-size:13px;padding:3px 8px;border-radius:999px;border:1px solid var(--line);background:var(--page);white-space:nowrap;color:var(--ink2)}
+.rain.in span{animation:fall var(--d) cubic-bezier(.3,.6,.4,1) var(--w) forwards}
+@keyframes fall{to{top:var(--y);transform:rotate(var(--r))}}
+.flip{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px;margin-top:12px}
+.card{perspective:800px;height:74px}.card div{position:relative;width:100%;height:100%;transition:transform .8s;transform-style:preserve-3d}
+.card .f,.card .k{position:absolute;inset:0;backface-visibility:hidden;border-radius:10px;padding:10px 12px;font-size:13px;border:1px solid var(--line);background:var(--card)}
+.card .k{transform:rotateY(180deg);border-color:var(--bad);color:var(--ink)}
+.flip.in .card div{transform:rotateY(180deg)}
+.ok{color:var(--both);font-weight:650}.ko{color:var(--bad);font-weight:650}
+.scrollhint{margin-top:40px;font-size:13px;color:var(--ink2);animation:bob 1.6s ease-in-out infinite}
+@keyframes bob{50%{transform:translateY(6px)}}
+@media (prefers-reduced-motion:reduce){.reveal,.fill,.waffle i,.card div{transition:none!important}.rain span{animation:none!important;top:var(--y)!important}.scrollhint{animation:none}}
+</style>
+</head>
+<body>
+<div class="progress" id="prog"></div>
+<nav><a href="./">← All versions</a></nav>
+
+<section data-ch="1">
+  <div class="ch reveal">Chapter 1 · The setup</div>
+  <h1 class="reveal"><span class="count" data-to="272">0</span> websites.<br><span class="count" data-to="40">0</span> searches.<br>Two tools.</h1>
+  <p class="reveal">Claude Code's built-in <b class="b">WebSearch/WebFetch</b> against self-hosted <b class="o">omnifeed</b>. Every site and every query was hit once by each tool, one call at a time, paced over about three hours on 2026-10-09.</p>
+  <div class="scrollhint">Scroll ↓</div>
+</section>
+
+<section data-ch="2">
+  <div class="ch reveal">Chapter 2 · Search speed</div>
+  <h2 class="reveal">About a second against <span class="b" id="sB">7</span> seconds.</h2>
+  <p class="reveal">Median search latency. omnifeed's <i>slowest</i> search was still faster than the built-in's p10.</p>
+  <div class="bars reveal" id="speedBars"></div>
+</section>
+
+<section data-ch="3">
+  <div class="ch reveal">Chapter 3 · Who can read the web</div>
+  <h2 class="reveal"><span class="o count" data-to="207">0</span> vs <span class="b count" data-to="161">0</span> sites with usable content.</h2>
+  <p class="reveal">Each square is one of the 272 sites.</p>
+  <div class="waffle" id="waffle"></div>
+  <div class="legend reveal" id="wlegend"></div>
+</section>
+
+<section data-ch="4">
+  <div class="ch reveal">Chapter 4 · The blocklist</div>
+  <h2 class="reveal"><span class="count" data-to="48">0</span> domains the built-in refuses before sending a request.</h2>
+  <p class="reveal">Claude Code ships with a domain blocklist. It covers most of the world's major news outlets, plus Reddit, Stack Overflow, Genius, Imgur and more.</p>
+  <div class="rain" id="rain"></div>
+</section>
+
+<section data-ch="5">
+  <div class="ch reveal">Chapter 5 · The news</div>
+  <h2 class="reveal">Of 58 news sites, the built-in could read <span class="b count" data-to="13">0</span>. omnifeed read <span class="o count" data-to="49">0</span>.</h2>
+  <p class="reveal">English, French, German, Italian, Spanish, Dutch, Japanese and Korean front pages. omnifeed only lost the outlets behind DataDome, plus one new 403 (Zeit).</p>
+  <div class="bars reveal" id="newsBars"></div>
+</section>
+
+<section data-ch="6">
+  <div class="ch reveal">Chapter 6 · The catch</div>
+  <h2 class="reveal"><span class="count" data-to="21">0</span> times, omnifeed said "success" and handed back garbage.</h2>
+  <p class="reveal">Down from 21 in v1: 404 pages, block walls and skeletons now come back as explicit errors. What is left: JS shells, a pruned table, a cookie banner.</p>
+  <div class="flip" id="flip"></div>
+</section>
+
+<section data-ch="7">
+  <div class="ch reveal">Chapter 7 · The fallback</div>
+  <h2 class="reveal">Add the built-in as a fallback and coverage reaches <span class="count" data-to="229">0</span>/272.</h2>
+  <p class="reveal">omnifeed alone already covers most of it; the fallback mostly adds sites where omnifeed now fails honestly.</p>
+  <div class="bars reveal" id="fixBars"></div>
+  <p class="reveal" style="margin-top:28px"><a href="classic.html">Open the full dashboard →</a></p>
+</section>
+
+<script src="stats.js"></script>
+<script>
+const reduce=matchMedia('(prefers-reduced-motion: reduce)').matches;
+function countUp(el){const to=+el.dataset.to;if(reduce){el.textContent=to;return}const t0=performance.now(),d=1400;(function f(t){const k=Math.min(1,(t-t0)/d),e=1-Math.pow(1-k,3);el.textContent=Math.round(to*e);if(k<1)requestAnimationFrame(f)})(t0)}
+function bars(id,rows,max){document.getElementById(id).innerHTML=rows.map(([l,v,c,txt])=>`<div class="bar"><span>${l}</span><div class="track"><div class="fill" data-w="${v/max*100}" style="background:${c}"></div></div><span class="val">${txt}</span></div>`).join('')}
+BENCH.load().then(R=>{
+  const {pct,USE,host}=BENCH,s=v=>(v/1000).toFixed(2)+' s';
+  // v2: every counter comes from data.json, not from the v1 copy.
+  const V={272:R.n,40:R.nq,207:R.usableO,161:R.usableB,48:new Set(R.refused.map(x=>host(x.url))).size,13:R.news.b,49:R.news.o,21:R.soft.length,229:R.fallbackToday};
+  document.querySelectorAll('.count').forEach(el=>{if(V[el.dataset.to]!==undefined)el.dataset.to=V[el.dataset.to]});
+  document.getElementById('sB').textContent=(pct(R.lat.sB,50)/1000).toFixed(1);
+  bars('speedBars',[['Built-in',pct(R.lat.sB,50),'var(--b)',s(pct(R.lat.sB,50))],['omnifeed',pct(R.lat.sO,50),'var(--o)',s(pct(R.lat.sO,50))]],pct(R.lat.sB,50));
+  const order=[...R.both,...R.onlyO,...R.onlyB,...R.neither],col=x=>R.both.includes(x)?'var(--both)':R.onlyO.includes(x)?'var(--o)':R.onlyB.includes(x)?'var(--b)':'var(--none)';
+  document.getElementById('waffle').innerHTML=order.map((x,i)=>`<i title="${host(x.url)}" style="transition-delay:${reduce?0:i*6}ms;background:${col(x)}"></i>`).join('');
+  document.getElementById('wlegend').innerHTML=[['var(--both)','Both read it',R.both.length],['var(--o)','Only omnifeed',R.onlyO.length],['var(--b)','Only built-in',R.onlyB.length],['var(--none)','Neither',R.neither.length]].map(([c,l,n])=>`<span><i style="background:${c}"></i>${l} · ${n}</span>`).join('');
+  const doms=[...new Set(R.refused.map(x=>host(x.url)))];
+  document.getElementById('rain').innerHTML=doms.map((d,i)=>`<span style="left:${(i*37)%88+2}%;--y:${30+((i*53)%260)}px;--r:${((i*29)%24)-12}deg;--d:${1.2+((i*7)%10)/10}s;--w:${i*60}ms">${d}</span>`).join('');
+  bars('newsBars',[['Built-in',R.news.b,'var(--b)',`${R.news.b}/${R.news.n}`],['omnifeed',R.news.o,'var(--o)',`${R.news.o}/${R.news.n}`]],R.news.n);
+  document.getElementById('flip').innerHTML=R.soft.map(x=>`<div class="card"><div><div class="f"><span class="ok">✓ success</span><br>${host(x.url)}</div><div class="k"><span class="ko">✗ actually:</span> ${x.omnifeed.note.slice(0,90)}</div></div></div>`).join('');
+  bars('fixBars',[['Built-in only',R.usableB,'var(--b)',R.usableB],['omnifeed only',R.usableO,'var(--o)',R.usableO],['omni → built-in today',R.fallbackToday,'var(--none)',R.fallbackToday],['…with the fix',R.fallbackFixed,'var(--both)',R.fallbackFixed]],R.n);
+  const io=new IntersectionObserver(es=>es.forEach(e=>{if(!e.isIntersecting)return;const sec=e.target;sec.classList.add('in');
+    sec.querySelectorAll('.count:not(.done)').forEach(c=>{c.classList.add('done');countUp(c)});
+    sec.querySelectorAll('.fill').forEach(f=>f.style.width=f.dataset.w+'%');
+    sec.querySelectorAll('.waffle,.rain,.flip').forEach(x=>x.classList.add('in'));io.unobserve(sec)}),{threshold:.35});
+  document.querySelectorAll('section').forEach(x=>io.observe(x));
+  addEventListener('scroll',()=>{document.getElementById('prog').style.width=scrollY/(document.body.scrollHeight-innerHeight)*100+'%'},{passive:true});
+});
+</script>
+</body>
+</html>

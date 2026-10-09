@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>wow such benchmark — omnifeed vs built-in</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;background:#fffaf0;color:#111;font:16px/1.4 "Comic Sans MS","Comic Neue",cursive,sans-serif;overflow-x:hidden}
+a{color:#a0522d}
+header{text-align:center;padding:12px 10px 0}h1{margin:4px 0 0;font-size:clamp(28px,5vw,52px)}
+.wrap{display:grid;grid-template-columns:1fr 1.2fr;gap:18px;max-width:1240px;margin:10px auto;padding:0 16px}
+@media (max-width:900px){.wrap{grid-template-columns:1fr}}
+.doge{position:relative;height:560px;border-radius:20px;background:radial-gradient(circle at 50% 55%,#fff1c9,#fffaf0 70%);overflow:hidden}
+.doge svg{position:absolute;left:50%;top:52%;width:300px;transform:translate(-50%,-50%);animation:tilt 3s ease-in-out infinite}
+@keyframes tilt{50%{transform:translate(-50%,-50%) rotate(-6deg)}}
+.phrase{position:absolute;font-weight:700;white-space:nowrap;pointer-events:none;animation:float var(--d) ease-in-out forwards;text-shadow:1px 1px 0 rgba(0,0,0,.08)}
+@keyframes float{0%{opacity:0;transform:translateY(14px) scale(.6) rotate(var(--r))}15%{opacity:1;transform:translateY(0) scale(1) rotate(var(--r))}80%{opacity:1}100%{opacity:0;transform:translateY(-26px) scale(1.05) rotate(var(--r))}}
+.stonks{position:relative;height:560px;border-radius:20px;background:#0b1640;overflow:hidden;color:#fff}
+.stonks svg{position:absolute;inset:0;width:100%;height:100%}
+.big{position:absolute;font:900 clamp(30px,5vw,60px) Impact,"Arial Black",sans-serif;letter-spacing:.02em;text-shadow:3px 3px 0 #000;opacity:0;transition:opacity .4s,transform .4s}
+.big.on{opacity:1}
+#stonks{color:#2fff5c;right:4%;top:6%;transform:rotate(-6deg)}
+#notstonks{color:#ff4b4b;right:6%;bottom:22%;transform:rotate(5deg)}
+.stonks svg.guy{position:absolute;inset:auto;left:3%;bottom:0;width:130px;height:auto;animation:guy 2.4s ease-in-out infinite;transform-origin:bottom center}
+@keyframes guy{50%{transform:translateY(-6px) rotate(2deg)}}
+.counter{position:absolute;left:4%;top:5%;font:700 15px system-ui;color:#c9d4ff}
+.counter b{font:900 28px Impact,sans-serif;display:block}
+.counter .o{color:#ff9a3d}.counter .b{color:#6fb6ff}
+footer{text-align:center;color:#8a6a4a;font-size:13px;padding:6px 16px 30px}
+</style>
+</head>
+<body>
+<header><a href="./">← All versions</a><h1>wow &nbsp;such benchmark &nbsp;very data</h1></header>
+<div class="wrap">
+  <div class="doge" id="doge">
+    <svg viewBox="0 0 300 300" aria-label="cartoon shiba">
+      <path d="M60 120 L70 30 L125 80Z" fill="#d79a3c" stroke="#5a3a12" stroke-width="5"/><path d="M240 120 L230 30 L175 80Z" fill="#d79a3c" stroke="#5a3a12" stroke-width="5"/>
+      <path d="M74 52 L82 100 L110 82Z M226 52 L218 100 L190 82Z" fill="#f6d9b4"/>
+      <ellipse cx="150" cy="160" rx="112" ry="100" fill="#e3a94b" stroke="#5a3a12" stroke-width="5"/>
+      <path d="M70 190 Q150 280 230 190 Q215 150 150 150 Q85 150 70 190Z" fill="#fbecd6"/>
+      <path d="M100 135 Q115 122 130 135" stroke="#3a240c" stroke-width="7" fill="none" stroke-linecap="round"/><ellipse cx="190" cy="132" rx="11" ry="13" fill="#2a1a08"/><circle cx="194" cy="127" r="4" fill="#fff"/>
+      <path d="M95 112 Q112 104 128 112 M172 108 Q190 98 208 108" stroke="#b5762b" stroke-width="5" fill="none"/>
+      <ellipse cx="160" cy="178" rx="20" ry="13" fill="#2a1a08"/><path d="M160 190 Q150 214 128 210 M160 190 Q172 214 196 208" stroke="#2a1a08" stroke-width="5" fill="none" stroke-linecap="round"/>
+    </svg>
+  </div>
+  <div class="stonks" id="stk">
+    <svg id="chart" viewBox="0 0 700 560" preserveAspectRatio="none"></svg>
+    <div class="counter"><span class="o">omnifeed usable</span><b class="o" id="cO">0</b><span class="b">built-in usable</span><b class="b" id="cB">0</b><span id="cN" style="opacity:.7"></span></div>
+    <div class="big" id="stonks">STONKS ↗</div><div class="big" id="notstonks">NOT STONKS ↘</div>
+    <svg class="guy" viewBox="0 0 150 200" aria-label="cartoon stonks guy">
+      <path d="M10 200 Q12 130 75 120 Q138 130 140 200Z" fill="#20283c" stroke="#000" stroke-width="4"/><path d="M62 124 L75 170 L88 124Z" fill="#fff"/><path d="M71 130 L75 165 L79 130Z" fill="#c4302b"/>
+      <ellipse cx="75" cy="70" rx="44" ry="52" fill="#e8b88f" stroke="#000" stroke-width="4"/><ellipse cx="60" cy="66" rx="5" ry="6"/><ellipse cx="92" cy="66" rx="5" ry="6"/>
+      <path d="M58 94 Q76 102 94 92" stroke="#000" stroke-width="4" fill="none"/><path d="M40 40 Q75 10 110 40" stroke="#d8a67c" stroke-width="3" fill="none"/>
+    </svg>
+  </div>
+</div>
+<footer>Left: doge phrases built from the real numbers. Right: cumulative usable sites across the 272-site run, drawn live. Both drawings are original cartoons.</footer>
+<script src="stats.js"></script>
+<script>
+BENCH.load().then(R=>{
+  const {pct,USE}=BENCH,$=id=>document.getElementById(id);
+  const P=['wow',`such fast · ${(pct(R.lat.sO,50)/1000).toFixed(2)}s search`,`very read · ${R.usableO} sites`,`much news · ${R.news.o}/${R.news.n}`,`so search · ${R.searchWins.o} wins`,
+    `many blocklist · ${new Set(R.refused.map(s=>BENCH.host(s.url))).size} domains (built-in)`,`concern · ${R.soft.length} silent fail`,'very cloudflare','plz update chrome 116',`amaze · ${R.fallbackFixed}/${R.n} with fallback`,
+    `slow built-in · ${(pct(R.lat.sB,50)/1000).toFixed(1)}s`,'such reddit','very bluesky','no datadome tho','much json decode error','wow','very honest 404 (built-in)',`${R.onlyB.length} built-in W · respect`];
+  const COLS=['#ff1493','#00a6ff','#1db31d','#ff7f00','#9b30ff','#e6194b','#008080','#d4a017'];let pi=0;
+  function phrase(){const d=document.createElement('span');d.className='phrase';d.textContent=P[pi++%P.length];
+    d.style.left=(5+Math.random()*60)+'%';d.style.top=(6+Math.random()*82)+'%';d.style.color=COLS[pi%COLS.length];d.style.fontSize=(18+Math.random()*16)+'px';
+    d.style.setProperty('--r',(Math.random()*20-10)+'deg');d.style.setProperty('--d',(2.6+Math.random()*1.4)+'s');$('doge').appendChild(d);setTimeout(()=>d.remove(),4200)}
+  setInterval(phrase,520);for(let i=0;i<4;i++)setTimeout(phrase,i*150);
+  const svg=$('chart'),W=700,H=560,L=40,Rr=20,T=150,B=60,n=R.n;
+  const sx=i=>L+i/n*(W-L-Rr),sy=v=>H-B-v/n*(H-T-B);
+  let cumO=[0],cumB=[0];R.S.forEach(s=>{cumO.push(cumO.at(-1)+(USE(s.omnifeed.outcome)?1:0));cumB.push(cumB.at(-1)+(USE(s.builtin.outcome)?1:0))});
+  let grid='';for(let v=0;v<=n;v+=68)grid+=`<line x1="${L}" x2="${W-Rr}" y1="${sy(v)}" y2="${sy(v)}" stroke="#2a3a78" stroke-width="1"/><text x="${L-6}" y="${sy(v)+4}" fill="#8fa0e0" font-size="12" text-anchor="end" font-family="system-ui">${v}</text>`;
+  svg.innerHTML=grid+`<line x1="${L}" x2="${L+(W-L-Rr)}" y1="${sy(n)}" y2="${sy(n)}" stroke="#4a5ab0" stroke-dasharray="4 4"/><text x="${W-Rr}" y="${H-B+20}" fill="#8fa0e0" font-size="12" text-anchor="end" font-family="system-ui">sites tested →</text>
+   <polyline id="pB" fill="none" stroke="#4aa3ff" stroke-width="5" stroke-linejoin="round" stroke-linecap="round"/><polyline id="pO" fill="none" stroke="#ff8a2a" stroke-width="6" stroke-linejoin="round" stroke-linecap="round"/>
+   <circle id="dO" r="8" fill="#ff8a2a" stroke="#fff" stroke-width="3"/><circle id="dB" r="7" fill="#4aa3ff" stroke="#fff" stroke-width="3"/>`;
+  let k=0;
+  function draw(){k=Math.min(n,k+2);const pts=a=>a.slice(0,k+1).map((v,i)=>sx(i)+','+sy(v)).join(' ');
+    $('pO').setAttribute('points',pts(cumO));$('pB').setAttribute('points',pts(cumB));
+    $('dO').setAttribute('cx',sx(k));$('dO').setAttribute('cy',sy(cumO[k]));$('dB').setAttribute('cx',sx(k));$('dB').setAttribute('cy',sy(cumB[k]));
+    $('cO').textContent=cumO[k];$('cB').textContent=cumB[k];$('cN').textContent=`after ${k}/${n} sites`;
+    const gap=cumO[k]-cumB[k];$('stonks').classList.toggle('on',gap>5);$('notstonks').classList.toggle('on',gap>15);
+    if(k<n)setTimeout(draw,40);else setTimeout(()=>{k=0;draw()},5000)}
+  draw();
+});
+</script>
+</body>
+</html>

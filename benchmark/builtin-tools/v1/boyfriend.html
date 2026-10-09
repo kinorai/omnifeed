@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Distracted agent — omnifeed vs built-in</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;background:#e9eef2;color:#111;font:16px/1.4 system-ui,-apple-system,"Segoe UI",sans-serif;display:flex;flex-direction:column;align-items:center}
+a{color:#365a7a}
+header{text-align:center;padding:14px 10px 4px}h1{margin:4px 0 2px;font:900 clamp(24px,4.6vw,44px)/1 Impact,"Arial Black",sans-serif}
+.sub{margin:0;color:#4d5d6b}
+.scene{position:relative;width:min(1000px,96vw);aspect-ratio:16/9;margin-top:12px;border:4px solid #111;box-shadow:10px 10px 0 #111;overflow:hidden;background:#cfe3f1}
+.scene svg{position:absolute;inset:0;width:100%;height:100%}
+.lbl{position:absolute;background:#fff;border:3px solid #111;border-radius:6px;padding:4px 10px;font:900 clamp(13px,2vw,22px)/1.1 Impact,"Arial Black",sans-serif;text-align:center;box-shadow:4px 4px 0 #111;transform:scale(0);transition:transform .35s cubic-bezier(.3,1.6,.5,1);max-width:30%}
+.lbl.on{transform:scale(1)}.lbl small{display:block;font:600 12px system-ui;color:#444;margin-top:2px}
+#lG{left:4%;top:12%}#lB{left:38%;top:6%}#lP{right:4%;top:12%}
+.caption{margin-top:16px;font:800 clamp(16px,2.4vw,24px) system-ui;text-align:center;min-height:2.4em;max-width:900px}
+.caption .twist{color:#2a78d6}
+#walker{transition:transform 1.4s cubic-bezier(.3,.7,.3,1)}
+#bfHead{transition:transform .5s cubic-bezier(.4,1.6,.5,1);transform-origin:500px 230px}
+#gfHead{transition:transform .4s;transform-origin:250px 240px}
+.steam{opacity:0;transition:opacity .3s}.angry .steam{opacity:1;animation:steam .8s ease-out infinite}
+@keyframes steam{from{transform:translateY(0);opacity:.9}to{transform:translateY(-30px);opacity:0}}
+#heart{opacity:0}.love #heart{opacity:1;animation:heart 1s ease-in-out infinite}
+@keyframes heart{50%{transform:translateY(-12px) scale(1.15)}}
+.walk .leg1{animation:legA .5s ease-in-out infinite alternate}.walk .leg2{animation:legA .5s ease-in-out infinite alternate-reverse}
+@keyframes legA{to{transform:rotate(14deg)}}
+.leg1,.leg2{transform-box:fill-box;transform-origin:top center}
+.cloud{animation:drift 30s linear infinite}@keyframes drift{from{transform:translateX(-200px)}to{transform:translateX(1200px)}}
+.nav{margin:6px 0 30px;display:flex;gap:8px}
+button{font:800 14px system-ui;background:#fff;border:3px solid #111;border-radius:8px;padding:6px 12px;box-shadow:3px 3px 0 #111;cursor:pointer}
+</style>
+</head>
+<body>
+<header><a href="./">← All versions</a><h1>ME, AN AGENT, AT THE BENCHMARK</h1><p class="sub">One scene per site category. Where the built-in actually wins, the plot twists.</p></header>
+<div class="scene" id="scene">
+<svg viewBox="0 0 1000 562" preserveAspectRatio="xMidYMid slice">
+  <defs><linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#bcdcf2"/><stop offset="1" stop-color="#eef6fb"/></linearGradient>
+  <pattern id="plaid" width="22" height="22" patternUnits="userSpaceOnUse"><rect width="22" height="22" fill="#3c6fb5"/><rect width="22" height="5" y="8" fill="#9cc3ee" opacity=".7"/><rect width="5" height="22" x="8" fill="#1d3f75" opacity=".7"/></pattern></defs>
+  <rect width="1000" height="562" fill="url(#sky)"/>
+  <g class="cloud"><ellipse cx="120" cy="70" rx="60" ry="20" fill="#fff"/><ellipse cx="160" cy="60" rx="40" ry="18" fill="#fff"/></g>
+  <g fill="#9fb3c4"><rect x="0" y="150" width="140" height="260"/><rect x="150" y="110" width="110" height="300"/><rect x="760" y="130" width="120" height="280"/><rect x="890" y="170" width="110" height="240"/></g>
+  <g fill="#e7eef4" opacity=".8"><rect x="20" y="170" width="20" height="26"/><rect x="60" y="170" width="20" height="26"/><rect x="170" y="140" width="20" height="26"/><rect x="210" y="140" width="20" height="26"/><rect x="780" y="150" width="20" height="26"/><rect x="820" y="150" width="20" height="26"/><rect x="910" y="190" width="20" height="26"/></g>
+  <rect y="410" width="1000" height="152" fill="#8c8c8c"/><rect y="404" width="1000" height="10" fill="#6d6d6d"/>
+  <!-- girlfriend: built-in -->
+  <g id="gf"><path d="M175 562 Q170 360 250 330 Q330 360 330 562Z" fill="#2a78d6" stroke="#111" stroke-width="4"/>
+    <g id="gfHead"><path d="M200 230 Q205 160 255 160 Q305 165 305 235 Q300 300 255 300 Q205 300 200 230Z" fill="#f2c9a5" stroke="#111" stroke-width="4"/>
+    <path d="M196 230 Q190 140 258 140 Q320 145 312 240 Q300 190 258 185 Q215 185 196 230Z" fill="#5a3a22"/><path d="M198 228 Q182 300 196 350 L214 300Z M310 236 Q326 300 312 350 L296 300Z" fill="#5a3a22"/>
+    <path id="gfBrow" d="M222 212 L248 222 M290 212 L264 222" stroke="#111" stroke-width="5"/><circle cx="238" cy="232" r="5"/><circle cx="274" cy="232" r="5"/>
+    <path id="gfMouth" d="M236 272 Q256 262 276 272" stroke="#111" stroke-width="5" fill="none"/>
+    <g class="steam" fill="#bbb"><circle cx="210" cy="150" r="10"/><circle cx="300" cy="148" r="10"/></g></g></g>
+  <!-- boyfriend: the agent -->
+  <g id="bf"><path d="M405 562 Q400 340 500 320 Q600 340 595 562Z" fill="url(#plaid)" stroke="#111" stroke-width="4"/>
+    <g id="bfHead"><ellipse cx="500" cy="230" rx="55" ry="68" fill="#f0c39c" stroke="#111" stroke-width="4"/><path d="M445 210 Q450 150 505 155 Q560 160 556 210 Q530 180 500 182 Q470 182 445 210Z" fill="#3a2414"/>
+    <ellipse cx="520" cy="228" rx="7" ry="8"/><ellipse cx="548" cy="228" rx="6" ry="8"/><path d="M515 268 Q535 284 552 266" stroke="#111" stroke-width="5" fill="none"/><path d="M540 236 Q556 250 540 252" stroke="#111" stroke-width="3" fill="none"/>
+    <g id="heart"><path d="M600 160 c-10 -18 -34 -10 -28 8 c4 12 28 26 28 26 c0 0 24 -14 28 -26 c6 -18 -18 -26 -28 -8z" fill="#ff3b5c" stroke="#111" stroke-width="3"/></g></g></g>
+  <!-- passerby: omnifeed -->
+  <g id="walker" style="transform:translateX(320px)"><g class="leg1"><rect x="735" y="450" width="18" height="112" fill="#f0c39c" stroke="#111" stroke-width="3"/></g><g class="leg2"><rect x="768" y="450" width="18" height="112" fill="#f0c39c" stroke="#111" stroke-width="3"/></g>
+    <path d="M700 470 Q705 360 760 330 Q815 360 820 470Z" fill="#e8452a" stroke="#111" stroke-width="4"/>
+    <ellipse cx="760" cy="250" rx="46" ry="58" fill="#f2c9a5" stroke="#111" stroke-width="4"/><path d="M712 250 Q700 170 762 168 Q825 172 812 260 Q812 200 762 196 Q725 200 712 250Z" fill="#c9852b"/><path d="M712 250 Q700 330 724 360 L736 300Z M812 255 Q825 330 800 360 L790 300Z" fill="#c9852b"/>
+    <circle cx="742" cy="248" r="5"/><circle cx="776" cy="248" r="5"/><path d="M745 280 Q760 290 776 280" stroke="#111" stroke-width="4" fill="none"/></g>
+</svg>
+<div class="lbl" id="lG"></div><div class="lbl" id="lB"></div><div class="lbl" id="lP"></div>
+</div>
+<div class="caption" id="cap"></div>
+<div class="nav"><button id="prev">◀</button><button id="pause">❚❚</button><button id="next">▶</button></div>
+<script src="stats.js"></script>
+<script>
+BENCH.load().then(R=>{
+  const $=id=>document.getElementById(id),scenes=R.cats.filter(c=>c.n>=3).map(c=>({t:c.cat,b:c.b,o:c.o,n:c.n}));
+  scenes.unshift({t:'Search',b:R.searchWins.b,o:R.searchWins.o,n:R.nq,search:true});
+  scenes.push({t:'Overall',b:R.usableB,o:R.usableO,n:R.n});
+  let i=0,paused=false,timer;
+  function show(){const s=scenes[i],look=s.o>s.b?'O':s.b>s.o?'B':'=',unit=s.search?'queries won':'sites readable';
+    ['lG','lB','lP'].forEach(id=>$(id).classList.remove('on'));
+    const w=$('walker');w.classList.add('walk');w.style.transition='none';w.style.transform='translateX(330px)';void w.getBoundingClientRect();w.style.transition='';
+    setTimeout(()=>{w.style.transform=look==='B'?'translateX(170px)':'translateX(0px)';
+      $('bfHead').style.transform=look==='O'?'scaleX(1)':look==='B'?'scaleX(-1)':'scaleX(1) rotate(-8deg)';
+      $('scene').classList.toggle('angry',look==='O');$('bf').classList.toggle('love',look!=='=');
+      $('gfMouth').setAttribute('d',look==='O'?'M236 276 Q256 260 276 276':look==='B'?'M236 266 Q256 282 276 266':'M236 272 h40');
+      $('gfBrow').setAttribute('d',look==='O'?'M222 206 L248 222 M290 206 L264 222':'M222 218 L248 214 M290 218 L264 214');
+      setTimeout(()=>w.classList.remove('walk'),1400)},80);
+    $('lG').innerHTML=`BUILT-IN<small>${s.b}/${s.n} ${unit}</small>`;$('lB').innerHTML=`ME, AN AGENT<small>reading ${s.t}</small>`;$('lP').innerHTML=`OMNIFEED<small>${s.o}/${s.n} ${unit}</small>`;
+    ['lG','lB','lP'].forEach((id,k)=>setTimeout(()=>$(id).classList.add('on'),600+k*250));
+    $('cap').innerHTML=look==='O'?`${s.t}: omnifeed ${s.search?'wins':'reads'} <b>${s.o-s.b}</b> more ${s.search?'queries':'sites'}. Eyes on omnifeed.`:look==='B'?`<span class="twist">Plot twist:</span> on ${s.t} the built-in reads <b>${s.b-s.o}</b> more. Eyes back home.`:`${s.t}: dead even (${s.b} each). Awkward.`;
+    clearTimeout(timer);if(!paused)timer=setTimeout(()=>{i=(i+1)%scenes.length;show()},4200)}
+  $('next').onclick=()=>{i=(i+1)%scenes.length;show()};$('prev').onclick=()=>{i=(i-1+scenes.length)%scenes.length;show()};
+  $('pause').onclick=()=>{paused=!paused;$('pause').textContent=paused?'▶':'❚❚';if(!paused)show();else clearTimeout(timer)};
+  show();
+});
+</script>
+</body>
+</html>
