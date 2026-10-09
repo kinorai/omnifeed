@@ -19,7 +19,8 @@ const (
 	KindCaptcha       FailureKind = "captcha"        // bot wall / human-verification challenge page
 	KindHTTP403       FailureKind = "http_403"       // explicit HTTP 403
 	KindHTTP429       FailureKind = "http_429"       // rate limited
-	KindNotFound      FailureKind = "not_found"      // page answered 404/410: the content does not exist
+	KindNotFound      FailureKind = "not_found"      // the requested page answered 404/410 or is a soft 404: the content does not exist
+	KindSiteError     FailureKind = "site_error"     // the requested site itself answered 5xx — not omnifeed's or crawl4ai's fault
 	KindBotBlock      FailureKind = "bot_block"      // blocked with no clean status (nav blocked, non-JSON body)
 	KindThinContent   FailureKind = "thin_content"   // crawl4ai content-gate: too little usable content rendered (JS-only SPA shell, PDF/binary, near-empty) — not a wall, not an upstream fault
 	KindTimeout       FailureKind = "timeout"        // context deadline exceeded — omnifeed's own timeout budget (crawl4ai/reddit)
@@ -91,8 +92,6 @@ func KindForStatus(code int) FailureKind {
 		return KindHTTP403
 	case code == http.StatusTooManyRequests:
 		return KindHTTP429
-	case code == http.StatusNotFound || code == http.StatusGone:
-		return KindNotFound
 	case code == http.StatusGatewayTimeout:
 		// A gateway timeout is a time budget running out (crawl4ai's own
 		// wall-clock 504 "Crawl exceeded the time limit"), not an upstream fault.
