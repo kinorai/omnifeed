@@ -1,6 +1,6 @@
 import json, bisect, collections, statistics as st
 from datetime import datetime, timezone
-ts = lambda s: datetime.fromisoformat(s[:26].rstrip('Z')).timestamp()
+ts = lambda s: datetime.fromisoformat(s[:26].rstrip('Z')).replace(tzinfo=timezone.utc).timestamp()
 calls = [json.loads(l) for l in open('calls.jsonl')]
 S = sorted(ts(c['_time']) for c in calls if c.get('tool') == 'web_search')
 F = sorted(ts(c['_time']) for c in calls if c.get('tool') == 'fetch_url')
@@ -19,8 +19,6 @@ for l in open('partial.jsonl'):
 ok = collections.defaultdict(list)
 for l in open('audit.jsonl'):
     d = json.loads(l)
-    for kv in (d.get('engine_rows') or '').split():
-        pass
     rows = d.get('engine_rows') or ''
     for eng in ('google cse', 'braveapi', 'privacywall', 'yandex', 'infospace', 'searchtoday', 'mojeek', 'wikipedia'):
         if eng + '=' in rows: ok[eng].append(ts(d['_time']))
