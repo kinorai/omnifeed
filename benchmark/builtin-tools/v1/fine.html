@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>This is fine — omnifeed vs built-in</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;background:#2a1a0e;color:#fff;font:16px/1.4 system-ui,-apple-system,"Segoe UI",sans-serif;display:flex;flex-direction:column;align-items:center}
+a{color:#ffcf8a}
+header{text-align:center;padding:14px 10px 4px}h1{margin:4px 0 2px;font:900 clamp(26px,5vw,48px)/1 Impact,"Arial Black",sans-serif;color:#ffcf8a;text-shadow:3px 3px 0 #000}
+.sub{margin:0;color:#e8c9a8}
+.room{position:relative;width:min(1000px,96vw);aspect-ratio:16/9;margin-top:12px;border:4px solid #000;box-shadow:10px 10px 0 #000;overflow:hidden;background:linear-gradient(180deg,#f6c56a 0 70%,#a8652f 70%)}
+.room svg.scene{position:absolute;left:30%;bottom:6%;width:40%;height:70%;z-index:3}
+.smoke{position:absolute;top:0;left:0;right:0;height:0;background:linear-gradient(180deg,rgba(40,30,25,.85),rgba(40,30,25,0));transition:height 1s;z-index:4}
+.flames{position:absolute;bottom:0;left:0;right:0;height:0;z-index:5;transition:height 1s;pointer-events:none}
+.flames i{position:absolute;bottom:-10px;width:70px;height:100%;border-radius:50% 50% 20% 20%;background:radial-gradient(ellipse at 50% 90%,#fff3a0 0%,#ffb21a 30%,#ff5a1a 60%,rgba(255,60,0,0) 75%);filter:blur(1px);animation:flick var(--d) ease-in-out infinite alternate;transform-origin:bottom}
+@keyframes flick{0%{transform:scaleY(.8) scaleX(1) translateX(0)}100%{transform:scaleY(1.15) scaleX(.85) translateX(4px)}}
+.wall{position:absolute;inset:4% 3% 34% 3%;z-index:2;display:grid;grid-template-columns:repeat(7,1fr);gap:6px;align-content:start}
+.sticker{background:#fffbe8;color:#111;border:3px solid #6b3d12;border-radius:4px;padding:4px 6px;font-size:11px;line-height:1.15;transform:scale(0) rotate(-8deg);transition:transform .35s cubic-bezier(.3,1.6,.5,1),background .5s;box-shadow:2px 2px 0 rgba(0,0,0,.4)}
+.sticker.on{transform:scale(1) rotate(var(--r))}.sticker b{color:#0a8a0a;display:block}
+.sticker.fixed{background:#e6f1ff}.sticker.fixed b{color:#c02020}
+.bubble{position:absolute;left:52%;top:18%;z-index:6;background:#fff;color:#111;border:3px solid #000;border-radius:20px;padding:10px 16px;font:800 clamp(16px,2.4vw,26px) "Comic Sans MS",system-ui;transform:scale(0);transition:transform .3s cubic-bezier(.3,1.6,.5,1);max-width:40%}
+.bubble.on{transform:scale(1)}
+.bubble::after{content:"";position:absolute;bottom:-16px;left:24px;border:9px solid transparent;border-top-color:#000}
+.hud{display:flex;gap:26px;margin:14px 0 4px;font:900 22px Impact,sans-serif;text-shadow:2px 2px 0 #000;flex-wrap:wrap;justify-content:center}
+.hud .r{color:#ff6a3a}.hud .g{color:#7dff6a}
+.caption{text-align:center;max-width:900px;color:#f4dcc0;min-height:3em;margin-bottom:30px}
+.foam{position:absolute;inset:0;z-index:7;pointer-events:none;opacity:0;background:radial-gradient(circle at 15% 80%,rgba(255,255,255,.95) 0 8%,transparent 9%),radial-gradient(circle at 30% 70%,rgba(255,255,255,.9) 0 7%,transparent 8%),radial-gradient(circle at 55% 85%,rgba(255,255,255,.95) 0 9%,transparent 10%),radial-gradient(circle at 75% 72%,rgba(255,255,255,.9) 0 8%,transparent 9%),radial-gradient(circle at 90% 85%,rgba(255,255,255,.95) 0 9%,transparent 10%);transition:opacity .6s}
+.foam.on{opacity:1;animation:foam 1.4s ease-out}
+@keyframes foam{from{transform:scale(.6) translateY(40px)}to{transform:none}}
+.sip{animation:sip 3s ease-in-out infinite;transform-origin:150px 200px}
+@keyframes sip{0%,60%,100%{transform:rotate(0)}75%{transform:rotate(-18deg)}}
+.steam{animation:steam 2s ease-out infinite}@keyframes steam{from{opacity:.7;transform:translateY(0)}to{opacity:0;transform:translateY(-20px)}}
+.ext{position:absolute;right:-200px;bottom:10%;z-index:8;font-size:90px;transition:right 1s cubic-bezier(.3,1.3,.5,1)}
+.ext.on{right:6%}
+</style>
+</head>
+<body>
+<header><a href="./">← All versions</a><h1>THIS IS FINE</h1><p class="sub">Every sticker is an omnifeed fetch that returned "✓ success" when it wasn't. Watch the room.</p></header>
+<div class="room" id="room">
+  <div class="smoke" id="smoke"></div>
+  <div class="wall" id="wall"></div>
+  <svg class="scene" viewBox="0 0 400 300">
+    <rect x="40" y="200" width="320" height="16" rx="4" fill="#7a4520" stroke="#000" stroke-width="4"/><rect x="70" y="214" width="12" height="80" fill="#7a4520" stroke="#000" stroke-width="3"/><rect x="318" y="214" width="12" height="80" fill="#7a4520" stroke="#000" stroke-width="3"/>
+    <!-- original cartoon dog -->
+    <path d="M150 300 Q140 210 210 196 Q280 210 272 300Z" fill="#f2b54a" stroke="#000" stroke-width="4"/>
+    <ellipse cx="212" cy="140" rx="66" ry="58" fill="#f2b54a" stroke="#000" stroke-width="4"/>
+    <path d="M150 112 Q122 140 140 186 Q160 160 162 128Z" fill="#a8641f" stroke="#000" stroke-width="4"/><path d="M274 112 Q302 140 284 186 Q264 160 262 128Z" fill="#a8641f" stroke="#000" stroke-width="4"/>
+    <ellipse cx="190" cy="134" rx="7" ry="9"/><ellipse cx="236" cy="134" rx="7" ry="9"/><ellipse cx="213" cy="160" rx="12" ry="8"/>
+    <path id="mouth" d="M196 176 Q213 186 230 176" stroke="#000" stroke-width="4" fill="none"/>
+    <path d="M150 92 Q212 60 276 92 L262 100 Q212 80 164 100Z" fill="#6b3d12" stroke="#000" stroke-width="4"/><rect x="176" y="50" width="72" height="40" rx="8" fill="#6b3d12" stroke="#000" stroke-width="4"/>
+    <g class="sip"><rect x="120" y="170" width="34" height="34" rx="4" fill="#fff" stroke="#000" stroke-width="4"/><path d="M154 178 q14 0 14 10 q0 10 -14 10" stroke="#000" stroke-width="4" fill="none"/><path class="steam" d="M130 160 q6 -10 0 -18 M142 160 q6 -10 0 -18" stroke="#fff" stroke-width="3" fill="none"/></g>
+  </svg>
+  <div class="bubble" id="bub">This is fine.</div>
+  <div class="flames" id="flames"></div>
+  <div class="foam" id="foam"></div>
+  <div class="ext" id="ext">🧯</div>
+</div>
+<div class="hud"><span class="r" id="h1">🔥 silent fails: 0</span><span id="h2">wrong pages accepted: 0</span><span class="g" id="h3">coverage: –</span></div>
+<div class="caption" id="cap"></div>
+<script src="stats.js"></script>
+<script>
+const fl=document.getElementById('flames');for(let i=0;i<22;i++){const f=document.createElement('i');f.style.left=(i*4.7-3)+'%';f.style.setProperty('--d',(.35+Math.random()*.4)+'s');f.style.height=(70+Math.random()*30)+'%';fl.appendChild(f)}
+BENCH.load().then(R=>{
+  const {host}=BENCH,$=id=>document.getElementById(id),fails=R.soft,N=fails.length;
+  $('wall').innerHTML=fails.map((s,k)=>`<div class="sticker" style="--r:${((k*37)%14)-7}deg"><b>✓ SUCCESS</b>${host(s.url)}</div>`).join('');
+  const st=[...document.querySelectorAll('.sticker')];
+  function reset(){st.forEach(x=>{x.classList.remove('on','fixed');x.querySelector('b').textContent='✓ SUCCESS'});$('flames').style.height='0';$('smoke').style.height='0';$('foam').classList.remove('on');$('ext').classList.remove('on');$('mouth').setAttribute('d','M196 176 Q213 186 230 176');$('bub').classList.add('on');$('bub').textContent='This is fine.';$('h1').textContent='🔥 silent fails: 0';$('h2').textContent='wrong pages accepted: 0';$('h3').textContent='coverage: '+R.usableO+'/'+R.n+' (omnifeed alone)'}
+  async function run(){reset();await sleep(1500);
+    for(let k=0;k<N;k++){const s=fails[k];st[k].classList.add('on');
+      $('flames').style.height=(8+k/N*62)+'%';$('smoke').style.height=(k/N*45)+'%';
+      $('h1').textContent='🔥 silent fails: '+(k+1);$('h2').textContent='wrong pages accepted: '+(k+1);
+      $('cap').innerHTML=`<b>${host(s.url)}</b>: omnifeed said ✓ success. Actually: ${s.omnifeed.note}`;
+      if(k===Math.floor(N/2)){$('bub').textContent='This is fine.';}
+      if(k===N-3){$('bub').textContent='This is… fine.';$('mouth').setAttribute('d','M198 180 Q213 176 228 180')}
+      await sleep(1100)}
+    $('h3').textContent=`coverage with fallback: ${R.fallbackToday}/${R.n} (fallback never fires on a lie)`;
+    $('cap').innerHTML=`${N} fake successes. An agent can't tell, so its built-in fallback never kicks in.`;await sleep(3200);
+    $('ext').classList.add('on');$('cap').innerHTML='<b>Fix #1 deployed:</b> propagate HTTP status + raise the near-empty threshold.';await sleep(1000);
+    $('foam').classList.add('on');$('flames').style.height='0';$('smoke').style.height='0';
+    for(let k=0;k<N;k++){st[k].classList.add('fixed');st[k].querySelector('b').textContent='✗ FAILED → fallback';await sleep(70)}
+    $('h1').textContent='🔥 silent fails: 0';$('h2').textContent='wrong pages accepted: 0';$('h3').textContent=`coverage: ${R.fallbackFixed}/${R.n} (${Math.round(R.fallbackFixed/R.n*100)}%)`;
+    $('bub').textContent='This is actually fine.';$('mouth').setAttribute('d','M192 172 Q213 196 234 172');
+    $('cap').innerHTML=`Failures reported honestly → the agent falls back to the built-in → <b>${R.fallbackFixed}/${R.n}</b> sites readable, <b>0</b> wrong pages. Same as a perfect per-domain router.`;
+    await sleep(7000);run()}
+  const sleep=ms=>new Promise(r=>setTimeout(r,ms));run();
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Race replay — omnifeed vs built-in</title>
+<style>
+:root{--bg:#0e0e10;--panel:#17171a;--ink:#f3f3f1;--ink2:#a9a8a2;--line:#2c2c2a;--b:#3987e5;--o:#d95926;--good:#0ca30c;--part:#fab219;--soft:#ec835a;--bad:#d03b3b;--ref:#898781}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:1240px;margin:0 auto;padding:22px 20px 40px}
+a{color:var(--ink2)}h1{font-size:24px;margin:6px 0 2px}.sub{color:var(--ink2);margin:0 0 14px}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px 12px}
+button,select{background:#232327;color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:6px 12px;font:inherit;cursor:pointer}
+button.primary{background:var(--ink);color:#111;font-weight:650;min-width:84px}
+input[type=range]{flex:1;min-width:200px;accent-color:var(--o)}
+.clock{font-variant-numeric:tabular-nums;color:var(--ink2);min-width:150px;text-align:right}
+canvas{display:block;width:100%;height:420px;background:var(--panel);border:1px solid var(--line);border-radius:12px;margin-top:12px}
+.hud{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px}
+.lane{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 14px}
+.lane h3{margin:0 0 8px;font-size:14px;display:flex;align-items:center;gap:8px}.lane h3 i{width:10px;height:10px;border-radius:2px}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}.stats div{font-size:11px;color:var(--ink2)}.stats b{display:block;font-size:20px;color:var(--ink);font-variant-numeric:tabular-nums}
+.log{margin-top:10px;font:12px/1.5 ui-monospace,Menlo,monospace;height:126px;overflow:hidden;color:var(--ink2)}
+.log div{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;animation:slide .3s ease-out}
+@keyframes slide{from{opacity:0;transform:translateX(-10px)}}
+.legend{display:flex;gap:14px;flex-wrap:wrap;margin-top:10px;font-size:12px;color:var(--ink2)}.legend span{display:flex;gap:6px;align-items:center}.legend i{width:10px;height:10px;border-radius:50%}
+label{color:var(--ink2);font-size:13px}
+@media (prefers-reduced-motion:reduce){.log div{animation:none}}
+</style>
+</head>
+<body>
+<main>
+<a href="./">← All versions</a>
+<h1>Race replay</h1>
+<p class="sub">Every call replayed in their real order with their real durations. Each runner is one call crossing its lane; when it lands, it drops into the finish bin colored by outcome. Idle pauses between batches are compressed by default.</p>
+<div class="controls">
+  <button class="primary" id="play">▶ Play</button>
+  <button id="restart">↺</button>
+  <select id="speed" aria-label="Speed"><option value="10">10×</option><option value="30" selected>30×</option><option value="100">100×</option><option value="400">400×</option></select>
+  <label><input type="checkbox" id="compress" checked> Compress idle gaps</label>
+  <input type="range" id="scrub" min="0" max="1000" value="0" aria-label="Scrub timeline">
+  <span class="clock" id="clock">0:00 / 0:00</span>
+</div>
+<canvas id="cv" width="1240" height="420"></canvas>
+<div class="legend"><span><i style="background:var(--good)"></i>Usable</span><span><i style="background:var(--part)"></i>Partial</span><span><i style="background:var(--soft)"></i>Silent fail</span><span><i style="background:var(--bad)"></i>Blocked / error</span><span><i style="background:var(--ref)"></i>Policy-refused</span><span><i style="background:#fff"></i>Search result</span></div>
+<div class="hud">
+  <div class="lane"><h3><i style="background:var(--b)"></i>Built-in · WebSearch / WebFetch</h3><div class="stats" id="sB"></div><div class="log" id="lB"></div></div>
+  <div class="lane"><h3><i style="background:var(--o)"></i>omnifeed · web_search / fetch_url</h3><div class="stats" id="sO"></div><div class="log" id="lO"></div></div>
+</div>
+</main>
+<script src="stats.js"></script>
+<script>
+const COL={success:'#0ca30c',partial:'#fab219',softblock:'#ec835a',blocked:'#d03b3b',error:'#d03b3b',refused:'#898781',search:'#ffffff',unknown:'#5a5a5a'};
+const reduce=matchMedia('(prefers-reduced-motion: reduce)').matches;
+BENCH.load().then(R=>{
+  const {host}=BENCH,cv=document.getElementById('cv'),cx=cv.getContext('2d');
+  const site=t=>R.S.find(s=>s.url.slice(0,90)===t);
+  let calls=R.D.timeline.map((c,i)=>{const tool=c.tool;let out='unknown';
+    if(c.k==='search')out=c.err?'blocked':'search';else{const s=site(c.target);if(s)out=s[tool].outcome}
+    return{...c,i,out,t0:c.m*60000}});
+  let starts=[],T=0;
+  function layout(compress){starts=[];let prevEnd=0,shift=0;calls.forEach(c=>{let st=c.t0-shift;if(compress&&st-prevEnd>8000){shift+=st-prevEnd-1500;st=c.t0-shift}starts.push(st);prevEnd=Math.max(prevEnd,st+c.ms)});T=Math.max(...calls.map((c,i)=>starts[i]+c.ms))}
+  layout(true);
+  let vt=0,playing=false,last=0;const speedEl=document.getElementById('speed'),scrub=document.getElementById('scrub');
+  const fmt=ms=>{const s=Math.floor(ms/1000);return Math.floor(s/60)+':'+String(s%60).padStart(2,'0')};
+  function resize(){const r=cv.getBoundingClientRect();cv.width=r.width*devicePixelRatio;cv.height=r.height*devicePixelRatio;cx.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0)}
+  addEventListener('resize',resize);resize();
+  const logged=new Set();
+  function draw(){
+    const W=cv.clientWidth,H=cv.clientHeight,L=110,BIN=230,trackR=W-BIN-20;
+    cx.clearRect(0,0,W,H);
+    const lanes=[{tool:'builtin',y:24,c:'#3987e5',name:'Built-in'},{tool:'omnifeed',y:H/2+12,c:'#d95926',name:'omnifeed'}],lh=H/2-36;
+    lanes.forEach(ln=>{
+      cx.fillStyle='#1f1f23';cx.fillRect(L,ln.y,trackR-L,lh);
+      cx.strokeStyle='#2c2c2a';for(let k=0;k<=4;k++){const x=L+(trackR-L)*k/4;cx.beginPath();cx.moveTo(x,ln.y);cx.lineTo(x,ln.y+lh);cx.stroke()}
+      cx.fillStyle=ln.c;cx.font='600 14px system-ui';cx.fillText(ln.name,12,ln.y+20);
+      cx.fillStyle='#a9a8a2';cx.font='11px system-ui';['0s','2.5s','5s','7.5s','10s+'].forEach((t,k)=>cx.fillText(t,L+(trackR-L)*k/4+3,ln.y+lh-4));
+      cx.fillStyle='#e9e9e7';cx.fillRect(trackR+2,ln.y,3,lh);
+      cx.fillStyle='#a9a8a2';cx.fillText('finish bin',trackR+14,ln.y+12);
+    });
+    const done={builtin:[],omnifeed:[]},st={builtin:{n:0,u:0,f:0,w:0,run:0},omnifeed:{n:0,u:0,f:0,w:0,run:0}};
+    calls.forEach((c,i)=>{const s=starts[i];if(vt<s)return;const ln=lanes[c.tool==='builtin'?0:1],S=st[c.tool];
+      if(vt<s+c.ms){S.run++;const p=(vt-s)/Math.max(1,Math.min(c.ms,10000)),x=L+Math.min(1,p)*(trackR-L),y=ln.y+10+((c.i*37)%Math.max(1,lh-20));
+        cx.fillStyle=ln.c;cx.globalAlpha=.25;cx.fillRect(Math.max(L,x-40),y-1,Math.min(40,x-L),2);cx.globalAlpha=1;cx.beginPath();cx.arc(x,y,c.k==='search'?3.5:4.5,0,7);cx.fill();S.w+=vt-s}
+      else{done[c.tool].push(c);S.n++;S.w+=c.ms;if(['success','partial','search'].includes(c.out))S.u++;else S.f++;
+        if(!logged.has(c.i)){logged.add(c.i);log(c)}}});
+    lanes.forEach(ln=>{const d=done[ln.tool],cols=18,sz=Math.min(10,(BIN-24)/cols);d.forEach((c,j)=>{const col=j%cols,row=Math.floor(j/cols);cx.fillStyle=COL[c.out]||COL.unknown;cx.fillRect(trackR+14+col*(sz+1),ln.y+18+row*(sz+1),sz,sz)})});
+    [['sB','builtin'],['sO','omnifeed']].forEach(([id,t])=>{const S=st[t];document.getElementById(id).innerHTML=`<div>Finished<b>${S.n}</b></div><div>Usable<b>${S.u}</b></div><div>Failed<b>${S.f}</b></div><div>Waited<b>${(S.w/60000).toFixed(1)}m</b></div>`});
+    document.getElementById('clock').textContent=fmt(vt)+' / '+fmt(T);scrub.value=vt/T*1000;
+  }
+  function log(c){const el=document.getElementById(c.tool==='builtin'?'lB':'lO'),d=document.createElement('div');
+    const ok=['success','partial','search'].includes(c.out),label=c.k==='search'?'search':host(c.target.startsWith('http')?c.target:'https://x/');
+    d.innerHTML=`<span style="color:${COL[c.out]||'#888'}">${ok?'✓':'✗'}</span> ${(c.ms/1000).toFixed(2)}s ${c.k==='search'?'🔍 '+c.target.slice(0,48):label} <span style="opacity:.6">${c.out}</span>`;
+    el.prepend(d);while(el.children.length>8)el.lastChild.remove()}
+  function tick(t){if(playing){vt=Math.min(T,vt+(t-last)*+speedEl.value);if(vt>=T)setPlay(false)}last=t;draw();requestAnimationFrame(tick)}
+  function setPlay(p){playing=p;document.getElementById('play').textContent=p?'❚❚ Pause':'▶ Play'}
+  document.getElementById('play').onclick=()=>{if(vt>=T){vt=0;logged.clear();['lB','lO'].forEach(i=>document.getElementById(i).innerHTML='')}setPlay(!playing)};
+  document.getElementById('restart').onclick=()=>{vt=0;logged.clear();['lB','lO'].forEach(i=>document.getElementById(i).innerHTML='');setPlay(true)};
+  scrub.oninput=()=>{vt=scrub.value/1000*T;logged.clear();['lB','lO'].forEach(i=>document.getElementById(i).innerHTML='');calls.forEach((c,i)=>{if(starts[i]+c.ms<=vt)logged.add(c.i)})};
+  document.getElementById('compress').onchange=e=>{const f=vt/T;layout(e.target.checked);vt=f*T};
+  if(reduce){vt=T;calls.forEach(c=>logged.add(c.i))}
+  requestAnimationFrame(t=>{last=t;tick(t)});
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Fight night — omnifeed vs built-in</title>
+<style>
+:root{--b:#3987e5;--o:#ff6a2b;--gold:#ffd23f}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(ellipse at 50% 20%,#3a1010 0%,#120606 45%,#050505 100%);color:#fff;font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;min-height:100vh}
+main{max-width:1100px;margin:0 auto;padding:18px 20px 50px}
+a{color:#c9b9b9}
+.marquee{text-align:center;margin:8px 0 4px}
+.marquee h1{font:900 clamp(30px,6vw,64px)/1 Impact,"Arial Black",system-ui;letter-spacing:.02em;margin:0;background:linear-gradient(180deg,#fff,#ffd23f 60%,#b8860b);-webkit-background-clip:text;background-clip:text;color:transparent;text-shadow:0 0 30px rgba(255,210,63,.25)}
+.marquee p{margin:4px 0 0;color:#d8c8c8}
+.hp{display:grid;grid-template-columns:1fr auto 1fr;gap:16px;align-items:center;margin:18px 0 8px}
+.hpbar{height:26px;border-radius:6px;background:#2a1414;border:2px solid #000;overflow:hidden;position:relative;box-shadow:0 0 0 2px #5a2a2a}
+.hpbar div{height:100%;transition:width .35s ease}
+.hpL div{background:linear-gradient(90deg,#174f9a,var(--b));margin-left:auto}.hpR div{background:linear-gradient(90deg,var(--o),#ffae2b)}
+.hpbar span{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-weight:800;text-shadow:0 1px 2px #000;font-variant-numeric:tabular-nums}
+.name{font:900 20px Impact,"Arial Black",system-ui;letter-spacing:.04em}.nL{color:var(--b);text-align:right}.nR{color:var(--o)}
+.round{font:900 28px Impact,"Arial Black",system-ui;color:var(--gold);text-align:center;min-width:180px}
+.ring{position:relative;height:330px;margin:6px 0;border-radius:14px;overflow:hidden;background:linear-gradient(180deg,#1a0b0b 0 62%,#d9cfc0 62%);border:3px solid #000}
+.rope{position:absolute;left:0;right:0;height:5px;background:linear-gradient(90deg,#c00,#fff,#c00);opacity:.85}
+.post{position:absolute;bottom:38%;width:14px;height:44%;background:#444;border-radius:4px}
+.fighter{position:absolute;bottom:22%;width:140px;height:190px;transition:transform .12s}
+.fighter .head{position:absolute;left:44px;top:0;width:52px;height:52px;border-radius:50%;background:#f1c7a0;border:3px solid #000}
+.fighter .body{position:absolute;left:36px;top:48px;width:68px;height:90px;border-radius:18px 18px 10px 10px;border:3px solid #000}
+.fighter .shorts{position:absolute;left:36px;top:126px;width:68px;height:40px;border-radius:6px;border:3px solid #000;background:#fff}
+.fighter .glove{position:absolute;top:58px;width:42px;height:38px;border-radius:50%;border:3px solid #000;transition:transform .12s}
+.fighter .label{position:absolute;bottom:-26px;width:100%;text-align:center;font:900 15px Impact,system-ui}
+#fB{left:22%}#fB .body,#fB .glove{background:var(--b)}#fB .label{color:var(--b)}#fB .g1{left:96px}#fB .g2{left:86px;top:84px}
+#fO{right:22%}#fO .body,#fO .glove{background:var(--o)}#fO .label{color:var(--o)}#fO .g1{left:2px}#fO .g2{left:12px;top:84px}
+#fB.punch .g1{transform:translateX(120px)}#fO.punch .g1{transform:translateX(-120px)}
+.hit{animation:shake .25s}@keyframes shake{25%{transform:translateX(-10px) rotate(-4deg)}75%{transform:translateX(8px) rotate(3deg)}}
+.down{transform:rotate(-80deg) translateY(60px)!important;transition:transform .6s}
+.pop{position:absolute;font:900 22px Impact,system-ui;pointer-events:none;animation:pop 1s ease-out forwards;text-shadow:0 2px 0 #000}
+@keyframes pop{from{opacity:1;transform:translateY(0) scale(.8)}to{opacity:0;transform:translateY(-70px) scale(1.2)}}
+.flash{position:absolute;inset:0;background:#fff;opacity:0;pointer-events:none}.flash.on{animation:fl .25s}@keyframes fl{30%{opacity:.6}}
+.ko{position:absolute;inset:0;display:none;align-items:center;justify-content:center;font:900 clamp(60px,14vw,160px) Impact,system-ui;color:var(--gold);text-shadow:0 0 30px #f00,0 6px 0 #000;animation:zoom .6s}
+@keyframes zoom{from{transform:scale(3);opacity:0}}
+.controls{display:flex;gap:10px;justify-content:center;margin:10px 0}
+button{background:#2a1414;color:#fff;border:2px solid #000;box-shadow:0 0 0 2px #5a2a2a;border-radius:8px;padding:8px 16px;font:800 14px system-ui;cursor:pointer}
+button.go{background:linear-gradient(180deg,#ffd23f,#d39e00);color:#000}
+.pbp{background:rgba(0,0,0,.5);border:1px solid #5a2a2a;border-radius:10px;padding:10px 14px;height:150px;overflow:hidden;font-size:14px}
+.pbp div{animation:slide .25s ease-out}@keyframes slide{from{opacity:0;transform:translateY(-6px)}}
+table{width:100%;border-collapse:collapse;margin-top:14px;font-size:14px;background:rgba(0,0,0,.4);border-radius:10px;overflow:hidden}
+th,td{padding:6px 10px;border-bottom:1px solid #3a1a1a;text-align:left}th{color:#c9b9b9;font-size:12px;font-weight:600}td.n{text-align:right;font-variant-numeric:tabular-nums}
+tr.cur{background:rgba(255,210,63,.12)}
+.rules{font-size:13px;color:#c9b9b9;margin-top:10px}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<main>
+<a href="./">← All versions</a>
+<div class="marquee"><h1>FIGHT NIGHT</h1><p>Built-in WebSearch/WebFetch vs omnifeed · <span id="nr"></span> rounds · Home-Lab Arena, 2026-10-09</p></div>
+<div class="hp"><div><div class="name nL">BUILT-IN</div><div class="hpbar hpL"><div id="hpB" style="width:100%"></div><span id="hpBt"></span></div></div><div class="round" id="round">READY?</div><div><div class="name nR">OMNIFEED</div><div class="hpbar hpR"><div id="hpO" style="width:100%"></div><span id="hpOt"></span></div></div></div>
+<div class="ring" id="ring">
+  <div class="rope" style="top:30%"></div><div class="rope" style="top:42%"></div><div class="rope" style="top:54%"></div>
+  <div class="post" style="left:3%"></div><div class="post" style="right:3%"></div>
+  <div class="fighter" id="fB"><div class="head"></div><div class="body"></div><div class="shorts"></div><div class="glove g1"></div><div class="glove g2"></div><div class="label">BUILT-IN</div></div>
+  <div class="fighter" id="fO"><div class="head"></div><div class="body"></div><div class="shorts"></div><div class="glove g1"></div><div class="glove g2"></div><div class="label">OMNIFEED</div></div>
+  <div class="flash" id="flash"></div><div class="ko" id="ko">K.O.!</div>
+</div>
+<div class="controls"><button class="go" id="go">🔔 FIGHT!</button><button id="fast">⏩ Faster</button><button id="skip">⏭ Final result</button></div>
+<div class="pbp" id="pbp"><div style="color:#c9b9b9">Ring announcer: "Ladies and gentlemen, in the blue corner, built into Claude Code itself… and in the orange corner, self-hosted on a Raspberry Pi cluster…"</div></div>
+<table id="card"></table>
+<p class="rules"><b>Rules:</b> one punch = one site (or search query) only one tool could handle. Sites both tools read are clinches; sites neither could read are air swings. Each fighter starts with <span id="hpStart"></span> HP and each punch deals 1 HP. Real data, theatrical presentation: the judges' card below is the exact benchmark tally.</p>
+</main>
+<script src="stats.js"></script>
+<script>
+const reduce=matchMedia('(prefers-reduced-motion: reduce)').matches;
+BENCH.load().then(R=>{
+  const {USE,host}=BENCH,HP=80;document.getElementById('hpStart').textContent=HP;
+  const rounds=R.cats.slice(0,12).map(c=>({name:c.cat,ev:c.sites.map(s=>{const b=USE(s.builtin.outcome),o=USE(s.omnifeed.outcome);return{t:o&&!b?'O':b&&!o?'B':b&&o?'clinch':'miss',s}})}));
+  const rest=R.cats.slice(12).flatMap(c=>c.sites);if(rest.length)rounds.push({name:'Misc',ev:rest.map(s=>{const b=USE(s.builtin.outcome),o=USE(s.omnifeed.outcome);return{t:o&&!b?'O':b&&!o?'B':b&&o?'clinch':'miss',s}})});
+  rounds.push({name:'SEARCH',ev:R.Q.map(q=>({t:/^omnifeed/.test(q.winner)?'O':/^builtin/.test(q.winner)?'B':'clinch',q}))});
+  document.getElementById('nr').textContent=rounds.length;const card=document.getElementById('card');
+  card.innerHTML='<tr><th>Rd</th><th>Category</th><th class="n">omnifeed punches</th><th class="n">Built-in punches</th><th class="n">Clinches</th><th class="n">Air swings</th><th>Round to</th></tr>'+rounds.map((r,i)=>{const c=k=>r.ev.filter(e=>e.t===k).length;const o=c('O'),b=c('B');return`<tr id="r${i}"><td>${i+1}</td><td>${r.name}</td><td class="n">${o}</td><td class="n">${b}</td><td class="n">${c('clinch')}</td><td class="n">${c('miss')}</td><td>${o>b?'<span style="color:var(--o)">omnifeed</span>':b>o?'<span style="color:var(--b)">Built-in</span>':'even'}</td></tr>`}).join('');
+  let hpB=HP,hpO=HP,speed=1,running=false,done=false;
+  const $=id=>document.getElementById(id),ring=$('ring');
+  function hpUI(){$('hpB').style.width=Math.max(0,hpB)/HP*100+'%';$('hpO').style.width=Math.max(0,hpO)/HP*100+'%';$('hpBt').textContent=Math.max(0,hpB)+' HP';$('hpOt').textContent=Math.max(0,hpO)+' HP'}hpUI();
+  function say(h){const d=document.createElement('div');d.innerHTML=h;$('pbp').prepend(d);while($('pbp').children.length>7)$('pbp').lastChild.remove()}
+  function pop(txt,col,left){const p=document.createElement('div');p.className='pop';p.textContent=txt;p.style.color=col;p.style.left=left;p.style.top='22%';ring.appendChild(p);setTimeout(()=>p.remove(),1000)}
+  const wait=ms=>new Promise(r=>setTimeout(r,reduce?0:ms/speed));
+  async function punch(e){const atk=e.t==='O'?$('fO'):$('fB'),def=e.t==='O'?$('fB'):$('fO');
+    atk.classList.add('punch');await wait(110);atk.classList.remove('punch');def.classList.remove('hit');void def.offsetWidth;def.classList.add('hit');
+    $('flash').classList.remove('on');void $('flash').offsetWidth;$('flash').classList.add('on');
+    if(e.t==='O')hpB--;else hpO--;hpUI();
+    const who=e.t==='O'?'<b style="color:var(--o)">omnifeed</b>':'<b style="color:var(--b)">Built-in</b>',other=e.t==='O'?'built-in':'omnifeed';
+    const what=e.s?`${host(e.s.url)}`:`"${e.q.query.slice(0,40)}"`,why=e.s?(e.t==='O'?e.s.builtin.reason:e.s.omnifeed.reason)||'':'search won';
+    pop(e.s?host(e.s.url):'🔍 search',e.t==='O'?'#ffae2b':'#7fbfff',e.t==='O'?'28%':'58%');
+    say(`${who} lands one: ${what} <span style="color:#c9b9b9">(${other}: ${why})</span>`)}
+  async function fight(){if(running||done)return;running=true;
+    for(let i=0;i<rounds.length;i++){const r=rounds[i];document.querySelectorAll('#card tr').forEach(t=>t.classList.remove('cur'));$('r'+i).classList.add('cur');
+      $('round').textContent='ROUND '+(i+1);say(`<b style="color:var(--gold)">🔔 Round ${i+1}: ${r.name}</b> (${r.ev.length} ${r.name==='SEARCH'?'queries':'sites'})`);await wait(700);
+      for(const e of r.ev){if(e.t==='O'||e.t==='B'){await punch(e);await wait(260);
+          if(hpB<=0){$('fB').classList.add('down');$('ko').style.display='flex';$('round').textContent='K.O. RD '+(i+1);say(`<b style="color:var(--gold)">💥 K.O.! omnifeed wins by knockout in round ${i+1} (${r.name}).</b> Final tally: omnifeed ${R.usableO} usable sites vs ${R.usableB}, ${R.searchWins.o}–${R.searchWins.b} in search.`);running=false;done=true;return}}
+        else if(e.t==='clinch'&&!reduce){await wait(25)}}
+      say(`End of round ${i+1}. ${$('r'+i).lastElementChild.innerHTML} takes it.`);await wait(600)}
+    $('round').textContent='DECISION';say(`Judges' decision: ${hpO>hpB?'omnifeed':'Built-in'} (${hpO} vs ${hpB} HP left).`);running=false;done=true}
+  $('go').onclick=fight;$('fast').onclick=()=>{speed=speed>=8?1:speed*2;$('fast').textContent='⏩ '+speed+'×'};
+  $('skip').onclick=()=>{speed=500};
+  if(reduce){hpB=HP-(R.onlyO.length+R.searchWins.o);hpO=HP-(R.onlyB.length+R.searchWins.b);hpUI();$('round').textContent='RESULT';say(`(Reduced motion) Final: omnifeed ${Math.max(0,hpO)} HP vs Built-in ${Math.max(0,hpB)} HP. ${hpB<=0?'K.O.':''}`)}
+});
+</script>
+</body>
+</html>
