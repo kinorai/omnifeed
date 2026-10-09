@@ -15,6 +15,9 @@ import (
 	"github.com/kinorai/omnifeed/internal/domain"
 )
 
+// DefaultCrawl4AIUserAgent matches the Chromium bundled in crawl4ai 0.9.4.
+const DefaultCrawl4AIUserAgent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36"
+
 // Config is the fully-resolved runtime configuration.
 type Config struct {
 	// HTTP loader (Open WebUI contract).
@@ -71,6 +74,21 @@ type Config struct {
 	// several news fronts return only their <title>. Off by default;
 	// remove_consent_popups stays on regardless and covers cookie modals.
 	Crawl4AIRemoveOverlays bool
+	// Crawl4AIUserAgent is the browser identity crawl4ai presents. crawl4ai's
+	// own default is a malformed Chrome/116 string that Cloudflare challenges
+	// and some sites reject as an outdated browser. Keep the version in step
+	// with the Chromium the crawl4ai image bundles (153 in 0.9.4): a UA that
+	// disagrees with the engine is itself a bot signal. Set it empty to keep
+	// crawl4ai's own (and disable the alternate-identity retry).
+	Crawl4AIUserAgent string
+	// Crawl4AIStealth turns on crawl4ai's playwright-stealth patches.
+	Crawl4AIStealth bool
+	// Crawl4AIChallengeWait waits up to this long for a self-clearing bot
+	// challenge ("Just a moment...") to pass before extraction; 0 disables.
+	Crawl4AIChallengeWait time.Duration
+	// Crawl4AIMinProseChars rejects pages whose prose (link targets, URLs and
+	// markdown syntax removed) is shorter than this; 0 disables the floor.
+	Crawl4AIMinProseChars int
 
 	// Upstream SearXNG (optional). Empty disables the `search` MCP tool.
 	SearXNGURL     string
@@ -316,6 +334,20 @@ func Load() (Config, error) {
 	if c.Crawl4AIRemoveOverlays, err = envBool("OMNIFEED_CRAWL4AI_REMOVE_OVERLAYS", false); err != nil {
 		return c, err
 	}
+	// Set-but-empty is meaningful: it hands the identity back to crawl4ai.
+	c.Crawl4AIUserAgent = DefaultCrawl4AIUserAgent
+	if ua := envPtr("OMNIFEED_CRAWL4AI_USER_AGENT"); ua != nil {
+		c.Crawl4AIUserAgent = *ua
+	}
+	if c.Crawl4AIStealth, err = envBool("OMNIFEED_CRAWL4AI_STEALTH", true); err != nil {
+		return c, err
+	}
+	if c.Crawl4AIChallengeWait, err = envDuration("OMNIFEED_CRAWL4AI_CHALLENGE_WAIT", 8*time.Second); err != nil {
+		return c, err
+	}
+	if c.Crawl4AIMinProseChars, err = envInt("OMNIFEED_CRAWL4AI_MIN_PROSE_CHARS", 100); err != nil {
+		return c, err
+	}
 	if c.SearXNGTimeout, err = envDuration("OMNIFEED_SEARXNG_TIMEOUT", 15*time.Second); err != nil {
 		return c, err
 	}
@@ -470,6 +502,13 @@ func Load() (Config, error) {
 	// the whole page budget is a misconfiguration, not a preference.
 	if c.Crawl4AIDelayBeforeHTML < 0 || c.Crawl4AIDelayBeforeHTML > 60 {
 		return c, fmt.Errorf("OMNIFEED_CRAWL4AI_DELAY_BEFORE_HTML must be between 0 and 60 seconds, got %v", c.Crawl4AIDelayBeforeHTML)
+	}
+	// crawl4ai clamps page_timeout to 60 s, and the challenge wait runs inside it.
+	if c.Crawl4AIChallengeWait < 0 || c.Crawl4AIChallengeWait > 60*time.Second {
+		return c, fmt.Errorf("OMNIFEED_CRAWL4AI_CHALLENGE_WAIT must be between 0 and 60s, got %v", c.Crawl4AIChallengeWait)
+	}
+	if c.Crawl4AIMinProseChars < 0 {
+		return c, fmt.Errorf("OMNIFEED_CRAWL4AI_MIN_PROSE_CHARS must be >= 0, got %d", c.Crawl4AIMinProseChars)
 	}
 	if c.Crawl4AIScrollDelay < 0 || c.Crawl4AIScrollDelay > 60 {
 		return c, fmt.Errorf("OMNIFEED_CRAWL4AI_SCROLL_DELAY must be between 0 and 60 seconds, got %v", c.Crawl4AIScrollDelay)

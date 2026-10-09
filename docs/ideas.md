@@ -13,6 +13,53 @@ ref, nobody can recover the code.
 
 ---
 
+## Serve `cleaned_html` when crawl4ai returns no markdown
+
+**Status.** Shipped since the first crawl4ai engine; removed 2026-10-09.
+**Code.** `git show v0.34.2:internal/engine/crawl4ai/engine.go` (the `content = result.CleanedHTML` fallback).
+
+### The idea
+
+When crawl4ai's `fit_markdown` and `raw_markdown` were both empty, the engine returned
+`cleaned_html` instead, on the theory that some HTML beats no content.
+
+### Why it was removed
+
+A 272-site benchmark against Claude Code's built-in fetch (2026-10-08) found it only ever
+fired on pages crawl4ai had failed to render. caniuse.com came back as 251 bytes of
+`<html><head><title>…`, served as a successful fetch. The caller could not tell it from
+content, so it never fell back to another source. With the fallback gone, an empty render
+is `thin_content` and the caller moves on.
+
+### What would justify bringing it back
+
+A page class where crawl4ai's markdown is empty but its `cleaned_html` holds the content
+the caller wanted. None turned up in 272 sites. If one does, convert that HTML to text and
+run it through the same verdict checks (prose floor, block markers) rather than serving it
+raw.
+
+## Alert on the share of tiny successful responses
+
+**Status.** Considered 2026-10-09, not built.
+
+### The idea
+
+Alert when many `fetch_url` successes are tiny (`omnifeed_response_chars` ≤ 400), as a
+proxy for block pages and empty shells served as success.
+
+### Why it was not built
+
+Normal traffic swings too much. Over one production week, the daily share of ≤ 400-char
+crawl4ai successes ranged from 2.4% to 14.6% at about 100 crawls a day, driven by what was
+fetched, not by failures. No threshold separates a bad day from a day of short pages. The
+silent-failure checks in the crawl4ai engine now give those pages their own failure
+reasons, which the reason-labelled metrics already count.
+
+### What would justify building it
+
+A deployment with enough volume, and a stable enough mix of URLs, that the share becomes a
+steady baseline worth watching.
+
 ## Server-side article-fetch fallback chain
 
 **Status.** Parked 2026-08-22, never built. No code, no git ref.

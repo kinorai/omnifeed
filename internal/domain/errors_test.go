@@ -13,7 +13,7 @@ func TestKindForStatus(t *testing.T) {
 		500: KindUpstreamError,
 		503: KindUpstreamError,
 		504: KindTimeout,
-		404: KindError,
+		404: KindNotFound,
 		200: KindError,
 	}
 	for code, want := range cases {
