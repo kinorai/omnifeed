@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Executive brief — omnifeed vs built-in</title>
+<style>
+:root{color-scheme:light dark;--page:#f9f9f7;--card:#fcfcfb;--ink:#0b0b0b;--ink2:#52514e;--line:#e1e0d9;--b:#2a78d6;--o:#eb6834;--good:#0ca30c;--bad:#d03b3b}
+@media (prefers-color-scheme:dark){:root{--page:#0d0d0d;--card:#1a1a19;--ink:#fff;--ink2:#c3c2b7;--line:#2c2c2a;--b:#3987e5;--o:#d95926}}
+*{box-sizing:border-box}body{margin:0;background:var(--page);color:var(--ink);font:15px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:900px;margin:0 auto;padding:40px 28px 60px}
+nav{font-size:13px;margin-bottom:24px}nav a{color:var(--ink2)}
+.kicker{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink2)}
+h1{font-size:40px;line-height:1.1;margin:6px 0 10px;letter-spacing:-.02em}
+.lede{font-size:18px;color:var(--ink2);margin:0 0 28px}
+.kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--line);border:1px solid var(--line);border-radius:12px;overflow:hidden;margin-bottom:32px}
+.kpi{background:var(--card);padding:16px 18px}.kpi .l{font-size:12px;color:var(--ink2)}.kpi .v{font-size:26px;font-weight:650;margin-top:2px}.kpi .v small{font-size:13px;font-weight:400;color:var(--ink2)}
+h2{font-size:15px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink2);margin:30px 0 10px;border-bottom:1px solid var(--line);padding-bottom:6px}
+table{width:100%;border-collapse:collapse;font-size:14px}td,th{padding:8px 6px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}th{font-size:12px;color:var(--ink2);font-weight:600}
+td.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+ol{padding-left:20px}li{margin:6px 0}
+.rec{background:var(--card);border:1px solid var(--line);border-left:4px solid var(--good);border-radius:8px;padding:14px 16px}
+.dot{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:6px;vertical-align:baseline}
+@media print{nav{display:none}body{background:#fff;color:#000}.kpi,.rec{background:#fff}main{padding:0}}
+@media (max-width:640px){.kpis{grid-template-columns:repeat(2,1fr)}h1{font-size:30px}}
+</style>
+</head>
+<body>
+<main>
+<nav><a href="./">← All versions</a> · <a href="classic.html">Full dashboard</a> · <a href="#" onclick="print();return false">Print</a></nav>
+<div class="kicker">Benchmark · 2026-10-08 · 272 sites · 40 queries</div>
+<h1 id="h1">…</h1>
+<p class="lede" id="lede"></p>
+<div class="kpis" id="kpis"></div>
+
+<h2>Recommendation</h2>
+<div class="rec" id="rec"></div>
+
+<h2>When to use which</h2>
+<table id="when"></table>
+
+<h2>Fix first (omnifeed)</h2>
+<ol id="fixes"></ol>
+
+<h2>Caveats</h2>
+<p style="color:var(--ink2);font-size:14px">One run, n = 1 per site and tool, from a French home connection. omnifeed fetches were capped with <code>max_chars</code> (0.8–10k), so some partials may have had the fact further down. Verdicts were graded by hand against a target fact per page. Two latency pairs ran in parallel by mistake.</p>
+</main>
+<script src="stats.js"></script>
+<script>
+BENCH.load().then(R=>{
+  const {pct}=BENCH,f=v=>(v/1000).toFixed(2)+' s',P=x=>Math.round(x/R.n*100)+'%';
+  document.getElementById('h1').textContent=`omnifeed reads ${R.usableO-R.usableB} more sites and searches ${Math.round(pct(R.lat.sB,50)/pct(R.lat.sO,50))}× faster.`;
+  document.getElementById('lede').textContent=`Across ${R.n} real sites, omnifeed returned usable content on ${R.usableO} (${P(R.usableO)}) vs ${R.usableB} (${P(R.usableB)}) for Claude Code's built-in WebFetch, and won ${R.searchWins.o} of ${R.nq} head-to-head searches (built-in ${R.searchWins.b}, ${R.searchWins.t} ties). Its main liability: ${R.soft.length} failures it reports as success.`;
+  const K=[
+    ['Usable sites',`${R.usableO} <small>vs ${R.usableB}</small>`],['Search p50',`${f(pct(R.lat.sO,50))} <small>vs ${f(pct(R.lat.sB,50))}</small>`],['News sites readable',`${R.news.o} <small>vs ${R.news.b} of ${R.news.n}</small>`],
+    ['Only omnifeed can read',`${R.onlyO.length} <small>sites</small>`],['Only built-in can read',`${R.onlyB.length} <small>sites</small>`],['Neither can read',`${R.neither.length} <small>sites</small>`]];
+  document.getElementById('kpis').innerHTML=K.map(([l,v])=>`<div class="kpi"><div class="l">${l}</div><div class="v">${v}</div></div>`).join('');
+  document.getElementById('rec').innerHTML=`<b>Use omnifeed first, fall back to the built-in.</b> In replay, this reaches ${R.fallbackToday}/${R.n} sites today, and <b>${R.fallbackFixed}/${R.n} (${P(R.fallbackFixed)})</b> once omnifeed reports its silent failures. That matches a perfect per-domain oracle. Built-in-first reaches the same coverage but is slower and inherits omnifeed's silent failures on the fallback path.`;
+  const rows=[
+    ['<span class="dot" style="background:var(--o)"></span>omnifeed','Reddit, X, Bluesky, HN, news sites, JS apps (crates.io, YC, Bandcamp), anything on Claude Code\'s domain blocklist, fresh or non-English search'],
+    ['<span class="dot" style="background:var(--b)"></span>Built-in','Some Cloudflare-fronted sites that allowlist <code>Claude-User</code> (SourceForge, HA forum, Lemmy), Engadget, Investing.com, Debian packages, sites where omnifeed drops tables (OSM, kernel.org); GitHub-scoped bug searches'],
+    ['Neither',`DataDome / PerimeterX / Akamai storefronts and paywalls (NYT, Reuters, WSJ, Etsy, Zillow, Walmart, Fnac, Tripadvisor…): ${R.neither.length} sites`]];
+  document.getElementById('when').innerHTML='<tr><th>Tool</th><th>Reach for it on</th></tr>'+rows.map(r=>`<tr><td style="white-space:nowrap">${r[0]}</td><td>${r[1]}</td></tr>`).join('');
+  document.getElementById('fixes').innerHTML=[
+    `<b>Report failures as failures</b>: propagate HTTP status and raise the near-empty threshold (${R.soft.length} silent fails: 404s, block pages, consent walls, skeletons).`,
+    '<b>Modern Chrome fingerprint</b>: Chrome/116 is actively rejected ("update your browser") and Cloudflare-challenged.',
+    '<b>Crashes</b>: JSON decode on some large pages, Playwright navigation race (retry after networkidle), PDFs.',
+    '<b>Keep link-only table cells and list items</b>: they currently come out blank.',
+    '<b>Honour <code>max_chars</code> in structured engines</b> and strip tracking params from links.'].map(x=>`<li>${x}</li>`).join('');
+});
+</script>
+</body>
+</html>

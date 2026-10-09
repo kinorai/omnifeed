@@ -12,6 +12,9 @@ Install and quick start are in the [README](https://github.com/kinorai/omnifeed#
   size limits and Prometheus metrics.
 - [omnifeed on Apple `container` (macOS)](apple-container.md): run the stack on Apple's native
   container runtime instead of Docker.
+- [Rate limits](rate-limits.md): how many searches and fetches the upstream engines and sites
+  tolerate, measured per minute, hour, day and month, with the block log and the queries to
+  check your own deployment.
 
 ## Reference
 

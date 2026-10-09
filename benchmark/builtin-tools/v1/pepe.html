@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FEELS GOOD MAN — omnifeed vs built-in</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;background:linear-gradient(180deg,#1d2b1a,#0d140b);color:#f4f9ee;font:16px/1.4 "Comic Sans MS","Comic Neue",system-ui,sans-serif;overflow-x:hidden}
+a{color:#b9d7a8}
+header{text-align:center;padding:16px 10px 0}
+h1{margin:4px 0;font:900 clamp(30px,6vw,62px)/1 Impact,"Arial Black",sans-serif;letter-spacing:.03em;color:#fff;text-shadow:3px 3px 0 #000,-2px -2px 0 #000,2px -2px 0 #000,-2px 2px 0 #000}
+.sub{color:#b9d7a8;margin:0}
+.stage{position:relative;max-width:1100px;margin:10px auto 0;height:470px}
+.frog{position:absolute;bottom:0;width:330px;height:380px}
+.frog svg{width:100%;height:100%;overflow:visible}
+#fO{left:3%}#fB{right:3%}
+.tag{position:absolute;bottom:-6px;left:0;right:0;text-align:center;font:900 22px Impact,sans-serif;letter-spacing:.05em;text-shadow:2px 2px 0 #000}
+#fO .tag{color:#ff8a4c}#fB .tag{color:#6fb6ff}
+.bubble{position:absolute;top:-8px;left:50%;transform:translateX(-50%) scale(0);background:#fff;color:#111;border:3px solid #000;border-radius:18px;padding:8px 14px;font-weight:700;white-space:nowrap;transition:transform .18s cubic-bezier(.3,1.6,.5,1)}
+.bubble::after{content:"";position:absolute;bottom:-14px;left:50%;border:8px solid transparent;border-top-color:#000}
+.bubble.on{transform:translateX(-50%) scale(1)}
+.center{position:absolute;left:50%;top:40px;transform:translateX(-50%);width:420px;text-align:center}
+.card{display:inline-block;background:#fff;color:#111;border:3px solid #000;border-radius:12px;padding:10px 14px;font-weight:800;font-size:18px;box-shadow:5px 5px 0 #000;transition:transform .5s cubic-bezier(.4,1.4,.5,1),opacity .5s}
+.card small{display:block;font-weight:400;font-size:12px;color:#444;margin-top:2px}
+.score{display:flex;flex-direction:column;align-items:center;gap:4px;margin-top:16px;font:900 24px Impact,sans-serif;text-shadow:2px 2px 0 #000;white-space:nowrap}
+.score .g{color:#7dff6a}.score .b{color:#ff6a6a}
+.rain{position:absolute;inset:-40px 40px 120px;pointer-events:none;overflow:hidden}
+.rain i{position:absolute;top:-20px;width:2px;height:16px;background:#8ab8ff;opacity:.7;animation:drop linear infinite}
+@keyframes drop{to{transform:translateY(420px)}}
+.cloud{position:absolute;top:-70px;left:50%;transform:translateX(-50%);font-size:84px;filter:drop-shadow(0 4px 0 #000);animation:bob 3s ease-in-out infinite}
+@keyframes bob{50%{transform:translateX(-50%) translateY(-8px)}}
+.smug{animation:sway 2.2s ease-in-out infinite;transform-origin:50% 100%}
+@keyframes sway{50%{transform:rotate(2.5deg)}}
+.tear{animation:tear 1.2s ease-in infinite}
+@keyframes tear{0%{transform:translateY(0);opacity:1}100%{transform:translateY(70px);opacity:0}}
+.sweat{opacity:0}.monka .sweat{opacity:1;animation:tear 1s ease-in infinite}
+.monka .eye-o{transform:scale(1.25);transform-box:fill-box;transform-origin:center}
+.shake{animation:shake .3s}@keyframes shake{25%{transform:translateX(-6px)}75%{transform:translateX(6px)}}
+.log{max-width:900px;margin:18px auto 0;height:130px;overflow:hidden;font-size:14px;color:#cfe3c2;text-align:center}
+.log div{animation:fadein .35s}@keyframes fadein{from{opacity:0;transform:translateY(-6px)}}
+.controls{text-align:center;margin-top:8px}
+button{font:800 15px "Comic Sans MS",system-ui;background:#7dff6a;border:3px solid #000;border-radius:10px;padding:6px 14px;box-shadow:3px 3px 0 #000;cursor:pointer;margin:0 4px}
+.final{position:fixed;inset:0;display:none;align-items:center;justify-content:center;flex-direction:column;background:rgba(10,20,8,.9);z-index:5;text-align:center;animation:fadein .5s}
+.final h2{font:900 clamp(40px,8vw,90px)/1 Impact,sans-serif;margin:0;color:#7dff6a;text-shadow:4px 4px 0 #000;animation:pulse 1s ease-in-out infinite}
+@keyframes pulse{50%{transform:scale(1.06)}}
+.final p{font-size:20px;max-width:640px}
+</style>
+</head>
+<body>
+<header>
+  <a href="./">← All versions</a>
+  <h1>FEELS GOOD MAN</h1>
+  <p class="sub">272 sites, one by one. Smug Pepe reads what sad Pepe can't. Sweaty Pepe is when omnifeed says "success" and it isn't.</p>
+</header>
+<div class="stage">
+  <div class="frog" id="fO"><div class="bubble" id="bO">feels good man</div><svg viewBox="0 0 330 360" id="svgO"></svg><div class="tag">OMNIFEED</div></div>
+  <div class="center"><div class="card" id="card">ready?<small>press play</small></div>
+    <div class="score"><span class="g" id="sg">😎 omnifeed-only 0</span><span class="b" id="sb">🐸 built-in-only 0</span></div></div>
+  <div class="frog" id="fB"><div class="rain" id="rain"></div><div class="cloud">🌧️</div><div class="bubble" id="bB">feels bad man</div><svg viewBox="0 0 330 360" id="svgB"></svg><div class="tag">BUILT-IN</div></div>
+</div>
+<div class="controls"><button id="play">▶ play</button><button id="fast">⏩ 1×</button><button id="skip">⏭ end</button></div>
+<div class="log" id="log"></div>
+<div class="final" id="final"><h2>FEELS GOOD MAN</h2><p id="ftext"></p><button onclick="location.reload()">↺ again</button></div>
+<script src="stats.js"></script>
+<script>
+// Original cartoon frog, drawn here (no external images).
+function frog(mood){
+  const lids=mood==='smug'?'<path d="M95 128 Q130 112 165 128 L165 140 Q130 128 95 140Z" fill="#4c8a2f"/><path d="M180 128 Q215 112 250 128 L250 140 Q215 128 180 140Z" fill="#4c8a2f"/>'
+   :mood==='sad'?'<path d="M95 122 Q130 140 165 130 L165 138 Q130 146 95 134Z" fill="#4c8a2f"/><path d="M180 130 Q215 140 250 122 L250 134 Q215 146 180 138Z" fill="#4c8a2f"/>':'';
+  const mouth=mood==='smug'?'<path d="M90 205 Q170 250 255 196" stroke="#7a2f1b" stroke-width="12" fill="none" stroke-linecap="round"/><path d="M100 212 Q170 240 245 204" stroke="#b5513a" stroke-width="5" fill="none"/>'
+   :'<path d="M95 222 Q170 190 250 222" stroke="#7a2f1b" stroke-width="12" fill="none" stroke-linecap="round"/><path d="M105 218 Q170 198 240 218" stroke="#b5513a" stroke-width="5" fill="none"/>';
+  const tear=mood==='sad'?'<ellipse class="tear" cx="112" cy="168" rx="7" ry="11" fill="#8ab8ff"/><ellipse class="tear" style="animation-delay:.6s" cx="232" cy="168" rx="7" ry="11" fill="#8ab8ff"/>':'';
+  return `<g class="${mood==='smug'?'smug':''}">
+   <path d="M60 360 Q60 270 165 262 Q270 270 272 360Z" fill="#2c5ba8" stroke="#000" stroke-width="5"/>
+   <ellipse cx="170" cy="175" rx="125" ry="105" fill="#5fa83a" stroke="#000" stroke-width="5"/>
+   <ellipse cx="128" cy="135" rx="42" ry="34" fill="#fff" stroke="#000" stroke-width="5"/><ellipse cx="215" cy="135" rx="42" ry="34" fill="#fff" stroke="#000" stroke-width="5"/>
+   <circle class="eye-o" cx="${mood==='sad'?120:138}" cy="${mood==='sad'?142:137}" r="13"/><circle class="eye-o" cx="${mood==='sad'?207:225}" cy="${mood==='sad'?142:137}" r="13"/>
+   ${lids}${mouth}${tear}
+   <ellipse class="sweat" cx="268" cy="120" rx="8" ry="13" fill="#bfe3ff" stroke="#000" stroke-width="2"/>
+   <path d="M150 195 Q160 188 168 195" stroke="#3d7a22" stroke-width="4" fill="none"/></g>`}
+document.getElementById('svgO').innerHTML=frog('smug');document.getElementById('svgB').innerHTML=frog('sad');
+const rain=document.getElementById('rain');for(let i=0;i<40;i++){const d=document.createElement('i');d.style.left=Math.random()*100+'%';d.style.animationDuration=(.6+Math.random()*.6)+'s';d.style.animationDelay=Math.random()+'s';rain.appendChild(d)}
+BENCH.load().then(R=>{
+  const {USE,host}=BENCH,$=id=>document.getElementById(id);let i=0,g=0,b=0,speed=1,playing=false,timer;
+  const bubble=(id,txt)=>{const el=$(id);el.textContent=txt;el.classList.add('on');setTimeout(()=>el.classList.remove('on'),700/speed)};
+  const log=h=>{const d=document.createElement('div');d.innerHTML=h;$('log').prepend(d);while($('log').children.length>5)$('log').lastChild.remove()};
+  function step(){if(i>=R.n)return end();const s=R.S[i++],o=s.omnifeed.outcome,bo=s.builtin.outcome;
+    $('card').innerHTML=`${host(s.url)}<small>${s.cat} · site ${i}/${R.n}</small>`;$('card').style.transform='scale(1.08)';setTimeout(()=>$('card').style.transform='',150);
+    const fO=$('fO');fO.classList.remove('monka');
+    if(o==='softblock'){fO.classList.add('monka');bubble('bO','monkaS… "success"');log(`😰 <b>${host(s.url)}</b>: omnifeed said ✓ but got: ${s.omnifeed.note.slice(0,70)}`)}
+    else if(USE(o)&&!USE(bo)){g++;bubble('bO','feels good man');bubble('bB','feels bad man');$('fB').classList.remove('shake');void $('fB').offsetWidth;$('fB').classList.add('shake');log(`😎 <b>${host(s.url)}</b>: only omnifeed (built-in: ${s.builtin.reason||bo})`)}
+    else if(USE(bo)&&!USE(o)){b++;bubble('bB','…feels ok man?');log(`🐸 <b>${host(s.url)}</b>: rare built-in W (omnifeed: ${s.omnifeed.reason||o})`)}
+    else if(!USE(bo)&&!USE(o)){bubble('bO','sadge');log(`💀 <b>${host(s.url)}</b>: nobody reads this (${s.omnifeed.reason||o})`)}
+    $('sg').textContent='😎 omnifeed-only '+g;$('sb').textContent='🐸 built-in-only '+b;timer=setTimeout(step,650/speed)}
+  function end(){playing=false;$('final').style.display='flex';$('ftext').innerHTML=`omnifeed read <b>${R.onlyO.length}</b> sites the built-in couldn't. The built-in read <b>${R.onlyB.length}</b> omnifeed couldn't.<br>Usable: <b>${R.usableO}</b> vs <b>${R.usableB}</b> of ${R.n}. Search: ${R.searchWins.o}–${R.searchWins.b}.<br><span style="color:#ffd27a">…but omnifeed sweated through ${R.soft.length} silent fails. monkaS.</span>`}
+  $('play').onclick=()=>{if(playing){clearTimeout(timer);playing=false;$('play').textContent='▶ play'}else{playing=true;$('play').textContent='❚❚ pause';step()}};
+  $('fast').onclick=()=>{speed=speed>=8?1:speed*2;$('fast').textContent='⏩ '+speed+'×'};
+  $('skip').onclick=()=>{clearTimeout(timer);end()};
+  setTimeout(()=>{if(!playing)$('play').click()},1200);
+});
+</script>
+</body>
+</html>

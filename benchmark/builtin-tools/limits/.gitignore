@@ -1,0 +1,3 @@
+# exports from export.sh hold the URLs and queries clients sent
+*.jsonl
+*.tmp

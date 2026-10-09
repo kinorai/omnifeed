@@ -1,0 +1,471 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>omnifeed vs Claude Code WebSearch/WebFetch — benchmark</title>
+<style>
+.viz-root{
+  color-scheme:light;
+  --page:#f9f9f7;--surface-1:#fcfcfb;--text-primary:#0b0b0b;--text-secondary:#52514e;--muted:#898781;
+  --grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);
+  --series-1:#2a78d6;--series-2:#eb6834;
+  --good:#0ca30c;--warning:#fab219;--serious:#ec835a;--critical:#d03b3b;--neutral:#898781;
+}
+@media (prefers-color-scheme:dark){
+  :root:where(:not([data-theme="light"])) .viz-root{
+    color-scheme:dark;--page:#0d0d0d;--surface-1:#1a1a19;--text-primary:#fff;--text-secondary:#c3c2b7;
+    --grid:#2c2c2a;--axis:#383835;--border:rgba(255,255,255,.10);--series-1:#3987e5;--series-2:#d95926;
+  }
+}
+:root[data-theme="dark"] .viz-root{
+  color-scheme:dark;--page:#0d0d0d;--surface-1:#1a1a19;--text-primary:#fff;--text-secondary:#c3c2b7;
+  --grid:#2c2c2a;--axis:#383835;--border:rgba(255,255,255,.10);--series-1:#3987e5;--series-2:#d95926;
+}
+*{box-sizing:border-box}
+body{margin:0}
+.viz-root{background:var(--page);color:var(--text-primary);font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;min-height:100vh}
+main{max-width:1180px;margin:0 auto;padding:32px 24px 80px}
+h1{font-size:26px;margin:0 0 4px}
+h2{font-size:18px;margin:40px 0 4px}
+.sub{color:var(--text-secondary);margin:0 0 16px}
+.card{background:var(--surface-1);border:1px solid var(--border);border-radius:12px;padding:20px}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:12px;margin-top:20px}
+.tile .label{color:var(--text-secondary);font-size:13px}
+.tile .pair{display:flex;gap:20px;margin-top:6px;align-items:baseline}
+.tile .v{font-size:30px;font-weight:650}
+.tile .who{font-size:12px;color:var(--text-secondary);display:flex;align-items:center;gap:6px}
+.sw{width:10px;height:10px;border-radius:2px;display:inline-block;flex:none}
+.legend{display:flex;gap:16px;flex-wrap:wrap;font-size:13px;color:var(--text-secondary);margin:8px 0 12px}
+.legend span{display:flex;align-items:center;gap:6px}
+svg text{fill:var(--text-secondary);font-size:12px;font-family:inherit}
+svg .ink{fill:var(--text-primary)}
+.tip{position:fixed;pointer-events:none;background:var(--surface-1);color:var(--text-primary);border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-size:12px;max-width:380px;box-shadow:0 4px 16px rgba(0,0,0,.15);display:none;z-index:10}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;color:var(--text-secondary);font-weight:600;border-bottom:1px solid var(--axis);padding:8px 6px;position:sticky;top:0;background:var(--surface-1)}
+td{border-bottom:1px solid var(--grid);padding:8px 6px;vertical-align:top}
+td.num{font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}
+.badge{display:inline-flex;align-items:center;gap:5px;font-weight:600;white-space:nowrap;font-size:12px}
+.badge i{font-style:normal;width:16px;height:16px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;color:#fff;font-size:10px}
+.note{color:var(--text-secondary);font-size:12px}
+.url{word-break:break-all;color:var(--text-primary);text-decoration:none}
+.url:hover{text-decoration:underline}
+.filters{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}
+.filters button{background:transparent;border:1px solid var(--border);color:var(--text-secondary);border-radius:999px;padding:4px 12px;font:inherit;font-size:13px;cursor:pointer}
+.filters button[aria-pressed="true"]{background:var(--text-primary);color:var(--surface-1);border-color:var(--text-primary)}
+.findings{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:12px}
+.findings .card h3{margin:0 0 6px;font-size:15px}
+.findings .card p{margin:0;color:var(--text-secondary);font-size:14px}
+.scroll{max-height:640px;overflow:auto}
+.win-o{color:var(--text-primary);font-weight:600}
+.toggle{float:right;background:transparent;border:1px solid var(--border);color:var(--text-secondary);border-radius:8px;padding:4px 10px;cursor:pointer;font:inherit;font-size:13px}
+code{font-size:12px}
+.toolbar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:8px 0 12px}
+.toolbar input[type=search],.toolbar select{background:var(--surface-1);color:var(--text-primary);border:1px solid var(--border);border-radius:8px;padding:6px 10px;font:inherit;font-size:13px}
+.toolbar input[type=search]{min-width:260px}
+.btn{background:transparent;border:1px solid var(--border);color:var(--text-primary);border-radius:8px;padding:6px 12px;font:inherit;font-size:13px;cursor:pointer}
+.btn:hover{background:var(--grid)}
+.chip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border);border-radius:999px;padding:4px 12px;font-size:13px;cursor:pointer;background:transparent;color:var(--text-secondary)}
+.chip[aria-pressed="true"]{background:var(--text-primary);color:var(--surface-1)}
+.chip b{font-variant-numeric:tabular-nums}
+.chips{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 12px}
+.callout{border-left:3px solid var(--series-2);padding:8px 12px;margin:12px 0 0;color:var(--text-secondary);font-size:14px}
+</style>
+</head>
+<body class="viz-root">
+<main>
+<a class="toggle" href="./" style="margin-left:8px;text-decoration:none">← All versions</a><button class="toggle" id="theme">Toggle theme</button>
+<h1>omnifeed vs Claude Code built-in WebSearch / WebFetch</h1>
+<p class="sub">40 search queries and 272 sites (four batches), each hit once by each tool, sequentially, on 2026-10-09 from a self-hosted node, paced to stay under rate limits. Both tools egress from the same French home connection. Latency is the gap between the <code>tool_use</code> and <code>tool_result</code> timestamps in the session transcript (no agent overhead).</p>
+
+<div class="tiles" id="tiles"></div>
+
+<h2>Fetch outcomes</h2>
+<p class="sub">For each of the 272 sites: did the tool return what the page shows? <b>Partial</b> means a real page came back but the target fact was missing. <b>Soft-block</b> means a block page was returned as if it were a success. <b>Policy-refused</b> means the built-in fetch refused the domain before sending any request.</p>
+<div class="card">
+  <div class="legend" id="outLegend"></div>
+  <svg id="outcomes" width="100%" height="150" role="img" aria-label="Stacked bar of fetch outcomes per tool"></svg>
+</div>
+
+<h2>Router simulator: what if an agent used both?</h2>
+<p class="sub">Every strategy replayed over the 272 measured sites. A fallback only fires on a failure the agent can <i>see</i>: built-in failures are always explicit, but omnifeed's silent failures look like success, so today they block the fallback and hand the agent wrong content. Latency of a fallback = first call + second call.</p>
+<div class="card scroll"><table id="routerTable"></table>
+<div class="callout" id="routerNote"></div></div>
+
+<h2 id="diff">What changed since v1</h2>
+<p class="sub">Same site, same arguments, one day apart. <b>Fixed</b> and <b>regressed</b> count only real changes: the usable / not-usable status flipped, a silent failure became an explicit error (or back), or the run notes record an observed change. A success ↔ partial difference on an unchanged page is a <i>regrade</i> (the grader read the window differently) and is hidden unless you ask for it.</p>
+<div class="chips" id="diffChips"></div>
+<div class="card scroll"><table id="fixTable"></table></div>
+
+<h2>Block log</h2>
+<p class="sub">Every block and rate-limit event seen during the run, in UTC. Budgets per engine and per site are in <a href="../../../docs/rate-limits.md">docs/rate-limits.md</a>.</p>
+<div class="card scroll"><table id="eventTable"></table></div>
+
+<h2>Latency</h2>
+<p class="sub">Each dot is one call; the tick marks the median. The built-in fetch time includes its small-model summarization step. Its fast failures (~1 s) are policy refusals that never reach the site.</p>
+<div class="card">
+  <div class="legend"><span><i class="sw" style="background:var(--series-1)"></i>Built-in (WebSearch / WebFetch)</span><span><i class="sw" style="background:var(--series-2)"></i>omnifeed (web_search / fetch_url)</span></div>
+  <svg id="latSearch" width="100%" height="130" role="img" aria-label="Search latency strip plot"></svg>
+  <svg id="latFetch" width="100%" height="130" role="img" aria-label="Fetch latency strip plot"></svg>
+</div>
+
+<h2>Latency percentiles</h2>
+<p class="sub">Linear-interpolated percentiles over every call. n is the sample size: with n≈40 per tool for search, p99 is effectively the slowest call. "Time to fail" covers calls that returned no usable content, i.e. how long an agent waits before it knows it must fall back.</p>
+<div class="card scroll"><table id="pctTable"></table></div>
+
+<h2>Latency distribution</h2>
+<p class="sub">Share of calls finished by time X (empirical CDF). A curve further left and steeper is faster and more predictable. Hover to read both tools at any X.</p>
+<div class="card">
+  <div class="legend"><span><i class="sw" style="background:var(--series-1)"></i>Built-in</span><span><i class="sw" style="background:var(--series-2)"></i>omnifeed</span></div>
+  <svg id="cdfSearch" width="100%" height="230" role="img" aria-label="Search latency CDF"></svg>
+  <svg id="cdfFetch" width="100%" height="230" role="img" aria-label="Fetch latency CDF"></svg>
+</div>
+
+<h2>Latency over the session</h2>
+<p class="sub">Every call in run order (x = call number, so each batch gets room; dashed lines mark pauses longer than 5 min). The line is a rolling median of the last 15 calls per tool. A rising line would mean rate limiting or warm-up effects.</p>
+<div class="card">
+  <div class="legend"><span><i class="sw" style="background:var(--series-1)"></i>Built-in</span><span><i class="sw" style="background:var(--series-2)"></i>omnifeed</span></div>
+  <svg id="tlSearch" width="100%" height="190" role="img" aria-label="Search latency over time"></svg>
+  <svg id="tlFetch" width="100%" height="230" role="img" aria-label="Fetch latency over time"></svg>
+</div>
+
+<h2>Response size &amp; token cost</h2>
+<p class="sub">Characters handed back to the agent per fetch (≈ chars/4 tokens). The built-in returns a small-model summary. omnifeed returns the page itself, capped by <code>max_chars</code> (0.8–10k in this benchmark), except structured engines, which ignore the cap. "Full page" is the uncapped size omnifeed reported in its truncation marker, i.e. what an agent would ingest with no cap.</p>
+<div class="card scroll"><table id="sizeTable"></table></div>
+
+<h2>Why requests failed</h2>
+<p class="sub">Every non-usable fetch, classified from the error each tool returned.</p>
+<div class="card"><div id="reasons" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(380px,1fr));gap:24px"></div></div>
+
+<h2>Usable rate by site category</h2>
+<p class="sub">Usable = success or partial. Sorted by the gap between the two tools.</p>
+<div class="card scroll"><table id="catTable"></table></div>
+
+<h2>By batch</h2>
+<div class="card scroll"><table id="batchTable"></table></div>
+
+<h2>Key findings</h2>
+<div class="findings" id="findings"></div>
+
+<h2>Search quality scorecard</h2>
+<p class="sub">Averages over the 40 queries (10 results each). Diversity = distinct domains; relevant = results that answer the query; spam = content farms, SEO clones and mirror duplicates; fresh = results reflect the current state of the world.</p>
+<div class="card scroll"><table id="scoreTable"></table></div>
+
+<h2>Search quality, query by query</h2>
+<p class="sub">Unique domains among the returned results; relevant = results that actually answer the query; spam = content farms and SEO clones.</p>
+<div class="card scroll"><table id="searchTable"></table></div>
+
+<h2>Per-domain routing table</h2>
+<p class="sub">The measured best tool for each of the 272 domains: better outcome first, then lower latency. Export it to seed an agent's per-domain router.</p>
+<div class="toolbar" id="routeChips"></div>
+<div class="toolbar"><button class="btn" id="dlRouteCsv">Download CSV</button><button class="btn" id="dlRouteJson">Download JSON</button></div>
+<div class="card scroll"><table id="routeTable"></table></div>
+
+<h2>Site matrix</h2>
+<div class="toolbar">
+  <input type="search" id="mq" placeholder="Filter by domain or note text…" aria-label="Filter sites">
+  <select id="mo" aria-label="Outcome filter">
+    <option value="">All outcomes</option><option value="onlyO">Only omnifeed usable</option><option value="onlyB">Only built-in usable</option>
+    <option value="both">Both usable</option><option value="none">Both fail</option><option value="soft">omnifeed silent fail</option><option value="refused">Built-in policy-refused</option>
+  </select>
+  <label style="font-size:13px;color:var(--text-secondary)"><input type="checkbox" id="md"> Disagreements only</label>
+  <button class="btn" id="dlCsv">Download CSV</button>
+  <span id="mcount" class="note"></span>
+</div>
+<div class="filters" id="filters"></div>
+<div class="card scroll"><table id="siteTable"></table></div>
+
+<h2>Method &amp; caveats</h2>
+<div class="card note" style="font-size:13px">
+<ul>
+<li>v2 re-ran v1's exact inputs on 2026-10-09 against omnifeed v0.35.0 (crawl4ai 0.9.4, SearXNG 2026.10.4). Calls were strictly sequential, omnifeed first, then the built-in. Two calls ran in parallel by mistake (search S1 and the SwiftUI docs fetch); their notes flag the latency.</li>
+<li>The run was paced to stay under rate limits: about two fetches a minute, one search every 3 minutes, then every 6 once Google's engine went silent at 15:43 UTC. Google stayed silent for the rest of the run, so later omnifeed searches ran on privacywall, yandex and braveapi only. The block log above has the details.</li>
+<li>omnifeed fetches used <code>max_chars</code> 0.8–10k, as in v1, so "partial" on a long page can mean the fact sat past that window. Total page size is in the notes.</li>
+<li>The built-in WebFetch returns a small-model <i>answer</i>, not the page: a big token saving, but lossy (it misread a search page as a block page and called CoinGecko a "block page" while describing it).</li>
+<li>Both tools egress from the same IP. When Google flagged it (Scholar <code>/sorry</code> at 15:48), it flagged both.</li>
+<li>Single run, n=1 per site and tool. A transport reset (ECONNRESET) between the client and an MCP server was retried once; nothing else was retried.</li>
+</ul>
+</div>
+</main>
+<div class="tip" id="tip"></div>
+<script>
+const OUT = {
+  success:{label:'Success',color:'var(--good)',icon:'✓'},
+  partial:{label:'Partial',color:'var(--warning)',icon:'~'},
+  softblock:{label:'Soft-block (silent)',color:'var(--serious)',icon:'!'},
+  error:{label:'Crash / error',color:'var(--serious)',icon:'×'},
+  blocked:{label:'Blocked by site',color:'var(--critical)',icon:'×'},
+  refused:{label:'Policy-refused (built-in)',color:'var(--neutral)',icon:'⊘'},
+};
+const ORDER=['success','partial','softblock','error','blocked','refused'];
+const tip=document.getElementById('tip');
+function showTip(e,html){tip.innerHTML=html;tip.style.display='block';const x=Math.min(e.clientX+14,innerWidth-400);tip.style.left=x+'px';tip.style.top=(e.clientY+14)+'px'}
+function hideTip(){tip.style.display='none'}
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,parent){const n=document.createElementNS(NS,tag);for(const k in attrs)n.setAttribute(k,attrs[k]);parent&&parent.appendChild(n);return n}
+const median=a=>{const s=[...a].sort((x,y)=>x-y),m=s.length>>1;return s.length%2?s[m]:(s[m-1]+s[m])/2};
+const host=u=>new URL(u).hostname.replace(/^www\./,'');
+const badge=o=>`<span class="badge"><i style="background:${OUT[o].color}">${OUT[o].icon}</i>${OUT[o].label}</span>`;
+
+document.getElementById('theme').onclick=()=>{const r=document.documentElement;const dark=r.dataset.theme?r.dataset.theme==='dark':matchMedia('(prefers-color-scheme: dark)').matches;r.dataset.theme=dark?'light':'dark';render();renderExtra()};
+
+let D;
+fetch('data.json').then(r=>r.json()).then(d=>{D=d;render();renderExtra();renderMore();['mq','mo','md'].forEach(i=>document.getElementById(i).addEventListener('input',renderMatrix));document.getElementById('dlCsv').onclick=()=>{const r=matrixRows();download('site-matrix.csv',['url,category,builtin_outcome,builtin_ms,builtin_note,omnifeed_outcome,omnifeed_ms,omnifeed_note',...r.map(s=>[s.url,s.cat,s.builtin.outcome,s.builtin.ms,s.builtin.note,s.omnifeed.outcome,s.omnifeed.ms,s.omnifeed.note].map(csvq).join(','))].join('\n'),'text/csv')};addEventListener('resize',()=>{render();renderExtra();renderMore()})});
+
+function render(){
+  const S=D.sites, Q=D.searches;
+  const cnt=t=>Object.fromEntries(ORDER.map(o=>[o,S.filter(s=>s[t].outcome===o).length]));
+  const cb=cnt('builtin'),co=cnt('omnifeed');
+  const usable=t=>S.filter(s=>['success','partial'].includes(s[t].outcome)).length;
+  const onlyO=S.filter(s=>['success','partial'].includes(s.omnifeed.outcome)&&!['success','partial'].includes(s.builtin.outcome)).length;
+  const onlyB=S.filter(s=>['success','partial'].includes(s.builtin.outcome)&&!['success','partial'].includes(s.omnifeed.outcome)).length;
+  const sm=t=>median(Q.flatMap(q=>q[t].ms));
+  const fm=t=>median(S.filter(s=>['success','partial'].includes(s[t].outcome)).map(s=>s[t].ms));
+  const sw=n=>`<i class="sw" style="background:var(--series-${n})"></i>`;
+  const tile=(label,b,o)=>`<div class="card tile"><div class="label">${label}</div><div class="pair"><div><div class="v">${b}</div><div class="who">${sw(1)}Built-in</div></div><div><div class="v">${o}</div><div class="who">${sw(2)}omnifeed</div></div></div></div>`;
+  document.getElementById('tiles').innerHTML=
+    tile(`Sites with usable content (of ${S.length})`,usable('builtin'),usable('omnifeed'))+
+    tile('Full success (target fact found)',cb.success,co.success)+
+    tile('Median search latency',(sm('builtin')/1000).toFixed(1)+' s',(sm('omnifeed')/1000).toFixed(2)+' s')+
+    tile('Sites only this tool could read',onlyB,onlyO)+
+    tile(`Searches won (of ${Q.length})`,Q.filter(q=>!/^omnifeed/.test(q.winner)&&!/^tie/.test(q.winner)).length,Q.filter(q=>/^omnifeed/.test(q.winner)).length+` <span class="note">+${Q.filter(q=>/^tie/.test(q.winner)).length} ties</span>`)+
+    tile('Median fetch latency (usable results)',(fm('builtin')/1000).toFixed(1)+' s',(fm('omnifeed')/1000).toFixed(1)+' s');
+
+  // outcomes stacked bar
+  const lg=document.getElementById('outLegend');
+  lg.innerHTML=ORDER.map(o=>`<span><i class="sw" style="background:${o==='softblock'?'repeating-linear-gradient(45deg,var(--serious) 0 3px,var(--surface-1) 3px 5px)':OUT[o].color}"></i>${OUT[o].label}</span>`).join('');
+  const svg=document.getElementById('outcomes');svg.innerHTML='';
+  const W=svg.clientWidth||900,L=90,R=10,bw=W-L-R;
+  const defs=el('defs',{},svg),pat=el('pattern',{id:'hatch',width:6,height:6,patternUnits:'userSpaceOnUse',patternTransform:'rotate(45)'},defs);
+  el('rect',{width:6,height:6,fill:'var(--serious)'},pat);el('line',{x1:0,y1:0,x2:0,y2:6,stroke:'var(--surface-1)','stroke-width':2},pat);
+  [['builtin','Built-in',cb],['omnifeed','omnifeed',co]].forEach(([t,name,c],i)=>{
+    const y=20+i*60;el('text',{x:0,y:y+22,class:'ink'},svg).textContent=name;
+    let x=L;
+    ORDER.forEach(o=>{if(!c[o])return;const w=c[o]/S.length*bw;
+      const r=el('rect',{x:x+1,y,width:Math.max(w-2,1),height:34,rx:4,fill:o==='softblock'?'url(#hatch)':OUT[o].color},svg);
+      const hosts=S.filter(s=>s[t].outcome===o).map(s=>host(s.url)).join(', ');
+      r.addEventListener('mousemove',e=>showTip(e,`<b>${name} · ${OUT[o].label}: ${c[o]}</b><br>${hosts}`));r.addEventListener('mouseleave',hideTip);
+      if(w>34){const tx=el('text',{x:x+w/2,y:y+22,'text-anchor':'middle',style:'fill:#0b0b0b;font-weight:600'},svg);tx.textContent=c[o];tx.style.pointerEvents='none'}
+      x+=w});
+  });
+  el('text',{x:L,y:140},svg).textContent='0';el('text',{x:L+bw,y:140,'text-anchor':'end'},svg).textContent=S.length+' sites';
+
+  strip('latSearch','Search',[['builtin',Q.flatMap(q=>q.builtin.ms.map((m,i)=>({ms:m,label:q.query})))],['omnifeed',Q.flatMap(q=>q.omnifeed.ms.map(m=>({ms:m,label:q.query})))]]);
+  strip('latFetch','Fetch',[['builtin',S.map(s=>({ms:s.builtin.ms,label:host(s.url)+' · '+OUT[s.builtin.outcome].label}))],['omnifeed',S.map(s=>({ms:s.omnifeed.ms,label:host(s.url)+' · '+OUT[s.omnifeed.outcome].label}))]]);
+
+  // findings
+  const DF=D.diff||[],dk=(k,t)=>DF.filter(x=>x.kind===k&&(!t||x.tool===t));
+  const hl=a=>a.map(x=>host(x.url)).join(', ');
+  const fixedO=dk('fixed','omnifeed'),regO=dk('regressed','omnifeed');
+  const U=o=>o==='success'||o==='partial',RS={usableO:usable('omnifeed'),usableB:usable('builtin'),onlyO,onlyB,
+    neither:S.filter(s=>!U(s.builtin.outcome)&&!U(s.omnifeed.outcome)).length,
+    win:k=>Q.filter(q=>new RegExp('^'+k).test(q.winner)).length};
+  const softV2=S.filter(s=>s.omnifeed.outcome==='softblock');
+  const gIdx=Q.findIndex(q=>/google cse silent/.test(q.engines||''));
+  const late=gIdx<0?[]:Q.slice(gIdx),lateW=late.filter(q=>/^omnifeed/.test(q.winner)).length;
+  const F=[
+   [`Usable content: omnifeed ${RS.usableO}/${S.length} vs built-in ${RS.usableB}/${S.length}`,`v1 was 207 vs 161. omnifeed alone could read ${RS.onlyO} sites, the built-in alone ${RS.onlyB}, and ${RS.neither} failed on both. The built-in side barely moved: its blocklist and its 403s are the same as yesterday.`],
+   [`Silent failures: 21 → ${softV2.length}`,`v0.35.0 turns 404 pages, block pages, consent walls and loading skeletons into explicit <code>not_found</code>, <code>captcha</code>, <code>blocked</code> and <code>thin_content</code> errors (IRS, weather.com, Quora, USA Today, idealo, Amazon, Temu, Costco, Spotify, caniuse). Still returned as success: ${hl(softV2)}.`],
+   [`${fixedO.length} sites fixed, ${regO.length} regressed (omnifeed)`,`Newly readable behind Cloudflare, PerimeterX or a 403 in v1: Stack Overflow, Unix SE, SourceForge, Discogs, Investing.com, Bloomberg, Zillow, Decathlon, Engadget, Back Market. Crashes fixed: fr.wikipedia (12 MB page), redis.io (20 MB), the arXiv PDF. Link-only content kept: MIT OCW instructors, gov.uk "Most viewed", Météo-France temperatures. Regressed: ${hl(regO)}. See the diff table.`],
+   ['Regression from v0.35.0 itself: the prose floor','web.archive.org\'s 2005 Google homepage has 85 characters of prose, so the new 100-character floor reports it as <code>thin_content</code>. v1 returned it (418 chars). The floor is right for JS shells and wrong for pages that really are tiny. The imgur gallery also lost its posts from the window: the new ul/ol preservation keeps the footer and tag lists that come first.'],
+   ['The price of waiting out challenges',`omnifeed now waits for "Just a moment…" interstitials to clear. Some do: Bloomberg and Expedia passed after 15–22 s where v1 was blocked. Pages that stay blocked pay the wait twice, once per user agent: CodePen took 31 s and Lemmy 19 s to fail. Same-site median fetch is about 0.5 s slower than v1.`],
+   [`Search: ${RS.win('omnifeed')} omnifeed wins, ${RS.win('builtin')} built-in, ${RS.win('tie')} ties (of ${Q.length})`,`Google's engine went silent at search ${gIdx+1} (15:43 UTC, 68 searches in 24 hours) and stayed silent for the rest of the run. omnifeed still won ${lateW} of the ${late.length} searches after that on privacywall, yandex and braveapi alone. Median search: ${(sm('omnifeed')/1000).toFixed(2)} s vs ${(sm('builtin')/1000).toFixed(2)} s.`],
+   ['Google flags the IP, not the tool','At 15:48 Google Scholar served its "unusual traffic" page to both omnifeed and Claude Code\'s WebFetch: they share the egress IP. The same page worked for both the day before. See the block log and docs/rate-limits.md.'],
+   ['Built-in weaknesses, unchanged','Same domain blocklist (news outlets, Reddit, Stack Exchange, Ouest-France, DW…), bare 403s from Cloudflare-fronted shops, JS apps returned as empty shells (Bluesky, Skyscanner, Khan Academy), cross-host redirects not followed (Kayak, YouTube and Google consent).'],
+   ['Neither beats the big anti-bot vendors','DataDome (Libération, Leroy Merlin, NYT, Reuters, WSJ, Etsy…), Cloudflare JS challenges (CodePen, Newegg, B&H, Lemmy for omnifeed), Akamai (idealo), LinkedIn\'s HTTP 999.'],
+  ];
+  document.getElementById('findings').innerHTML=F.map(([h,p])=>`<div class="card"><h3>${h}</h3><p>${p}</p></div>`).join('');
+
+  // search table
+  document.getElementById('searchTable').innerHTML='<tr><th>Query</th><th>Kind</th><th class="num">Built-in<br>ms</th><th class="num">omnifeed<br>ms</th><th class="num">Domains<br>B / O</th><th class="num">Relevant<br>B / O</th><th class="num">Spam<br>B / O</th><th>Winner</th><th>Notes</th></tr>'+
+   Q.map(q=>`<tr><td>${q.query}</td><td>${q.cat}</td><td class="num">${q.builtin.ms.join(' + ')}</td><td class="num">${q.omnifeed.ms.join(', ')}</td><td class="num">${q.builtin.unique_domains} / ${q.omnifeed.unique_domains}</td><td class="num">${q.builtin.relevant} / ${q.omnifeed.relevant}</td><td class="num">${q.builtin.spam} / ${q.omnifeed.spam}</td><td class="${/^omnifeed/.test(q.winner)?'win-o':''}">${q.winner}</td><td class="note"><b>B:</b> ${q.builtin.note}<br><b>O:</b> ${q.omnifeed.note}</td></tr>`).join('');
+
+  // filters + site table
+  const cats=['All',...new Set(S.map(s=>s.cat))];
+  const fl=document.getElementById('filters');
+  const cur=fl.dataset.cur||'All';
+  fl.innerHTML=cats.map(c=>`<button aria-pressed="${c===cur}">${c}</button>`).join('');
+  fl.querySelectorAll('button').forEach(b=>b.onclick=()=>{fl.dataset.cur=b.textContent;render();renderMatrix()});
+}
+
+
+function pct(a,p){if(!a.length)return NaN;const s=[...a].sort((x,y)=>x-y);const i=(s.length-1)*p/100,lo=Math.floor(i),hi=Math.ceil(i);return s[lo]+(s[hi]-s[lo])*(i-lo)}
+const fmtS=v=>isNaN(v)?'–':(v/1000).toFixed(2)+' s';
+const fmtN=v=>isNaN(v)?'–':Math.round(v).toLocaleString('en-US');
+
+const USE=o=>['success','partial'].includes(o);
+const RANK={success:3,partial:2,softblock:0,blocked:0,refused:0,error:0};
+function matrixRows(){
+  const S=D.sites,cur=document.getElementById('filters').dataset.cur||'All',q=(document.getElementById('mq').value||'').toLowerCase(),o=document.getElementById('mo').value,dis=document.getElementById('md').checked;
+  return S.filter(s=>{const b=USE(s.builtin.outcome),f=USE(s.omnifeed.outcome);
+    if(cur!=='All'&&s.cat!==cur)return false;
+    if(q&&!(s.url+' '+s.builtin.note+' '+s.omnifeed.note+' '+s.cat).toLowerCase().includes(q))return false;
+    if(o==='onlyO'&&!(f&&!b))return false;if(o==='onlyB'&&!(b&&!f))return false;if(o==='both'&&!(b&&f))return false;
+    if(o==='none'&&(b||f))return false;if(o==='soft'&&s.omnifeed.outcome!=='softblock')return false;if(o==='refused'&&s.builtin.outcome!=='refused')return false;
+    if(dis&&s.builtin.outcome===s.omnifeed.outcome)return false;return true});
+}
+function renderMatrix(){
+  const rows=matrixRows();
+  document.getElementById('mcount').textContent=`${rows.length} of ${D.sites.length} sites`;
+  document.getElementById('siteTable').innerHTML='<tr><th>Site</th><th>Category</th><th>Built-in WebFetch</th><th class="num">ms</th><th>omnifeed fetch_url</th><th class="num">ms</th></tr>'+
+   rows.map(s=>`<tr><td><a class="url" href="${s.url}" target="_blank" rel="noopener">${host(s.url)}</a></td><td>${s.cat}</td><td>${badge(s.builtin.outcome)}<div class="note">${s.builtin.note}</div></td><td class="num">${s.builtin.ms}</td><td>${badge(s.omnifeed.outcome)}<div class="note">${s.omnifeed.note}</div></td><td class="num">${s.omnifeed.ms}</td></tr>`).join('');
+}
+function download(name,text,type){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([text],{type}));a.download=name;a.click();URL.revokeObjectURL(a.href)}
+const csvq=v=>'"'+String(v??'').replace(/"/g,'""')+'"';
+function route(s){const b=s.builtin,o=s.omnifeed,rb=RANK[b.outcome],ro=RANK[o.outcome];
+  if(!rb&&!ro)return{pick:'neither',why:o.reason||b.reason||'both failed'};
+  if(rb&&!ro)return{pick:'builtin',why:'omnifeed: '+(o.reason||o.outcome)};
+  if(ro&&!rb)return{pick:'omnifeed',why:'built-in: '+(b.reason||b.outcome)};
+  if(rb!==ro)return{pick:rb>ro?'builtin':'omnifeed',why:'better extraction ('+(rb>ro?'built-in':'omnifeed')+' success vs partial)'};
+  return{pick:b.ms<=o.ms?'builtin':'omnifeed',why:'both fine; faster by '+Math.abs(b.ms-o.ms)+' ms'};}
+const PICK={omnifeed:{l:'omnifeed',c:'var(--series-2)'},builtin:{l:'Built-in',c:'var(--series-1)'},neither:{l:'Neither',c:'var(--neutral)'}};
+function renderRoute(){
+  const S=D.sites,box=document.getElementById('routeChips'),cur=box.dataset.cur||'all';
+  const R=S.map(s=>({s,...route(s)}));
+  const cnt=k=>R.filter(r=>r.pick===k).length;
+  box.innerHTML=[['all','All',S.length],['omnifeed','Use omnifeed',cnt('omnifeed')],['builtin','Use built-in',cnt('builtin')],['neither','Neither works',cnt('neither')]].map(([k,l,n])=>`<button class="chip" data-k="${k}" aria-pressed="${k===cur}">${k!=='all'?`<i class="sw" style="background:${PICK[k].c}"></i>`:''}${l} <b>${n}</b></button>`).join('');
+  box.querySelectorAll('button').forEach(b=>b.onclick=()=>{box.dataset.cur=b.dataset.k;renderRoute()});
+  const rows=R.filter(r=>cur==='all'||r.pick===cur);
+  document.getElementById('routeTable').innerHTML='<tr><th>Domain</th><th>Category</th><th>Route to</th><th>Why</th><th class="num">Built-in ms</th><th class="num">omnifeed ms</th></tr>'+
+    rows.map(r=>`<tr><td>${host(r.s.url)}<div class="note">${(new URL(r.s.url).pathname+new URL(r.s.url).search).slice(0,48)}</div></td><td>${r.s.cat}</td><td><span class="badge"><i style="background:${PICK[r.pick].c}">${r.pick==='neither'?'×':'→'}</i>${PICK[r.pick].l}</span></td><td class="note">${r.why}</td><td class="num">${r.s.builtin.ms}</td><td class="num">${r.s.omnifeed.ms}</td></tr>`).join('');
+  const out=R.map(r=>({domain:host(r.s.url),url:r.s.url,category:r.s.cat,route:r.pick,why:r.why,builtin_outcome:r.s.builtin.outcome,omnifeed_outcome:r.s.omnifeed.outcome,builtin_ms:r.s.builtin.ms,omnifeed_ms:r.s.omnifeed.ms}));
+  document.getElementById('dlRouteJson').onclick=()=>download('routing-table.json',JSON.stringify(out,null,1),'application/json');
+  document.getElementById('dlRouteCsv').onclick=()=>download('routing-table.csv',[Object.keys(out[0]).join(','),...out.map(o=>Object.values(o).map(csvq).join(','))].join('\n'),'text/csv');
+}
+function renderRouter(){
+  const S=D.sites,U=USE;
+  const strat=[
+   ['Built-in only',(b,o)=>[U(b.outcome),b.ms,0,b.chars]],
+   ['omnifeed only',(b,o)=>[U(o.outcome),o.ms,o.outcome==='softblock'?1:0,o.chars]],
+   ['omnifeed → built-in fallback (today)',(b,o)=>U(o.outcome)?[1,o.ms,0,o.chars]:o.outcome==='softblock'?[0,o.ms,1,o.chars]:[U(b.outcome),o.ms+b.ms,0,o.chars+b.chars]],
+   ['omnifeed → built-in, silent fails detected (fix #1)',(b,o)=>U(o.outcome)?[1,o.ms,0,o.chars]:[U(b.outcome),o.ms+b.ms,0,o.chars+b.chars]],
+   ['Built-in → omnifeed fallback',(b,o)=>U(b.outcome)?[1,b.ms,0,b.chars]:[U(o.outcome),b.ms+o.ms,o.outcome==='softblock'?1:0,b.chars+o.chars]],
+   ['Oracle: per-domain routing table',(b,o)=>{const r=route({builtin:b,omnifeed:o}).pick;return r==='builtin'?[1,b.ms,0,b.chars]:r==='omnifeed'?[1,o.ms,0,o.chars]:[0,Math.min(b.ms,o.ms),0,0]}],
+  ];
+  const res=strat.map(([n,f])=>{const r=S.map(s=>f(s.builtin,s.omnifeed));const lat=r.map(x=>x[1]);return{n,cov:r.filter(x=>x[0]).length,wrong:r.reduce((a,x)=>a+x[2],0),p50:pct(lat,50),p90:pct(lat,90),p99:pct(lat,99),ch:pct(r.map(x=>x[3]),50)}});
+  const best=Math.max(...res.map(r=>r.cov));
+  document.getElementById('routerTable').innerHTML='<tr><th>Strategy</th><th>Coverage (usable content)</th><th class="num">Wrong content accepted</th><th class="num">p50</th><th class="num">p90</th><th class="num">p99</th><th class="num">Median chars to agent</th></tr>'+
+   res.map(r=>`<tr><td>${r.n}</td><td><div style="display:flex;align-items:center;gap:8px"><span style="flex:1;min-width:120px;background:var(--grid);border-radius:4px;height:12px"><span style="display:block;height:12px;border-radius:4px;width:${r.cov/S.length*100}%;background:${r.cov===best?'var(--good)':'var(--text-secondary)'}"></span></span><span style="font-variant-numeric:tabular-nums;white-space:nowrap">${r.cov}/${S.length} · ${Math.round(r.cov/S.length*100)}%</span></div></td><td class="num">${r.wrong?`<span class="badge"><i style="background:var(--critical)">!</i>${r.wrong}</span>`:'0'}</td><td class="num">${fmtS(r.p50)}</td><td class="num">${fmtS(r.p90)}</td><td class="num">${fmtS(r.p99)}</td><td class="num">${fmtN(r.ch)}</td></tr>`).join('');
+  const [b,o,ob,obf,bo,or]=res;
+  document.getElementById('routerNote').innerHTML=`<b>Takeaway:</b> today, omnifeed-first with built-in fallback reaches ${ob.cov}/${S.length} but silently accepts ${ob.wrong} wrong pages. Fixing silent-failure detection (fix #1) lifts it to <b>${obf.cov}/${S.length} (${Math.round(obf.cov/S.length*100)}%) with 0 wrong pages</b>, the same coverage as the per-domain oracle, at +${((obf.p50-o.p50)/1000).toFixed(2)} s p50 over omnifeed alone. Built-in-first reaches the same coverage but is slower (p50 ${fmtS(bo.p50)}) and still accepts ${bo.wrong} silent failures from omnifeed.`;
+
+  const DF=D.diff||[],chip=document.getElementById('diffChips');
+  const kinds=['fixed','regressed','regrade'],cnt=k=>DF.filter(x=>x.kind===k).length;
+  const show=chip.dataset.show||'fixed,regressed';
+  chip.innerHTML=kinds.map(k=>`<button class="chip" aria-pressed="${show.split(',').includes(k)}" data-k="${k}">${k} <b>${cnt(k)}</b></button>`).join('');
+  chip.querySelectorAll('button').forEach(bt=>bt.onclick=()=>{const cur=new Set((chip.dataset.show||'fixed,regressed').split(','));cur.has(bt.dataset.k)?cur.delete(bt.dataset.k):cur.add(bt.dataset.k);chip.dataset.show=[...cur].join(',');renderRouter()});
+  const order={regressed:0,fixed:1,regrade:2};
+  document.getElementById('fixTable').innerHTML='<tr><th>Site</th><th>Tool</th><th>v1</th><th>v2</th><th>Change</th><th>v2 note</th></tr>'+
+   DF.filter(x=>show.split(',').includes(x.kind)).sort((a,b)=>order[a.kind]-order[b.kind]||a.tool.localeCompare(b.tool)).map(x=>`<tr><td>${host(x.url)}</td><td>${x.tool==='builtin'?'Built-in':'omnifeed'}</td><td>${OUT[x.v1]?OUT[x.v1].label:x.v1}</td><td>${OUT[x.v2]?OUT[x.v2].label:x.v2}</td><td>${x.kind}</td><td class="note">${x.v2note}</td></tr>`).join('');
+  document.getElementById('eventTable').innerHTML='<tr><th>Time (UTC)</th><th>Event</th></tr>'+(D.events||[]).map(e=>`<tr><td style="white-space:nowrap">${e.t.replace('2026-10-09T','').replace('Z','')}</td><td class="note">${e.text}</td></tr>`).join('');
+}
+function renderScore(){
+  const Q=D.searches,m=(t,k)=>Q.reduce((a,q)=>a+(+q[t][k]||0),0)/Q.length,fr=t=>Q.filter(q=>q[t].fresh).length/Q.length*100;
+  const W={b:Q.filter(q=>/^builtin/.test(q.winner)).length,o:Q.filter(q=>/^omnifeed/.test(q.winner)).length,t:Q.filter(q=>/^tie/.test(q.winner)).length};
+  const rows=[['Distinct domains per query',m('builtin','unique_domains'),m('omnifeed','unique_domains'),10,1],['Relevant results per query',m('builtin','relevant'),m('omnifeed','relevant'),10,1],['Spam / duplicate results per query',m('builtin','spam'),m('omnifeed','spam'),10,-1],['Fresh (current) result set, % of queries',fr('builtin'),fr('omnifeed'),100,1]];
+  const bar=(v,mx,i)=>`<div style="display:flex;align-items:center;gap:8px"><span style="flex:1;min-width:100px;background:var(--grid);border-radius:4px;height:12px"><span style="display:block;height:12px;border-radius:4px;width:${v/mx*100}%;background:var(--series-${i})"></span></span><span style="font-variant-numeric:tabular-nums;width:48px;text-align:right">${v.toFixed(1)}</span></div>`;
+  document.getElementById('scoreTable').innerHTML='<tr><th>Metric</th><th>Built-in</th><th>omnifeed</th><th>Better</th></tr>'+rows.map(([k,b,o,mx,dir])=>`<tr><td>${k}</td><td>${bar(b,mx,1)}</td><td>${bar(o,mx,2)}</td><td>${(o-b)*dir>0?'omnifeed':(o-b)*dir<0?'Built-in':'tie'}</td></tr>`).join('')+
+   `<tr><td>Head-to-head wins (of ${Q.length})</td><td>${bar(W.b,Q.length,1)}</td><td>${bar(W.o,Q.length,2)}</td><td>omnifeed · ${W.t} ties</td></tr>`;
+}
+function timeline(id,label,kind){
+  const svg=document.getElementById(id);svg.innerHTML='';
+  const ALL=D.timeline.map((c,i)=>({...c,i}));const T=ALL.filter(c=>c.k===kind);
+  const W=svg.clientWidth||900,H=+svg.getAttribute('height'),L=48,R=20,TP=24,B=30,maxY=15000,maxX=ALL.length;
+  const sx=v=>L+v/maxX*(W-L-R),sy=v=>TP+(1-Math.min(v,maxY)/maxY)*(H-TP-B);
+  [0,5000,10000,15000].forEach(v=>{el('line',{x1:L,x2:W-R,y1:sy(v),y2:sy(v),stroke:'var(--grid)'},svg);el('text',{x:L-6,y:sy(v)+4,'text-anchor':'end'},svg).textContent=v/1000+'s'});
+  for(let t=0;t<=maxX;t+=100)el('text',{x:sx(t),y:H-B+16,'text-anchor':'middle'},svg).textContent='call '+t;
+  let bn=1;ALL.forEach((c,i)=>{if(i&&c.m-ALL[i-1].m>5){bn++;el('line',{x1:sx(i),x2:sx(i),y1:TP,y2:H-B,stroke:'var(--axis)','stroke-dasharray':'4 3'},svg);el('text',{x:sx(i)+4,y:TP+10+(bn%2?0:12)},svg).textContent='pause '+Math.round(c.m-ALL[i-1].m)+' min'}});
+  el('text',{x:L,y:14,class:'ink',style:'font-weight:600'},svg).textContent=label;
+  ['builtin','omnifeed'].forEach((t,k)=>{const pts=T.filter(c=>c.tool===t),col=`var(--series-${k+1})`;
+    pts.forEach(p=>{const d=el('circle',{cx:sx(p.i),cy:sy(p.ms),r:3,fill:col,'fill-opacity':.45},svg);
+      d.addEventListener('mousemove',e=>{d.setAttribute('r',5);showTip(e,`<b>${(p.ms/1000).toFixed(2)} s</b> · ${t==='builtin'?'Built-in':'omnifeed'}${p.err?' · error':''}<br>${p.target}<br>call #${p.i+1} · t+${p.m.toFixed(1)} min`)});d.addEventListener('mouseleave',()=>{d.setAttribute('r',3);hideTip()})});
+    const w=15;let dd='',seg=0;pts.forEach((p,j)=>{if(j&&p.m-pts[j-1].m>5)seg=j;const win=pts.slice(Math.max(seg,j-w+1),j+1).map(x=>x.ms);dd+=(j&&j!==seg?'L':'M')+sx(p.i)+','+sy(pct(win,50))});
+    el('path',{d:dd,fill:'none',stroke:col,'stroke-width':2.5,'stroke-linejoin':'round'},svg)});
+}
+function renderMore(){renderRouter();renderRoute();renderScore();timeline('tlSearch','Search','search');timeline('tlFetch','Fetch','fetch');renderMatrix();}
+
+function renderExtra(){
+  const S=D.sites,Q=D.searches,U=o=>['success','partial'].includes(o);
+  const P=[0,10,25,50,75,90,95,99,100];
+  const rows=[
+    ['Search','Built-in',Q.flatMap(q=>q.builtin.ms)],['Search','omnifeed',Q.flatMap(q=>q.omnifeed.ms)],
+    ['Fetch · all','Built-in',S.map(s=>s.builtin.ms)],['Fetch · all','omnifeed',S.map(s=>s.omnifeed.ms)],
+    ['Fetch · usable','Built-in',S.filter(s=>U(s.builtin.outcome)).map(s=>s.builtin.ms)],['Fetch · usable','omnifeed',S.filter(s=>U(s.omnifeed.outcome)).map(s=>s.omnifeed.ms)],
+    ['Fetch · time to fail','Built-in',S.filter(s=>!U(s.builtin.outcome)).map(s=>s.builtin.ms)],['Fetch · time to fail','omnifeed',S.filter(s=>!U(s.omnifeed.outcome)).map(s=>s.omnifeed.ms)],
+    ['Fetch · policy-refused','Built-in',S.filter(s=>s.builtin.outcome==='refused').map(s=>s.builtin.ms)],
+    ['Fetch · silent fail','omnifeed',S.filter(s=>s.omnifeed.outcome==='softblock').map(s=>s.omnifeed.ms)],
+  ];
+  const sw=t=>`<i class="sw" style="background:var(--series-${t==='Built-in'?1:2});margin-right:6px"></i>`;
+  document.getElementById('pctTable').innerHTML='<tr><th>Calls</th><th>Tool</th><th class="num">n</th>'+P.map(p=>`<th class="num">${p===0?'min':p===100?'max':'p'+p}</th>`).join('')+'<th class="num">mean</th></tr>'+
+    rows.map(([k,t,a])=>`<tr><td>${k}</td><td style="white-space:nowrap">${sw(t)}${t}</td><td class="num">${a.length}</td>${P.map(p=>`<td class="num">${fmtS(pct(a,p))}</td>`).join('')}<td class="num">${fmtS(a.reduce((x,y)=>x+y,0)/a.length)}</td></tr>`).join('');
+
+  cdf('cdfSearch','Search',[Q.flatMap(q=>q.builtin.ms),Q.flatMap(q=>q.omnifeed.ms)]);
+  cdf('cdfFetch','Fetch (all calls)',[S.map(s=>s.builtin.ms),S.map(s=>s.omnifeed.ms)]);
+
+  const PS=[10,25,50,75,90,99];
+  const srows=[
+    ['Returned to agent · usable fetches','Built-in',S.filter(s=>U(s.builtin.outcome)).map(s=>s.builtin.chars)],
+    ['Returned to agent · usable fetches','omnifeed',S.filter(s=>U(s.omnifeed.outcome)).map(s=>s.omnifeed.chars)],
+    ['Full page size (uncapped)','omnifeed',S.map(s=>s.omnifeed.full).filter(x=>x)],
+    ['Returned · search (10 results)','Built-in',Q.flatMap(q=>q.builtin.chars||[])],
+    ['Returned · search (10 results)','omnifeed',Q.flatMap(q=>q.omnifeed.chars||[])],
+  ];
+  document.getElementById('sizeTable').innerHTML='<tr><th>Measure</th><th>Tool</th><th class="num">n</th>'+PS.map(p=>`<th class="num">p${p}</th>`).join('')+'<th class="num">max</th><th class="num">≈ tokens @p50</th></tr>'+
+    srows.map(([k,t,a])=>`<tr><td>${k}</td><td style="white-space:nowrap">${sw(t)}${t}</td><td class="num">${a.length}</td>${PS.map(p=>`<td class="num">${fmtN(pct(a,p))}</td>`).join('')}<td class="num">${fmtN(Math.max(...a))}</td><td class="num">${fmtN(pct(a,50)/4)}</td></tr>`).join('');
+
+  const rc=t=>{const c={};S.forEach(s=>{const r=s[t].reason;if(r)c[r]=(c[r]||0)+1});return Object.entries(c).sort((a,b)=>b[1]-a[1])};
+  const mx=Math.max(...['builtin','omnifeed'].flatMap(t=>rc(t).map(x=>x[1])));
+  document.getElementById('reasons').innerHTML=['builtin','omnifeed'].map((t,i)=>{const r=rc(t),tot=r.reduce((a,b)=>a+b[1],0);
+    return `<div><div style="font-weight:600;margin-bottom:8px">${sw(i?'o':'Built-in')}${i?'omnifeed':'Built-in'} · ${tot} failed of ${S.length}</div>`+
+    r.map(([k,v])=>`<div style="display:grid;grid-template-columns:200px 1fr 40px;gap:8px;align-items:center;font-size:13px;margin:4px 0"><span style="color:var(--text-secondary)">${k}</span><span style="background:var(--grid);border-radius:4px;height:14px"><span style="display:block;height:14px;border-radius:4px;width:${v/mx*100}%;background:var(--series-${i+1})"></span></span><span class="num" style="font-variant-numeric:tabular-nums;text-align:right">${v}</span></div>`).join('')+'</div>'}).join('');
+
+  const cats=[...new Set(S.map(s=>s.cat))].map(c=>{const a=S.filter(s=>s.cat===c),b=a.filter(s=>U(s.builtin.outcome)).length,o=a.filter(s=>U(s.omnifeed.outcome)).length;return{c,n:a.length,b,o,gap:(o-b)/a.length}}).sort((x,y)=>y.gap-x.gap||y.n-x.n);
+  const bar=(v,n,i)=>`<div style="display:flex;align-items:center;gap:8px"><span style="flex:1;background:var(--grid);border-radius:4px;height:12px;min-width:80px"><span style="display:block;height:12px;border-radius:4px;width:${v/n*100}%;background:var(--series-${i})"></span></span><span style="font-variant-numeric:tabular-nums;width:100px;white-space:nowrap;text-align:right">${v}/${n} · ${Math.round(v/n*100)}%</span></div>`;
+  document.getElementById('catTable').innerHTML='<tr><th>Category</th><th class="num">n</th><th>Built-in usable</th><th>omnifeed usable</th></tr>'+cats.map(x=>`<tr><td>${x.c}</td><td class="num">${x.n}</td><td>${bar(x.b,x.n,1)}</td><td>${bar(x.o,x.n,2)}</td></tr>`).join('');
+
+  const bt=[1,2,3,4].map(b=>{const a=S.filter(s=>s.batch===b);return{b,n:a.length,bu:a.filter(s=>U(s.builtin.outcome)).length,ou:a.filter(s=>U(s.omnifeed.outcome)).length,bm:pct(a.map(s=>s.builtin.ms),50),om:pct(a.map(s=>s.omnifeed.ms),50),sb:a.filter(s=>s.omnifeed.outcome==='softblock').length,rf:a.filter(s=>s.builtin.outcome==='refused').length}});
+  document.getElementById('batchTable').innerHTML='<tr><th>Batch</th><th class="num">Sites</th><th class="num">Built-in usable</th><th class="num">omnifeed usable</th><th class="num">Built-in p50</th><th class="num">omnifeed p50</th><th class="num">Policy-refused</th><th class="num">omnifeed silent fails</th></tr>'+bt.map(x=>`<tr><td>Batch ${x.b}</td><td class="num">${x.n}</td><td class="num">${x.bu}</td><td class="num">${x.ou}</td><td class="num">${fmtS(x.bm)}</td><td class="num">${fmtS(x.om)}</td><td class="num">${x.rf}</td><td class="num">${x.sb}</td></tr>`).join('');
+}
+function cdf(id,label,series){
+  const svg=document.getElementById(id);svg.innerHTML='';
+  const W=svg.clientWidth||900,H=230,L=48,R=20,T=24,B=36,max=15000;
+  const sx=v=>L+Math.min(v,max)/max*(W-L-R),sy=f=>T+(1-f)*(H-T-B);
+  for(let t=0;t<=max;t+=1000){el('line',{x1:sx(t),x2:sx(t),y1:T,y2:H-B,stroke:'var(--grid)'},svg);if(t%3000===0)el('text',{x:sx(t),y:H-B+16,'text-anchor':'middle'},svg).textContent=t/1000+'s'}
+  [0,.25,.5,.75,.9,1].forEach(f=>{el('line',{x1:L,x2:W-R,y1:sy(f),y2:sy(f),stroke:'var(--grid)'},svg);el('text',{x:L-6,y:sy(f)+4,'text-anchor':'end'},svg).textContent=Math.round(f*100)+'%'});
+  el('line',{x1:L,x2:W-R,y1:H-B,y2:H-B,stroke:'var(--axis)'},svg);
+  el('text',{x:L,y:14,class:'ink',style:'font-weight:600'},svg).textContent=label;
+  const sorted=series.map(a=>[...a].sort((x,y)=>x-y));
+  sorted.forEach((a,i)=>{let d=`M${sx(0)},${sy(0)}`;a.forEach((v,j)=>{d+=`H${sx(v)}V${sy((j+1)/a.length)}`});d+=`H${sx(max)}`;
+    el('path',{d,fill:'none',stroke:`var(--series-${i+1})`,'stroke-width':2,'stroke-linejoin':'round'},svg)});
+  const over=sorted.map(a=>a.filter(v=>v>max).length);
+  if(over.some(x=>x))el('text',{x:W-R,y:T-8,'text-anchor':'end'},svg).textContent=`beyond 15 s: built-in ${over[0]}, omnifeed ${over[1]}`;
+  const cross=el('line',{y1:T,y2:H-B,stroke:'var(--text-secondary)','stroke-width':1,'stroke-dasharray':'3 3',opacity:0},svg);
+  const hit=el('rect',{x:L,y:T,width:W-L-R,height:H-T-B,fill:'transparent'},svg);
+  hit.addEventListener('mousemove',e=>{const r=svg.getBoundingClientRect(),x=e.clientX-r.left,v=Math.max(0,(x-L)/(W-L-R)*max);
+    cross.setAttribute('x1',x);cross.setAttribute('x2',x);cross.setAttribute('opacity',1);
+    const f=sorted.map(a=>a.filter(y=>y<=v).length/a.length*100);
+    showTip(e,`<b>≤ ${(v/1000).toFixed(2)} s</b><br><i class="sw" style="background:var(--series-1)"></i> Built-in: ${f[0].toFixed(0)}% of calls<br><i class="sw" style="background:var(--series-2)"></i> omnifeed: ${f[1].toFixed(0)}% of calls`)});
+  hit.addEventListener('mouseleave',()=>{cross.setAttribute('opacity',0);hideTip()});
+}
+
+function strip(id,label,series){
+  const svg=document.getElementById(id);svg.innerHTML='';
+  const W=svg.clientWidth||900,L=90,R=20,max=Math.min(15000,Math.ceil(Math.max(9000,...series.flatMap(([,p])=>p.map(x=>x.ms)))/1000)*1000),sx=v=>L+Math.min(v,max)/max*(W-L-R);
+  for(let t=0;t<=max;t+=1000){el('line',{x1:sx(t),x2:sx(t),y1:8,y2:96,stroke:'var(--grid)','stroke-width':1},svg);el('text',{x:sx(t),y:114,'text-anchor':'middle'},svg).textContent=t/1000+'s'}
+  el('text',{x:0,y:12,class:'ink',style:'font-weight:600'},svg).textContent=label;
+  series.forEach(([t,pts],i)=>{
+    const y=36+i*40,c=`var(--series-${i+1})`;
+    el('text',{x:0,y:y+4},svg).textContent=t==='builtin'?'Built-in':'omnifeed';
+    pts.forEach((p,j)=>{const jit=((j*37)%11-5)*1.2;
+      const d=el('circle',{cx:sx(p.ms),cy:y+jit,r:4.5,fill:c,'fill-opacity':.75,stroke:'var(--surface-1)','stroke-width':1.5},svg);
+      const hit=el('circle',{cx:sx(p.ms),cy:y+jit,r:9,fill:'transparent'},svg);
+      hit.addEventListener('mousemove',e=>{d.setAttribute('r',6);showTip(e,`<b>${(p.ms/1000).toFixed(2)} s</b><br>${p.label}`)});
+      hit.addEventListener('mouseleave',()=>{d.setAttribute('r',4.5);hideTip()});});
+    const m=median(pts.map(p=>p.ms));
+    el('line',{x1:sx(m),x2:sx(m),y1:y-14,y2:y+14,stroke:'var(--text-primary)','stroke-width':2.5,'stroke-linecap':'round'},svg);
+    el('text',{x:sx(m)+6,y:i?y+24:y-8,class:'ink',style:'font-weight:600'},svg).textContent='median '+(m/1000).toFixed(2)+'s';
+  });
+}
+</script>
+</body>
+</html>

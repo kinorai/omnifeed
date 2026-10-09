@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Drakeposting — omnifeed vs built-in</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;background:#f6e9d7;color:#111;font:16px/1.4 system-ui,-apple-system,"Segoe UI",sans-serif;display:flex;flex-direction:column;align-items:center}
+a{color:#7a4a1a}
+header{text-align:center;padding:14px 10px 6px}h1{margin:4px 0 2px;font:900 clamp(26px,5vw,46px)/1 Impact,"Arial Black",sans-serif}
+.sub{margin:0;color:#6b5a48}
+.meme{display:grid;grid-template-columns:minmax(220px,1fr) minmax(260px,1.3fr);width:min(860px,94vw);border:4px solid #111;background:#fff;box-shadow:10px 10px 0 #111;margin-top:14px}
+.panel{position:relative;height:250px;overflow:hidden;border-bottom:4px solid #111}
+.panel:nth-child(n+3){border-bottom:0}.pic{border-right:4px solid #111;background:#ffc48a}.pic.yes{background:#ffd8a8}
+.pic svg{position:absolute;inset:0;width:100%;height:100%}
+.txt{display:flex;align-items:center;justify-content:center;padding:18px 22px;text-align:center;font:800 clamp(17px,2.4vw,26px)/1.2 system-ui}
+.txt small{display:block;font-weight:500;font-size:14px;color:#555;margin-top:8px}
+.txt .in{transition:transform .45s cubic-bezier(.3,1.5,.5,1),opacity .35s}
+.txt.out .in{transform:translateX(60px) rotate(4deg);opacity:0}
+.nah .fig{animation:nah 1.1s ease-in-out infinite}
+.yes .fig{animation:yes 1.1s ease-in-out infinite}
+@keyframes nah{0%,100%{transform:rotate(0)}50%{transform:rotate(-5deg) translateX(-6px)}}
+@keyframes yes{0%,100%{transform:translateY(0)}50%{transform:translateY(-6px) rotate(2deg)}}
+.hand-nah{animation:block .55s ease-in-out infinite alternate;transform-origin:120px 190px}
+@keyframes block{to{transform:rotate(-12deg)}}
+.hand-yes{animation:point .55s ease-in-out infinite alternate;transform-origin:120px 175px}
+@keyframes point{to{transform:translateX(10px)}}
+.dots{display:flex;gap:8px;margin:18px 0 6px}.dots i{width:12px;height:12px;border-radius:50%;background:#d9c3a8;border:2px solid #111;cursor:pointer}.dots i.on{background:#ff8a2a}
+.bar{width:min(860px,94vw);height:6px;background:#e6d3bd;border-radius:3px;overflow:hidden}.bar div{height:100%;background:#ff8a2a;width:0}
+.who{position:absolute;top:8px;left:10px;font:900 13px Impact,sans-serif;letter-spacing:.06em;background:#111;color:#fff;padding:2px 8px;border-radius:4px}
+.fair{position:absolute;top:8px;right:10px;font:800 12px system-ui;background:#2a78d6;color:#fff;padding:2px 8px;border-radius:4px;display:none}
+.panel.flash{animation:flash .4s}@keyframes flash{30%{background:#fff7a8}}
+footer{margin:16px 0 30px;color:#6b5a48;font-size:13px;text-align:center;max-width:760px}
+</style>
+</head>
+<body>
+<header><a href="./">← All versions</a><h1>DRAKEPOSTING THE BENCHMARK</h1><p class="sub">Every panel is a real result. Some are the built-in's wins: fair's fair.</p></header>
+<div class="meme">
+  <div class="panel pic nah"><svg viewBox="0 0 240 250"><g class="fig" id="figNah"></g></svg></div>
+  <div class="panel txt" id="tNah"><div class="in"></div></div>
+  <div class="panel pic yes"><svg viewBox="0 0 240 250"><g class="fig" id="figYes"></g></svg></div>
+  <div class="panel txt" id="tYes"><div class="in"></div></div>
+</div>
+<div class="dots" id="dots"></div>
+<div class="bar"><div id="prog"></div></div>
+<footer>Drawn figure, not a photo. Panels auto-advance; click a dot to jump. Space pauses.</footer>
+<script src="stats.js"></script>
+<script>
+// Original stylised figure in an orange puffer jacket.
+function person(pose){const head=pose==='nah'?'<g transform="rotate(-18 120 80)"><ellipse cx="120" cy="80" rx="38" ry="44" fill="#8a5a3c" stroke="#111" stroke-width="4"/><path d="M84 66 Q120 30 156 66" fill="#1b1b1b"/><path d="M104 104 Q118 96 132 104" stroke="#111" stroke-width="4" fill="none"/><path d="M96 78 h14 M128 78 h14" stroke="#111" stroke-width="5"/></g>'
+ :'<g transform="rotate(6 120 80)"><ellipse cx="120" cy="80" rx="38" ry="44" fill="#8a5a3c" stroke="#111" stroke-width="4"/><path d="M84 66 Q120 30 156 66" fill="#1b1b1b"/><path d="M102 100 Q120 118 140 100" stroke="#111" stroke-width="4" fill="#fff"/><circle cx="104" cy="78" r="5"/><circle cx="138" cy="78" r="5"/></g>';
+ const arm=pose==='nah'?'<g class="hand-nah"><path d="M120 190 Q90 150 70 112" stroke="#ff8a2a" stroke-width="30" stroke-linecap="round" fill="none"/><path d="M120 190 Q90 150 70 112" stroke="#111" stroke-width="4" fill="none" opacity=".35"/><ellipse cx="66" cy="104" rx="18" ry="22" fill="#8a5a3c" stroke="#111" stroke-width="4"/></g>'
+ :'<g class="hand-yes"><path d="M130 178 Q175 165 205 150" stroke="#ff8a2a" stroke-width="30" stroke-linecap="round" fill="none"/><ellipse cx="212" cy="146" rx="15" ry="12" fill="#8a5a3c" stroke="#111" stroke-width="4"/><path d="M222 142 h18" stroke="#8a5a3c" stroke-width="8" stroke-linecap="round"/></g>';
+ return `<path d="M40 250 Q40 150 120 140 Q200 150 200 250Z" fill="#ff8a2a" stroke="#111" stroke-width="4"/><path d="M60 190 Q120 200 180 190 M55 220 Q120 232 185 220" stroke="#d96a12" stroke-width="5" fill="none"/>${head}${arm}`}
+document.getElementById('figNah').innerHTML=person('nah');document.getElementById('figYes').innerHTML=person('yes');
+BENCH.load().then(R=>{
+  const {pct}=BENCH,s=v=>(v/1000).toFixed(2)+' s';
+  const P=[
+   [`Waiting ${s(pct(R.lat.sB,50))} for a web search`,'built-in WebSearch, median',`${s(pct(R.lat.sO,50))}`,'omnifeed web_search, median'],
+   ['"Claude Code is unable to fetch from www.reddit.com"','built-in WebFetch, every Reddit URL','Full Reddit thread: post, score, 15 comments, structured','omnifeed Reddit engine'],
+   [`Reading ${R.news.b} of ${R.news.n} news sites`,'built-in: 48 domains on its blocklist',`Reading ${R.news.o} of ${R.news.n}`,'omnifeed, incl. JA/KO/DE/FR/IT front pages'],
+   ['The 2026 Nobel Prize "has not yet been announced"','built-in search, 2 hours after the announcement','10 sources naming Anne Carson','omnifeed, time_range=day'],
+   ['9 translations of the same Python docs page','built-in search "result diversity"','10 distinct domains: docs, SO, discuss, reddit…','omnifeed search'],
+   ['A crates.io page that\'s just "crates.io"','built-in on a JS app','serde v1.0.229, 1.5B downloads','omnifeed, real browser render'],
+   ['A Cloudflare JS challenge','omnifeed on SourceForge, Lemmy, HA forum','"Claude-User" waved straight through','built-in (Cloudflare allowlists it)',true],
+   ['A 404 page, labelled ✓ success','omnifeed on IRS, weather.com, Quora','An honest "HTTP 404 Not Found"','built-in',true],
+   [`${R.usableB}/${R.n} sites readable`,'built-in alone',`${R.fallbackFixed}/${R.n} with omnifeed → built-in fallback`,'after fixing silent-fail detection'],
+  ];
+  let i=0,paused=false,t0=performance.now();const D=5200,$=id=>document.getElementById(id);
+  $('dots').innerHTML=P.map((_,k)=>`<i data-k="${k}"></i>`).join('');$('dots').querySelectorAll('i').forEach(d=>d.onclick=()=>{i=+d.dataset.k;show()});
+  function show(){const p=P[i];['tNah','tYes'].forEach(id=>$(id).classList.add('out'));
+    setTimeout(()=>{$('tNah').querySelector('.in').innerHTML=`${p[0]}<small>${p[1]}</small>`;$('tYes').querySelector('.in').innerHTML=`${p[2]}<small>${p[3]}</small>`;
+      ['tNah','tYes'].forEach((id,k)=>setTimeout(()=>{$(id).classList.remove('out');$(id).classList.add('flash');setTimeout(()=>$(id).classList.remove('flash'),400)},k*350));
+      document.querySelectorAll('.pic').forEach(x=>{x.querySelector('.who')?.remove();x.insertAdjacentHTML('beforeend',`<span class="who">${x.classList.contains('nah')?(p[4]?'OMNIFEED':'BUILT-IN'):(p[4]?'BUILT-IN':'OMNIFEED')}</span>`)})},300);
+    $('dots').querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k===i));t0=performance.now()}
+  function tick(t){if(!paused){const k=(t-t0)/D;$('prog').style.width=Math.min(100,k*100)+'%';if(k>=1){i=(i+1)%P.length;show()}}else t0=t-(parseFloat($('prog').style.width)||0)/100*D;requestAnimationFrame(tick)}
+  addEventListener('keydown',e=>{if(e.key===' '){paused=!paused;e.preventDefault()}});
+  show();requestAnimationFrame(tick);
+});
+</script>
+</body>
+</html>

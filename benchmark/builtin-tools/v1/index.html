@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>omnifeed vs built-in — all versions</title>
+<style>
+:root{color-scheme:light dark;--page:#f9f9f7;--card:#fcfcfb;--ink:#0b0b0b;--ink2:#52514e;--line:rgba(11,11,11,.1);--b:#2a78d6;--o:#eb6834}
+@media (prefers-color-scheme:dark){:root{--page:#0d0d0d;--card:#1a1a19;--ink:#fff;--ink2:#c3c2b7;--line:rgba(255,255,255,.1);--b:#3987e5;--o:#d95926}}
+*{box-sizing:border-box}body{margin:0;background:var(--page);color:var(--ink);font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:1180px;margin:0 auto;padding:48px 24px 80px}
+h1{font-size:34px;margin:0 0 6px;letter-spacing:-.02em}
+.sub{color:var(--ink2);margin:0 0 28px;max-width:760px}
+.score{display:flex;gap:28px;flex-wrap:wrap;margin:0 0 36px}
+.score div{font-size:13px;color:var(--ink2)}.score b{display:block;font-size:30px;color:var(--ink);font-weight:650}
+.score i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:16px}
+a.card{display:flex;flex-direction:column;gap:10px;text-decoration:none;color:inherit;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:20px;transition:transform .15s,box-shadow .15s}
+a.card:hover{transform:translateY(-3px);box-shadow:0 10px 30px rgba(0,0,0,.12)}
+.card h2{margin:0;font-size:19px}.card p{margin:0;color:var(--ink2);font-size:14px}
+.tags{display:flex;gap:6px}.tag{font-size:11px;font-weight:650;letter-spacing:.04em;text-transform:uppercase;border-radius:999px;padding:3px 9px;border:1px solid var(--line);color:var(--ink2)}
+.tag.normal{border-color:#89878166}.tag.anim{border-color:var(--b);color:var(--b)}.tag.crazy{border-color:var(--o);color:var(--o)}
+.prev{height:120px;border-radius:10px;overflow:hidden;position:relative;border:1px solid var(--line)}
+.p-classic{background:linear-gradient(var(--card),var(--card));display:grid;grid-template-columns:repeat(4,1fr);gap:6px;padding:10px}
+.p-classic span{background:var(--line);border-radius:6px}.p-classic span:nth-child(5){grid-column:span 4;background:linear-gradient(90deg,#0ca30c 0 54%,#fab219 54% 75%,#d03b3b 75%)}
+.p-brief{background:var(--card);padding:14px;font-weight:700;font-size:22px;line-height:1.1}.p-brief small{display:block;font-weight:400;font-size:12px;color:var(--ink2);margin-top:6px}
+.p-story{background:linear-gradient(180deg,var(--card),var(--page));display:flex;align-items:center;justify-content:center;font-size:44px;font-weight:800}
+.p-story span{animation:rise 2.4s ease-in-out infinite alternate}
+@keyframes rise{from{opacity:.25;transform:translateY(10px)}to{opacity:1;transform:none}}
+.p-race{background:#111;display:flex;flex-direction:column;justify-content:center;gap:18px;padding:0 14px}
+.p-race div{height:4px;background:#333;border-radius:2px;position:relative}
+.p-race div::after{content:"";position:absolute;top:-4px;width:12px;height:12px;border-radius:50%;background:var(--c);animation:run var(--d) linear infinite}
+@keyframes run{from{left:0}to{left:calc(100% - 12px)}}
+.p-term{background:#020a02;color:#39ff6a;font:12px/1.35 ui-monospace,Menlo,monospace;padding:10px;text-shadow:0 0 6px #39ff6a}
+.p-term::after{content:"";position:absolute;inset:0;background:repeating-linear-gradient(0deg,rgba(0,0,0,.25) 0 1px,transparent 1px 3px)}
+.p-gal{background:radial-gradient(circle at 30% 50%,#1b1650,#05040f 70%)}
+.p-gal i{position:absolute;width:4px;height:4px;border-radius:50%;background:#fff;animation:tw 2s ease-in-out infinite alternate}
+@keyframes tw{to{opacity:.2}}
+.p-fight{background:linear-gradient(135deg,#2a0a0a,#0a0a2a);display:flex;align-items:center;justify-content:space-around;font-size:40px}
+.p-fight span{animation:punch .6s ease-in-out infinite alternate}.p-fight span:last-child{animation-delay:.3s}
+@keyframes punch{to{transform:translateX(12px) rotate(-8deg)}}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+.memes h2.sec{font-size:22px;margin:44px 0 6px}.memes .lead{color:var(--ink2);margin:0 0 16px}
+.tag.meme{border-color:#ff1493;color:#ff1493}
+.p-pepe{background:linear-gradient(180deg,#1d2b1a,#0d140b);display:flex;align-items:flex-end;justify-content:space-around;font-size:54px}
+.p-pepe span{animation:sway 1.6s ease-in-out infinite;display:inline-block}.p-pepe span:last-child{animation-delay:.8s;filter:hue-rotate(160deg) saturate(.6)}
+@keyframes sway{50%{transform:rotate(8deg) translateY(-4px)}}
+.p-drake{display:grid;grid-template-columns:1fr 1.4fr;grid-template-rows:1fr 1fr;background:#fff}
+.p-drake div{display:flex;align-items:center;justify-content:center;font:800 12px system-ui;border:1px solid #111;color:#111}
+.p-drake .f{background:#ffc48a;font-size:28px}.p-drake .f.a{animation:nope 1s ease-in-out infinite}.p-drake .f.b{animation:yep 1s ease-in-out infinite}
+@keyframes nope{50%{transform:rotate(-12deg)}}@keyframes yep{50%{transform:translateX(6px)}}
+.p-bf{background:linear-gradient(180deg,#bcdcf2,#eef6fb 70%,#8c8c8c 70%);display:flex;align-items:flex-end;justify-content:space-around;font-size:46px;padding-bottom:6px}
+.p-bf span:nth-child(2){animation:look 2s ease-in-out infinite}.p-bf span:last-child{animation:walk 4s linear infinite}
+@keyframes look{0%,40%{transform:scaleX(1)}50%,90%{transform:scaleX(-1)}}@keyframes walk{from{transform:translateX(60px)}to{transform:translateX(-30px)}}
+.p-fine{background:linear-gradient(180deg,#f6c56a 0 65%,#a8652f 65%);display:flex;align-items:center;justify-content:center;font-size:52px;position:relative}
+.p-fine::after{content:"🔥🔥🔥🔥🔥🔥";position:absolute;bottom:-6px;left:0;right:0;text-align:center;font-size:30px;animation:fire .5s ease-in-out infinite alternate}
+@keyframes fire{to{transform:scaleY(1.25);transform-origin:bottom}}
+.p-doge{background:#0b1640;position:relative;font:700 15px "Comic Sans MS",cursive}
+.p-doge span{position:absolute;animation:wow 2.4s ease-in-out infinite}
+@keyframes wow{0%,100%{opacity:0;transform:translateY(8px)}30%,70%{opacity:1;transform:none}}
+.p-doge svg{position:absolute;inset:0;width:100%;height:100%}
+.p-doge polyline{stroke-dasharray:400;stroke-dashoffset:400;animation:draw 2.5s ease-out infinite}
+@keyframes draw{to{stroke-dashoffset:0}}
+footer{margin-top:40px;color:var(--ink2);font-size:13px}
+</style>
+</head>
+<body>
+<main>
+<p class="sub" style="margin:0 0 12px"><a href="../" style="color:inherit">← Benchmark versions</a> · <b>v1</b> · 2026-10-08</p>
+<h1>omnifeed vs Claude Code WebSearch / WebFetch</h1>
+<p class="sub">One benchmark, twelve ways to look at it. 272 sites and 40 search queries, each hit once by each tool on 2026-10-08. Every version below reads the same <code>data.json</code> through the same <code>stats.js</code>, so the numbers are identical everywhere. Only the presentation changes.</p>
+<div class="score" id="score"></div>
+<div class="grid">
+  <a class="card" href="classic.html"><div class="prev p-classic"><span></span><span></span><span></span><span></span><span></span></div><div class="tags"><span class="tag normal">Normal</span><span class="tag">Static</span></div><h2>Classic dashboard</h2><p>The full analysis: percentiles, CDFs, router simulator, fix-impact projection, routing table export, filterable 272-site matrix.</p></a>
+  <a class="card" href="brief.html"><div class="prev p-brief" id="pvBrief">omnifeed wins.<small>One printable page with the verdict and what to do.</small></div><div class="tags"><span class="tag normal">Normal</span><span class="tag">Printable</span></div><h2>Executive brief</h2><p>The verdict, six numbers, the routing recommendation and the bug backlog on a single page.</p></a>
+  <a class="card" href="story.html"><div class="prev p-story"><span>207</span>&nbsp;vs&nbsp;<span>161</span></div><div class="tags"><span class="tag anim">Animated</span></div><h2>The story</h2><p>Scroll-driven narrative in seven chapters: numbers count up, bars grow and charts draw themselves as you read.</p></a>
+  <a class="card" href="race.html"><div class="prev p-race"><div style="--c:var(--b);--d:3.4s"></div><div style="--c:var(--o);--d:2.9s"></div></div><div class="tags"><span class="tag anim">Animated</span><span class="tag">Interactive</span></div><h2>Race replay</h2><p>All 626 calls replayed on two lanes at real proportional speed. Play, pause, scrub and fast-forward the 4-hour session.</p></a>
+  <a class="card" href="terminal.html"><div class="prev p-term">$ omnifeed fetch reddit.com ✓ 2.41s<br>$ webfetch reddit.com ✗ REFUSED<br>$ omnifeed fetch nytimes.com ✗ DataDome<br>SCORE 207 : 161_</div><div class="tags"><span class="tag crazy">Crazy</span><span class="tag anim">Animated</span></div><h2>Terminal</h2><p>A retro CRT green-screen types out the whole benchmark as a live log, with scanlines, flicker and a glitch on every failure.</p></a>
+  <a class="card" href="galaxy.html"><div class="prev p-gal" id="pvGal"></div><div class="tags"><span class="tag crazy">Crazy</span><span class="tag anim">Animated</span><span class="tag">Interactive</span></div><h2>Galaxy</h2><p>272 sites as orbiting stars. Morph between galaxies by outcome, by category, or a real latency scatter. Hover any star.</p></a>
+  <a class="card" href="fight.html"><div class="prev p-fight"><span>🥊</span><span>🥊</span></div><div class="tags"><span class="tag crazy">Crazy</span><span class="tag anim">Animated</span></div><h2>Fight night</h2><p>Built-in vs omnifeed, one round per site category plus a search round. Every site the other can't read is a punch. Health bars, knockdowns, judges' card.</p></a>
+</div>
+<section class="memes">
+<h2 class="sec">Meme versions</h2>
+<p class="lead">Same data, maximum memes. All animated, all characters drawn from scratch in SVG.</p>
+<div class="grid">
+  <a class="card" href="pepe.html"><div class="prev p-pepe"><span>🐸</span><span>🐸</span></div><div class="tags"><span class="tag meme">Meme</span><span class="tag anim">Animated</span></div><h2>Feels good man (Pepe)</h2><p>272 sites stream between two frogs. Smug Pepe reads, sad Pepe gets rained on, sweaty monkaS Pepe on every silent failure.</p></a>
+  <a class="card" href="drake.html"><div class="prev p-drake"><div class="f a">🙅</div><div>6.95 s search</div><div class="f b">👉</div><div>0.77 s search</div></div><div class="tags"><span class="tag meme">Meme</span><span class="tag anim">Animated</span></div><h2>Drakeposting</h2><p>Nine nah/yeah panels from real results, including the two where the built-in deserves the "yeah".</p></a>
+  <a class="card" href="boyfriend.html"><div class="prev p-bf"><span>🙎‍♀️</span><span>🧑</span><span>💃</span></div><div class="tags"><span class="tag meme">Meme</span><span class="tag anim">Animated</span></div><h2>Distracted agent</h2><p>Me, an agent, checking out omnifeed in every site category. Plot twist where the built-in wins.</p></a>
+  <a class="card" href="fine.html"><div class="prev p-fine">🐶☕</div><div class="tags"><span class="tag meme">Meme</span><span class="tag anim">Animated</span></div><h2>This is fine</h2><p>21 silent failures set the room on fire, one sticker at a time. Then fix #1 brings the extinguisher.</p></a>
+  <a class="card" href="doge.html"><div class="prev p-doge"><svg viewBox="0 0 300 120" preserveAspectRatio="none"><polyline points="10,110 80,90 150,60 220,40 290,12" fill="none" stroke="#ff8a2a" stroke-width="5"/><polyline points="10,110 80,100 150,85 220,72 290,60" fill="none" stroke="#4aa3ff" stroke-width="4"/></svg><span style="left:10px;top:10px;color:#ff69b4">wow</span><span style="right:14px;top:30px;color:#7dff6a;animation-delay:.8s">such fast</span><span style="left:60px;bottom:14px;color:#ffd23f;animation-delay:1.6s">STONKS</span></div><div class="tags"><span class="tag meme">Meme</span><span class="tag anim">Animated</span></div><h2>Doge + Stonks</h2><p>"wow such fast, very read": doge phrases from the real numbers, next to a live STONKS chart of cumulative usable sites.</p></a>
+</div>
+</section>
+<footer>Classic dashboard methodology and caveats apply to every version.</footer>
+</main>
+<script src="stats.js"></script>
+<script>
+BENCH.load().then(R=>{
+  document.getElementById('score').innerHTML=[
+    ['Usable sites',`<i style="background:var(--b)"></i>${R.usableB} vs <i style="background:var(--o)"></i>${R.usableO}`],
+    ['Search wins',`${R.searchWins.b} vs ${R.searchWins.o}`],['News readable',`${R.news.b} vs ${R.news.o}`],['Fail on both',R.neither.length]
+  ].map(([k,v])=>`<div>${k}<b>${v}</b></div>`).join('');
+  const g=document.getElementById('pvGal');for(let i=0;i<60;i++){const s=document.createElement('i');s.style.left=Math.random()*100+'%';s.style.top=Math.random()*100+'%';s.style.animationDelay=Math.random()*2+'s';s.style.background=['#3987e5','#d95926','#0ca30c','#fff'][i%4];g.appendChild(s)}
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Galaxy — omnifeed vs built-in</title>
+<style>
+*{box-sizing:border-box}html,body{margin:0;height:100%;overflow:hidden;background:#04030c;color:#eae8ff;font:14px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+canvas{position:fixed;inset:0;width:100%;height:100%}
+.ui{position:fixed;top:16px;left:18px;z-index:2;max-width:460px}
+.ui a{color:#a9a6d6}.ui h1{margin:6px 0 2px;font-size:26px;letter-spacing:-.01em}.ui p{margin:0 0 12px;color:#b8b5e0;font-size:13px}
+.modes{display:flex;gap:8px;flex-wrap:wrap}
+.modes button{background:rgba(255,255,255,.06);color:#eae8ff;border:1px solid rgba(255,255,255,.18);border-radius:999px;padding:7px 14px;font:inherit;cursor:pointer;backdrop-filter:blur(6px)}
+.modes button[aria-pressed=true]{background:#eae8ff;color:#0b0820;font-weight:650}
+.legend{position:fixed;bottom:16px;left:18px;z-index:2;display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:#b8b5e0;background:rgba(4,3,12,.6);padding:8px 12px;border-radius:10px;backdrop-filter:blur(6px)}
+.legend span{display:flex;gap:6px;align-items:center}.legend i{width:10px;height:10px;border-radius:50%;box-shadow:0 0 8px currentColor}
+.tip{position:fixed;z-index:3;pointer-events:none;background:rgba(15,12,40,.92);border:1px solid rgba(255,255,255,.2);border-radius:10px;padding:8px 10px;font-size:12px;max-width:340px;display:none}
+.tip b{font-size:13px}
+.note{position:fixed;bottom:16px;right:18px;z-index:2;font-size:12px;color:#8f8cbd;max-width:380px;text-align:right}
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+<div class="ui">
+  <a href="./">← All versions</a>
+  <h1>The 272-site galaxy</h1>
+  <p id="desc"></p>
+  <div class="modes" id="modes">
+    <button data-m="outcome" aria-pressed="true">By who can read it</button>
+    <button data-m="category" aria-pressed="false">By category</button>
+    <button data-m="latency" aria-pressed="false">Latency scatter</button>
+  </div>
+</div>
+<div class="legend" id="legend"></div>
+<div class="note">Star size ∝ log(page size). Hover a star for details.</div>
+<div class="tip" id="tip"></div>
+<script src="stats.js"></script>
+<script>
+const reduce=matchMedia('(prefers-reduced-motion: reduce)').matches;
+const C={both:'#3ee07a',onlyO:'#ff7a3d',onlyB:'#4aa3ff',neither:'#7d7a99'};
+BENCH.load().then(R=>{
+  const {host,USE}=BENCH,cv=document.getElementById('cv'),cx=cv.getContext('2d');
+  let W,H;function resize(){W=innerWidth;H=innerHeight;cv.width=W*devicePixelRatio;cv.height=H*devicePixelRatio;cx.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0);setMode(mode,true)}
+  const grp=s=>{const b=USE(s.builtin.outcome),o=USE(s.omnifeed.outcome);return b&&o?'both':o?'onlyO':b?'onlyB':'neither'};
+  const stars=R.S.map((s,i)=>({s,g:grp(s),x:Math.random()*innerWidth,y:Math.random()*innerHeight,tx:0,ty:0,a:Math.random()*6.28,r0:0,size:1.6+Math.log10((s.omnifeed.full||2000))*0.9,tw:Math.random()*6.28}));
+  const bg=Array.from({length:380},()=>({x:Math.random(),y:Math.random(),z:Math.random()}));
+  let mode='outcome',centers={};
+  const desc={outcome:`Four galaxies: sites both tools read (${R.both.length}), only omnifeed (${R.onlyO.length}), only the built-in (${R.onlyB.length}) and neither (${R.neither.length}).`,
+    category:'One cluster per site category, each star colored by who can read it. The orange-heavy clusters are where omnifeed pulls ahead.',
+    latency:'A real chart: x = built-in latency, y = omnifeed latency (log scales). Stars below the diagonal were faster on omnifeed.'};
+  function setMode(m,keep){mode=m;document.getElementById('desc').textContent=desc[m];
+    document.querySelectorAll('#modes button').forEach(b=>b.setAttribute('aria-pressed',b.dataset.m===m));
+    centers={};
+    if(m==='outcome'){const ks=['both','onlyO','onlyB','neither'],pos=[[.34,.55],[.68,.42],[.62,.8],[.18,.82]];
+      ks.forEach((k,i)=>centers[k]={x:W*pos[i][0],y:H*pos[i][1],label:{both:'Both read it',onlyO:'Only omnifeed',onlyB:'Only built-in',neither:'Neither'}[k],n:stars.filter(s=>s.g===k).length});
+      const cnt={};stars.forEach(st=>{const c=centers[st.g],k=cnt[st.g]=(cnt[st.g]||0)+1,n=c.n;st.r0=8+Math.sqrt(k/n)*Math.min(W,H)*.17*Math.sqrt(n/120);st.a=k*2.39996;st.cx=c.x;st.cy=c.y})}
+    if(m==='category'){const cats=R.cats.map(c=>c.cat),n=cats.length;cats.forEach((c,i)=>{const ang=i/n*6.283-1.57,rad=Math.min(W,H)*.34;centers[c]={x:W*.55+Math.cos(ang)*rad*1.25,y:H*.55+Math.sin(ang)*rad,label:c,n:R.cats[i].n}});
+      const cnt={};stars.forEach(st=>{const c=centers[st.s.cat],k=cnt[st.s.cat]=(cnt[st.s.cat]||0)+1;st.r0=5+Math.sqrt(k)*7;st.a=k*2.39996;st.cx=c.x;st.cy=c.y})}
+    if(m==='latency'){const L=Math.log10,mn=L(300),mx=L(25000),x0=W*.2,x1=W*.92,y0=H*.88,y1=H*.2;
+      const sx=v=>x0+(L(Math.max(300,v))-mn)/(mx-mn)*(x1-x0),sy=v=>y0-(L(Math.max(300,v))-mn)/(mx-mn)*(y0-y1);
+      centers={__axes:{sx,sy,x0,x1,y0,y1}};stars.forEach((st,i)=>{st.cx=sx(st.s.builtin.ms)+((i*13)%7-3);st.cy=sy(st.s.omnifeed.ms)+((i*7)%7-3);st.r0=0})}
+    if(reduce||keep)stars.forEach(st=>{const p=target(st,0);st.x=p.x;st.y=p.y});
+    document.getElementById('legend').innerHTML=[['both','Both read it'],['onlyO','Only omnifeed'],['onlyB','Only built-in'],['neither','Neither']].map(([k,l])=>`<span><i style="background:${C[k]};color:${C[k]}"></i>${l} · ${stars.filter(s=>s.g===k).length}</span>`).join('');
+  }
+  function target(st,t){if(mode==='latency')return{x:st.cx,y:st.cy};const sp=reduce?0:.00006*(1+40/(st.r0+10));const a=st.a+t*sp;return{x:st.cx+Math.cos(a)*st.r0*1.25,y:st.cy+Math.sin(a)*st.r0*.72}}
+  let hover=null;
+  function frame(t){cx.clearRect(0,0,W,H);
+    const g=cx.createRadialGradient(W*.45,H*.55,0,W*.45,H*.55,Math.max(W,H)*.7);g.addColorStop(0,'#16114a');g.addColorStop(.5,'#0a0726');g.addColorStop(1,'#04030c');cx.fillStyle=g;cx.fillRect(0,0,W,H);
+    bg.forEach(b=>{cx.globalAlpha=.25+.5*Math.abs(Math.sin(t*.001*b.z+b.x*20));cx.fillStyle='#fff';cx.fillRect(b.x*W,b.y*H,b.z*1.6,b.z*1.6)});cx.globalAlpha=1;
+    if(mode==='latency'){const A=centers.__axes;cx.strokeStyle='rgba(255,255,255,.25)';cx.lineWidth=1;cx.beginPath();cx.moveTo(A.x0,A.y0);cx.lineTo(A.x1,A.y0);cx.moveTo(A.x0,A.y0);cx.lineTo(A.x0,A.y1);cx.stroke();
+      cx.setLineDash([5,5]);cx.beginPath();cx.moveTo(A.sx(300),A.sy(300));cx.lineTo(A.sx(25000),A.sy(25000));cx.stroke();cx.setLineDash([]);
+      cx.fillStyle='#b8b5e0';cx.font='12px system-ui';[500,1000,2000,5000,10000,20000].forEach(v=>{cx.fillText(v>=1000?v/1000+'s':v+'ms',A.sx(v)-10,A.y0+18);cx.fillText(v>=1000?v/1000+'s':v+'ms',A.x0-44,A.sy(v)+4)});
+      cx.fillText('built-in latency →',A.x1-110,A.y0+36);cx.save();cx.translate(A.x0-56,A.y1+90);cx.rotate(-1.57);cx.fillText('omnifeed latency →',0,0);cx.restore();
+      cx.fillStyle='rgba(255,255,255,.5)';cx.fillText('omnifeed faster ↘',A.sx(9000),A.sy(1400));cx.fillText('↖ built-in faster',A.sx(700),A.sy(6000))}
+    else Object.values(centers).forEach(c=>{if(!c.label)return;const gl=cx.createRadialGradient(c.x,c.y,0,c.x,c.y,90);gl.addColorStop(0,'rgba(140,120,255,.18)');gl.addColorStop(1,'transparent');cx.fillStyle=gl;cx.beginPath();cx.arc(c.x,c.y,90,0,7);cx.fill();
+      cx.fillStyle='#eae8ff';cx.font='600 13px system-ui';cx.textAlign='center';cx.fillText(c.label,c.x,c.y-(mode==='outcome'?Math.min(W,H)*.17*Math.sqrt(c.n/120)+18:Math.sqrt(c.n)*7+20));cx.font='12px system-ui';cx.fillStyle='#b8b5e0';cx.fillText(c.n+' sites',c.x,c.y-(mode==='outcome'?Math.min(W,H)*.17*Math.sqrt(c.n/120)+4:Math.sqrt(c.n)*7+6));cx.textAlign='left'});
+    stars.forEach(st=>{const p=target(st,t);st.x+=(p.x-st.x)*(reduce?1:.06);st.y+=(p.y-st.y)*(reduce?1:.06);
+      const tw=reduce?1:.75+.25*Math.sin(t*.003+st.tw),r=st.size*(st===hover?2.2:1)*tw,col=C[st.g];
+      cx.shadowBlur=12;cx.shadowColor=col;cx.fillStyle=col;cx.beginPath();cx.arc(st.x,st.y,r,0,7);cx.fill();cx.shadowBlur=0});
+    requestAnimationFrame(frame)}
+  const tip=document.getElementById('tip');
+  addEventListener('mousemove',e=>{let best=null,d=144;stars.forEach(st=>{const q=(st.x-e.clientX)**2+(st.y-e.clientY)**2;if(q<d){d=q;best=st}});hover=best;
+    if(best){const s=best.s;tip.style.display='block';tip.style.left=Math.min(e.clientX+14,innerWidth-360)+'px';tip.style.top=(e.clientY+14)+'px';
+      tip.innerHTML=`<b>${host(s.url)}</b> · ${s.cat}<br><span style="color:${C.onlyB}">Built-in</span>: ${s.builtin.outcome} · ${(s.builtin.ms/1000).toFixed(2)}s<br><span style="color:${C.onlyO}">omnifeed</span>: ${s.omnifeed.outcome} · ${(s.omnifeed.ms/1000).toFixed(2)}s<br><span style="opacity:.75">${s.omnifeed.note.slice(0,120)}</span>`}else tip.style.display='none'});
+  document.querySelectorAll('#modes button').forEach(b=>b.onclick=()=>setMode(b.dataset.m));
+  addEventListener('resize',resize);resize();requestAnimationFrame(frame);
+});
+</script>
+</body>
+</html>
