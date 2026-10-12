@@ -15,7 +15,7 @@ import (
 type Metrics struct {
 	registry *prometheus.Registry
 
-	RequestsTotal       *prometheus.CounterVec   // engine, tenant, status, reason
+	RequestsTotal       *prometheus.CounterVec   // engine, tenant, status, reason, cache
 	RequestAttempts     *prometheus.CounterVec   // upstream, attempt (first|retry)
 	RequestSecs         *prometheus.HistogramVec // engine, status, reason
 	UpstreamSecs        *prometheus.HistogramVec // upstream, op, status
@@ -48,15 +48,15 @@ func NewMetrics() *Metrics {
 		registry: reg,
 		RequestsTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "omnifeed_requests_total",
-			Help: "Total /crawl requests by engine, tenant, status, and failure reason.",
-		}, []string{"engine", "tenant", "status", "reason"}),
+			Help: `Total crawl requests (fetch_url and /crawl) by engine, tenant, status, failure reason, and response-cache result: cache="hit" (served from the fetch cache, or shared with an identical in-flight fetch), "miss" (fetched upstream), "bypass" (caller passed no_cache) or "off" (the cache is disabled). Errors are never served from the cache, so they carry miss, bypass or off.`,
+		}, []string{"engine", "tenant", "status", "reason", "cache"}),
 		RequestAttempts: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "omnifeed_request_attempts_total",
 			Help: `HTTP attempts by the retrying client, by upstream, split into the first try and retries. attempt="retry" is retry volume; it drops when a non-transient block stops being re-driven.`,
 		}, []string{"upstream", "attempt"}),
 		RequestSecs: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name: "omnifeed_request_seconds",
-			Help: "Crawl latency by engine, status, and failure reason (reason=\"ok\" on success).",
+			Help: "Crawl latency by engine, status, and failure reason (reason=\"ok\" on success). Cache hits are NOT observed here: a hit costs microseconds and would drag every quantile toward zero; their count is omnifeed_requests_total{cache=\"hit\"}.",
 			// 14 buckets → top ~409.6s: end-to-end can stack limiter wait +
 			// 3 retried 90s attempts (or a 4m Reddit crawl); a 102.4s ceiling
 			// would push exactly the pathological tail into +Inf.
@@ -190,11 +190,26 @@ func NewMetrics() *Metrics {
 	return m
 }
 
+// Cache results as the omnifeed_requests_total `cache` label. CacheOff means
+// the response cache is disabled for this deployment.
+const (
+	CacheHit    = "hit"
+	CacheMiss   = "miss"
+	CacheBypass = "bypass"
+	CacheOff    = "off"
+)
+
 // Observe records a single crawl result. reason is a bounded classification of
-// WHY a request failed (see Reason); it is "ok" on success.
-func (m *Metrics) Observe(engine, tenant, status, reason string, duration time.Duration) {
-	m.RequestsTotal.WithLabelValues(engine, tenant, status, reason).Inc()
-	m.RequestSecs.WithLabelValues(engine, status, reason).Observe(duration.Seconds())
+// WHY a request failed (see Reason); it is "ok" on success. cache is the
+// response-cache result (CacheHit, CacheMiss, CacheBypass, CacheOff). A hit is
+// counted but not timed: it never reached an engine, and its microseconds
+// would make the latency histogram claim the engines got faster as the hit
+// ratio rose.
+func (m *Metrics) Observe(engine, tenant, status, reason, cache string, duration time.Duration) {
+	m.RequestsTotal.WithLabelValues(engine, tenant, status, reason, cache).Inc()
+	if cache != CacheHit {
+		m.RequestSecs.WithLabelValues(engine, status, reason).Observe(duration.Seconds())
+	}
 }
 
 // ObserveAttempt records one HTTP attempt from the retrying client against the

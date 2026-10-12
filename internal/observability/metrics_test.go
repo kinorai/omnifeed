@@ -73,14 +73,30 @@ func TestObserveAttemptCounts(t *testing.T) {
 // successes.
 func TestObserveRecordsReasonOnHistogram(t *testing.T) {
 	m := NewMetrics()
-	m.Observe("crawl4ai", "mcp", "ok", "ok", time.Second)
-	m.Observe("crawl4ai", "mcp", "error", "timeout", 2*time.Second)
+	m.Observe("crawl4ai", "mcp", "ok", "ok", CacheMiss, time.Second)
+	m.Observe("crawl4ai", "mcp", "error", "timeout", CacheOff, 2*time.Second)
 
 	if got := histogramCount(t, m.RequestSecs.WithLabelValues("crawl4ai", "ok", "ok")); got != 1 {
 		t.Fatalf("RequestSecs{ok,ok} count = %d, want 1", got)
 	}
 	if got := histogramCount(t, m.RequestSecs.WithLabelValues("crawl4ai", "error", "timeout")); got != 1 {
 		t.Fatalf("RequestSecs{error,timeout} count = %d, want 1", got)
+	}
+}
+
+// A cache hit is counted under cache="hit" but never timed: it did not reach
+// an engine, and its microseconds would drag the latency quantiles down.
+func TestObserveExcludesCacheHitsFromLatency(t *testing.T) {
+	m := NewMetrics()
+	m.Observe("reddit", "mcp", "ok", "ok", CacheHit, time.Microsecond)
+	m.Observe("reddit", "mcp", "ok", "ok", CacheMiss, 3*time.Second)
+	m.Observe("reddit", "mcp", "ok", "ok", CacheBypass, 3*time.Second)
+
+	if got := counterValue(t, m.RequestsTotal.WithLabelValues("reddit", "mcp", "ok", "ok", CacheHit)); got != 1 {
+		t.Fatalf(`requests_total{cache="hit"} = %v, want 1`, got)
+	}
+	if got := histogramCount(t, m.RequestSecs.WithLabelValues("reddit", "ok", "ok")); got != 2 {
+		t.Fatalf("RequestSecs count = %d, want 2 (miss + bypass, hit excluded)", got)
 	}
 }
 

@@ -39,7 +39,7 @@ const (
 	// MetaCache is "hit" (served from the cache, or shared with an identical
 	// in-flight request), "miss" (fetched upstream) or "bypass" (the caller
 	// asked for no_cache).
-	MetaCache = "cache"
+	MetaCache = domain.CacheKey
 	// MetaCachedAt is when the content was fetched upstream and stored
 	// (RFC 3339, UTC). Absent when the response is not in the cache — an
 	// error, a fallback render, a partial crawl, or a failed store.
@@ -128,6 +128,11 @@ func New(cfg Config) *Cache {
 	}
 }
 
+// CacheEnabled reports that a response cache sits in front of the engines
+// (engine.CacheReporter), so a transport labels an uncached error "miss"
+// rather than "off".
+func (c *Cache) CacheEnabled() bool { return true }
+
 // Resolve delegates to the wrapped dispatcher.
 func (c *Cache) Resolve(rawURL string) domain.Engine { return c.inner.Resolve(rawURL) }
 
@@ -159,7 +164,7 @@ func (c *Cache) Crawl(ctx context.Context, rawURL string, opts domain.EngineOpti
 	case err != nil:
 		c.observe(ResultError)
 		if !errors.Is(err, ErrUnavailable) {
-			c.logger.Warn("fetch cache read failed; serving as a miss", "err", err)
+			c.logger.WarnContext(ctx, "fetch cache read failed; serving as a miss", "err", err)
 		}
 	case hit:
 		c.observe(ResultHit)
@@ -245,7 +250,7 @@ func (c *Cache) store(ctx context.Context, key, rawURL string, doc domain.Docume
 	err := c.backend.Set(context.WithoutCancel(ctx), key, Entry{Doc: doc, CachedAt: now}, ttl)
 	if err != nil {
 		if !errors.Is(err, ErrUnavailable) && !errors.Is(err, ErrTooLarge) {
-			c.logger.Warn("fetch cache write failed", "err", err)
+			c.logger.WarnContext(ctx, "fetch cache write failed", "err", err)
 		}
 		return mark(doc, result, time.Time{})
 	}

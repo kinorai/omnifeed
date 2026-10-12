@@ -207,7 +207,7 @@ func crawlHandler(reg engine.Dispatcher, defaults reddit.Options, metrics *obser
 		doc, err := reg.Crawl(ctx, rawURL, opts)
 		// omnifeed_response_chars is recorded inside the registry (which knows
 		// the engine that actually served a fallback crawl), not here.
-		observe(metrics, engineName(reg, rawURL), err, start)
+		observe(metrics, engineName(reg, rawURL), engine.CacheLabel(reg, doc, err, opts.NoCache), err, start)
 		if err != nil {
 			return mcp.ToolResult{}, err
 		}
@@ -351,11 +351,11 @@ func WebSearch(searcher domain.Searcher, maxResults int, metrics *observability.
 	}
 }
 
-func observe(metrics *observability.Metrics, engine string, err error, start time.Time) {
+func observe(metrics *observability.Metrics, engine, cache string, err error, start time.Time) {
 	if metrics == nil {
 		return
 	}
-	metrics.Observe(engine, mcpTenant, observability.StatusOf(err), observability.Reason(err), time.Since(start))
+	metrics.Observe(engine, mcpTenant, observability.StatusOf(err), observability.Reason(err), cache, time.Since(start))
 }
 
 func engineName(reg engine.Dispatcher, rawURL string) string {
