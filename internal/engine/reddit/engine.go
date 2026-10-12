@@ -203,7 +203,7 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, eo domain.EngineOptio
 		return domain.Document{}, fmt.Errorf("encode: %w", err)
 	}
 
-	e.logger.Info("reddit crawl complete",
+	e.logger.InfoContext(ctx, "reddit crawl complete",
 		"post", thread.Post.ID,
 		"rounds", rounds,
 		"comments", len(thread.Comments),
@@ -330,12 +330,12 @@ func (e *Engine) expandGaps(ctx context.Context, sess *Session, thread *Thread, 
 		}
 		moreJSON, err := sess.FetchMoreChildren(ctx, linkFullID, batchIDs, opts.Sort)
 		if err != nil {
-			e.logger.Warn("morechildren round failed", "round", round, "err", err)
+			e.logger.WarnContext(ctx, "morechildren round failed", "round", round, "err", err)
 			return rounds, observability.Reason(err)
 		}
 		newComments, newGaps, perr := ParseMoreChildren(moreJSON, opts)
 		if perr != nil {
-			e.logger.Warn("morechildren parse failed", "round", round, "err", perr)
+			e.logger.WarnContext(ctx, "morechildren parse failed", "round", round, "err", perr)
 			return rounds, "parse_error"
 		}
 		MergeExpanded(thread, newComments, newGaps, batchIDs, usedGapIdx)
@@ -391,7 +391,7 @@ func (e *Engine) crawlListing(ctx context.Context, rawURL string, req ListingReq
 		return domain.Document{}, fmt.Errorf("encode: %w", err)
 	}
 
-	e.logger.Info("reddit listing complete",
+	e.logger.InfoContext(ctx, "reddit listing complete",
 		"subreddit", req.Sub,
 		"sort", req.Sort,
 		"t", req.T,

@@ -44,7 +44,7 @@ func (e *Engine) fetchSyndication(ctx context.Context, id string) (bundle, error
 			b.Post.Text, b.Post.TextComplete = vx.Text, true
 			b.Source = sourceSyndicationVx
 		case verr != nil:
-			e.logger.Warn("vxtwitter full-text fetch failed; keeping the cut syndication text", "id", id, "err", verr)
+			e.logger.WarnContext(ctx, "vxtwitter full-text fetch failed; keeping the cut syndication text", "id", id, "err", verr)
 		}
 	}
 	b.Truncated = !b.Post.TextComplete

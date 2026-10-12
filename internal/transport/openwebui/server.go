@@ -137,6 +137,14 @@ func (s *Server) crawl(w http.ResponseWriter, r *http.Request) {
 		wg.Add(1)
 		go func(idx int, rawURL string) {
 			defer wg.Done()
+			// A panic here would kill the process (net/http only recovers the
+			// handler goroutine): it fails this URL's document instead.
+			defer func() {
+				if v := recover(); v != nil {
+					observability.ObservePanic(observability.PanicLoaderCrawl, v)
+					results[idx] = errorDocument(rawURL, fmt.Errorf("internal error: %v", v))
+				}
+			}()
 			results[idx] = s.crawlOne(r.Context(), rawURL, opts, tenant)
 		}(i, u)
 	}
@@ -159,11 +167,11 @@ func (s *Server) crawlOne(ctx context.Context, rawURL string, opts domain.Engine
 	status, reason := "ok", "ok"
 	if err != nil {
 		status, reason = "error", observability.Reason(err)
-		s.logger.Warn("crawl failed", "url", rawURL, "engine", engName, "reason", reason, "err", err)
+		s.logger.WarnContext(ctx, "crawl failed", "url", rawURL, "engine", engName, "reason", reason, "err", err)
 	} else {
 		// Success exemplar (URL-level) for latency triage — the histogram's
 		// counterpart in VictoriaLogs; metrics can't carry the URL.
-		s.logger.Info("crawl completed", "url", rawURL, "engine", engName,
+		s.logger.InfoContext(ctx, "crawl completed", "url", rawURL, "engine", engName,
 			"duration_ms", time.Since(start).Milliseconds(),
 			"chars", utf8.RuneCountInString(doc.PageContent))
 	}
@@ -174,24 +182,29 @@ func (s *Server) crawlOne(ctx context.Context, rawURL string, opts domain.Engine
 			engine.CacheLabel(s.registry, doc, err, opts.NoCache), time.Since(start))
 	}
 	if err != nil {
-		// error_code/retryable mirror the MCP structuredContent verdict
-		// (docs/errors.md) so a loader client can branch without parsing text.
-		f := observability.Classify(err)
-		meta := map[string]string{
-			"source":     rawURL,
-			"error":      "true",
-			"error_code": string(f.Code),
-			"retryable":  strconv.FormatBool(f.Retryable),
-		}
-		if s := f.RetryAfterSeconds(); s > 0 {
-			meta["retry_after_s"] = strconv.Itoa(s)
-		}
-		return loaderDocument{
-			PageContent: "Error crawling URL: " + observability.Explain(err),
-			Metadata:    meta,
-		}
+		return errorDocument(rawURL, err)
 	}
 	return loaderDocument{PageContent: doc.PageContent, Metadata: doc.Metadata}
+}
+
+// errorDocument is a failed URL's entry in the /crawl response.
+func errorDocument(rawURL string, err error) loaderDocument {
+	// error_code/retryable mirror the MCP structuredContent verdict
+	// (docs/errors.md) so a loader client can branch without parsing text.
+	f := observability.Classify(err)
+	meta := map[string]string{
+		"source":     rawURL,
+		"error":      "true",
+		"error_code": string(f.Code),
+		"retryable":  strconv.FormatBool(f.Retryable),
+	}
+	if s := f.RetryAfterSeconds(); s > 0 {
+		meta["retry_after_s"] = strconv.Itoa(s)
+	}
+	return loaderDocument{
+		PageContent: "Error crawling URL: " + observability.Explain(err),
+		Metadata:    meta,
+	}
 }
 
 // buildEngineOptions translates query-string knobs into a domain.EngineOptions.
