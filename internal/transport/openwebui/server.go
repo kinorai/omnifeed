@@ -170,7 +170,8 @@ func (s *Server) crawlOne(ctx context.Context, rawURL string, opts domain.Engine
 	// omnifeed_response_chars is recorded inside the registry (which knows the
 	// engine that actually served a fallback crawl), not here.
 	if s.metrics != nil {
-		s.metrics.Observe(engName, string(tenant), status, reason, time.Since(start))
+		s.metrics.Observe(engName, string(tenant), status, reason,
+			engine.CacheLabel(s.registry, doc, err, opts.NoCache), time.Since(start))
 	}
 	if err != nil {
 		// error_code/retryable mirror the MCP structuredContent verdict
