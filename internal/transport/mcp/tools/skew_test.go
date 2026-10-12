@@ -90,3 +90,24 @@ func TestFetchURL_CacheLabelOnErrors(t *testing.T) {
 		}
 	}
 }
+
+type idSearcher struct{ seen string }
+
+func (*idSearcher) Name() string { return "searxng" }
+func (s *idSearcher) Search(ctx context.Context, _ string, _ domain.SearchOptions) ([]domain.SearchResult, error) {
+	s.seen = observability.QueryIDFrom(ctx)
+	return nil, nil
+}
+
+// web_search hands the searcher the query_id its audit lines use and returns
+// it in _meta, which the MCP completion line logs.
+func TestWebSearch_QueryIDJoinsAuditLines(t *testing.T) {
+	s := &idSearcher{}
+	res, err := WebSearch(s, 10, nil).Handle(context.Background(), map[string]any{"query": "x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.seen == "" || res.Meta["query_id"] != s.seen {
+		t.Fatalf("query_id: searcher saw %q, _meta has %q", s.seen, res.Meta["query_id"])
+	}
+}

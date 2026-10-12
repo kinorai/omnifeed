@@ -47,6 +47,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/kinorai/omnifeed/internal/auth"
+	"github.com/kinorai/omnifeed/internal/observability"
 	"github.com/kinorai/omnifeed/internal/version"
 )
 
@@ -88,6 +89,11 @@ const (
 	metaServerInfo      = "io.modelcontextprotocol/serverInfo"
 )
 
+// metaRequestID is the `_meta` key tools/call results carry the request id
+// under (the X-Request-Id of the HTTP request, or one generated per stdio
+// message), so a caller can quote it when reporting a problem.
+const metaRequestID = "request_id"
+
 // listTTLMs and listCacheScope are the required cache hints on modern
 // tools/list (and server/discover) results. The tool catalog is wired once in
 // main and identical for every caller, so it is public and safe to cache for
@@ -112,10 +118,11 @@ const serverInstructions = "omnifeed is a global web search and fetch gateway: "
 
 // Server is a JSON-RPC 2.0 MCP server.
 type Server struct {
-	tools  []Tool
-	byName map[string]Tool
-	auth   auth.Authenticator
-	logger *slog.Logger
+	tools   []Tool
+	byName  map[string]Tool
+	auth    auth.Authenticator
+	logger  *slog.Logger
+	metrics *observability.Metrics
 }
 
 // Config configures the Server.
@@ -129,6 +136,9 @@ type Config struct {
 	Tools         []Tool
 	Authenticator auth.Authenticator
 	Logger        *slog.Logger
+	// Metrics records omnifeed_mcp_tool_calls_total / omnifeed_mcp_tool_seconds.
+	// Nil disables them.
+	Metrics *observability.Metrics
 }
 
 // New constructs the server.
@@ -144,10 +154,11 @@ func New(cfg Config) *Server {
 		byName[t.Name] = t
 	}
 	return &Server{
-		tools:  cfg.Tools,
-		byName: byName,
-		auth:   cfg.Authenticator,
-		logger: cfg.Logger,
+		tools:   cfg.Tools,
+		byName:  byName,
+		auth:    cfg.Authenticator,
+		logger:  cfg.Logger,
+		metrics: cfg.Metrics,
 	}
 }
 
@@ -193,6 +204,9 @@ type paramsProbe struct {
 	Name string `json:"name"`
 	Meta struct {
 		ProtocolVersion string `json:"io.modelcontextprotocol/protocolVersion"`
+		// ClientInfo is the per-request client description of the
+		// handshake-free era; it only labels metrics.
+		ClientInfo clientInfo `json:"io.modelcontextprotocol/clientInfo"`
 	} `json:"_meta"`
 }
 
@@ -261,6 +275,8 @@ func (s *Server) ServeStdio(ctx context.Context, in io.Reader, out io.Writer) er
 		_, _ = out.Write([]byte("\n"))
 	}
 
+	// One subprocess is one client: its initialize names every later call.
+	ctx = withSession(ctx, &session{})
 	for scanner.Scan() {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -295,7 +311,9 @@ func (s *Server) ServeStdio(ctx context.Context, in io.Reader, out io.Writer) er
 			resp, verOK = checkModernVersion(req.ID, "", probe.Meta.ProtocolVersion)
 		}
 		if verOK {
-			resp = s.dispatch(ctx, req, modern, probe)
+			// No headers on stdio: every message gets a generated request id,
+			// so its log lines and its result's _meta.request_id join.
+			resp = s.dispatch(observability.WithRequestID(ctx, observability.NewRequestID()), req, modern, probe)
 		}
 		if !isNotification {
 			writeResp(resp)
@@ -320,14 +338,14 @@ func (s *Server) dispatch(ctx context.Context, req rpcRequest, modern bool, prob
 		case "tools/list":
 			return s.handleToolsList(req, true)
 		case "tools/call":
-			return s.handleToolsCall(ctx, req, probe.Name, true)
+			return s.handleToolsCall(ctx, req, probe, true)
 		default:
 			return errorResp(req.ID, codeMethodNotFound, "method not found: "+req.Method)
 		}
 	}
 	switch req.Method {
 	case "initialize":
-		return s.handleInitialize(req)
+		return s.handleInitialize(ctx, req)
 	case "initialized", "notifications/initialized":
 		// Notification — no response needed, but we still return a valid struct.
 		return rpcResponse{JSONRPC: "2.0", ID: req.ID}
@@ -338,23 +356,35 @@ func (s *Server) dispatch(ctx context.Context, req rpcRequest, modern bool, prob
 	case "tools/list":
 		return s.handleToolsList(req, false)
 	case "tools/call":
-		return s.handleToolsCall(ctx, req, probe.Name, false)
+		return s.handleToolsCall(ctx, req, probe, false)
 	default:
 		return errorResp(req.ID, codeMethodNotFound, "method not found: "+req.Method)
 	}
 }
 
-func (s *Server) handleInitialize(req rpcRequest) rpcResponse {
+func (s *Server) handleInitialize(ctx context.Context, req rpcRequest) rpcResponse {
 	// Negotiate the protocol version against what the client asked for. Parsing
 	// is best-effort: absent/malformed params fall through to our latest
 	// version. We never reject initialize over this — the client drives
 	// compatibility and disconnects if it can't speak what we return.
 	var params struct {
-		ProtocolVersion string `json:"protocolVersion"`
+		ProtocolVersion string     `json:"protocolVersion"`
+		ClientInfo      clientInfo `json:"clientInfo"`
 	}
 	if len(req.Params) > 0 {
 		_ = json.Unmarshal(req.Params, &params)
 	}
+	if sess := sessionFrom(ctx); sess != nil {
+		ci := params.ClientInfo
+		sess.client.Store(&ci)
+	}
+	// Who connects, and with what: the raw name/version (bounded by the
+	// client, logged once per connection) next to the label metrics use.
+	s.logger.InfoContext(ctx, "mcp client initialized",
+		"client_name", truncate(params.ClientInfo.Name, 100),
+		"client_version", truncate(params.ClientInfo.Version, 100),
+		"client", initLabel(ctx, params.ClientInfo),
+		"protocol_version", truncate(params.ProtocolVersion, 32))
 
 	return ok(req.ID, map[string]any{
 		"protocolVersion": negotiateProtocolVersion(params.ProtocolVersion),
@@ -442,7 +472,8 @@ func (s *Server) handleToolsList(req rpcRequest, modern bool) rpcResponse {
 // the same parse the Mcp-Name header was validated against. A second parse
 // of `name` here could diverge from the validated one and let the header
 // check authorize one tool while another runs.
-func (s *Server) handleToolsCall(ctx context.Context, req rpcRequest, name string, modern bool) rpcResponse {
+func (s *Server) handleToolsCall(ctx context.Context, req rpcRequest, probe paramsProbe, modern bool) rpcResponse {
+	name := probe.Name
 	var p struct {
 		Arguments map[string]any `json:"arguments"`
 	}
@@ -452,44 +483,71 @@ func (s *Server) handleToolsCall(ctx context.Context, req rpcRequest, name strin
 
 	tool, found := s.byName[name]
 	if !found {
+		// Not counted: the tool label is the configured tool set, never a
+		// caller-chosen string.
 		return errorResp(req.ID, codeInvalidParams, "unknown tool: "+name)
 	}
 
+	client := callerLabel(ctx, probe)
+	requestID := observability.RequestIDFrom(ctx)
 	start := time.Now()
-	res, err := tool.Handle(ctx, p.Arguments)
+	res, err := s.callTool(ctx, tool, p.Arguments)
 	if err != nil {
 		var paramErr ParamError
 		if errors.As(err, &paramErr) {
+			s.observeTool(name, "invalid_params", client, start)
 			return errorResp(req.ID, codeInvalidParams, paramErr.Error())
 		}
-		s.logger.Warn("mcp tool call failed", "tool", name, "args", p.Arguments, "err", err)
+		s.observeTool(name, "error", client, start)
+		s.logger.WarnContext(ctx, "mcp tool call failed", "tool", name, "args", p.Arguments,
+			"client", client, "code", string(observability.Classify(err).Code),
+			"duration_ms", time.Since(start).Milliseconds(), "err", err)
 		// A tool that ran and failed is a tool execution error, not a protocol
 		// error: the spec puts it in the result with isError so the model sees
 		// it and can react (retry, try another URL, give up). JSON-RPC errors
 		// stay reserved for bad params, unknown tools, and the protocol itself.
 		result := toolErrorResult(name, p.Arguments, err)
+		if requestID != "" {
+			result["_meta"] = map[string]any{metaRequestID: requestID}
+		}
 		if modern {
 			return ok(req.ID, modernize(result))
 		}
 		return ok(req.ID, result)
 	}
+	s.observeTool(name, "ok", client, start)
 	// Success exemplar for latency triage: metrics carry the duration
 	// distributions but can never carry the URL/query (label cardinality) —
 	// this line is how a slow histogram bucket is traced back to the exact
-	// call in VictoriaLogs.
-	s.logger.Info("mcp tool call completed",
-		"tool", name, "args", p.Arguments,
+	// call in VictoriaLogs. The result's own _meta says how it was served.
+	attrs := []any{
+		"tool", name, "args", p.Arguments, "client", client,
 		"duration_ms", time.Since(start).Milliseconds(),
-		"chars", utf8.RuneCountInString(res.Text))
+		"chars", utf8.RuneCountInString(res.Text),
+	}
+	for _, k := range []string{"engine"} {
+		if v := res.Log[k]; v != "" {
+			attrs = append(attrs, k, v)
+		}
+	}
+	for _, k := range []string{"cache", "fallback_from", "partial", "truncated", "query_id"} {
+		if v := res.Meta[k]; v != "" {
+			attrs = append(attrs, k, v)
+		}
+	}
+	s.logger.InfoContext(ctx, "mcp tool call completed", attrs...)
 
 	content := []map[string]any{
 		{"type": "text", "text": res.Text},
 	}
+	meta := make(map[string]any, len(res.Meta)+1)
+	for k, v := range res.Meta {
+		meta[k] = v
+	}
+	if requestID != "" {
+		meta[metaRequestID] = requestID
+	}
 	if modern {
-		meta := map[string]any{}
-		for k, v := range res.Meta {
-			meta[k] = v
-		}
 		return ok(req.ID, modernize(map[string]any{
 			"content": content,
 			"_meta":   meta,
@@ -497,8 +555,38 @@ func (s *Server) handleToolsCall(ctx context.Context, req rpcRequest, name strin
 	}
 	return ok(req.ID, map[string]any{
 		"content": content,
-		"_meta":   res.Meta,
+		"_meta":   meta,
 	})
+}
+
+// callTool runs a tool handler, turning a panic into an error result: on
+// stdio a panic would kill the subprocess, and on HTTP it would drop the
+// connection with no JSON-RPC answer at all.
+func (s *Server) callTool(ctx context.Context, tool Tool, args map[string]any) (res ToolResult, err error) {
+	defer observability.Recover(observability.PanicMCPTool, &err)
+	return tool.Handle(ctx, args)
+}
+
+func (s *Server) observeTool(tool, outcome, client string, start time.Time) {
+	if s.metrics != nil {
+		s.metrics.ObserveMCPToolCall(tool, outcome, client, time.Since(start))
+	}
+}
+
+// initLabel is the client label for an initialize: its own clientInfo first,
+// then the User-Agent.
+func initLabel(ctx context.Context, ci clientInfo) string {
+	var p paramsProbe
+	p.Meta.ClientInfo = ci
+	return callerLabel(ctx, p)
+}
+
+// truncate bounds a client-supplied string before it is logged.
+func truncate(s string, n int) string {
+	if utf8.RuneCountInString(s) <= n {
+		return s
+	}
+	return string([]rune(s)[:n])
 }
 
 func ok(id json.RawMessage, result any) rpcResponse {
@@ -564,7 +652,7 @@ func (s *Server) serveHTTPPost(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	resp := s.dispatch(r.Context(), req, modern, probe)
+	resp := s.dispatch(withUserAgent(r.Context(), r.UserAgent()), req, modern, probe)
 	if len(req.ID) == 0 {
 		// Notification — return 202 Accepted with no body.
 		w.WriteHeader(http.StatusAccepted)

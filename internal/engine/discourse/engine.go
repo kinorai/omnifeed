@@ -206,7 +206,7 @@ func (e *Engine) fetchTopic(ctx context.Context, base, id string) (apiTopic, []P
 	if !isStatus(err, http.StatusTooManyRequests) && !isStatus(err, http.StatusUnprocessableEntity) {
 		return apiTopic{}, nil, 0, fmt.Errorf("fetch topic: %w", err)
 	}
-	e.logger.Info("discourse print view rate limited, falling back to batched posts", "topic", id, "host", base)
+	e.logger.InfoContext(ctx, "discourse print view rate limited, falling back to batched posts", "topic", id, "host", base)
 	return e.fetchTopicBatched(ctx, base, id)
 }
 

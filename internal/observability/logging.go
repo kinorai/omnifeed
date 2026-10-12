@@ -34,5 +34,7 @@ func NewLogger(level, format string) *slog.Logger {
 	} else {
 		handler = slog.NewJSONHandler(os.Stderr, opts)
 	}
-	return slog.New(handler)
+	// ContextHandler adds request_id / trace_id / span_id from the context of
+	// every *Context logging call.
+	return slog.New(NewContextHandler(handler))
 }
