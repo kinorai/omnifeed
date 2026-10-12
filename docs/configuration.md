@@ -78,6 +78,8 @@ falls back to crawl4ai on the `x.com` URL.
 | `OMNIFEED_LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error` |
 | `OMNIFEED_LOG_FORMAT` | `json` | `json` or `text` |
 | `OMNIFEED_ENABLE_PPROF` | `false` | Expose `/debug/pprof/*` |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | _(unset)_ | Turns on [tracing](#tracing): base URL of an OTLP/HTTP collector, e.g. `http://vtsingle-traces.monitoring.svc:10428/insert/opentelemetry`. The exporter appends `/v1/traces`. Unset means no tracing and no overhead. The standard OpenTelemetry name, so the exporter's other `OTEL_EXPORTER_OTLP_*` variables (headers, timeout) apply too. |
+| `OTEL_SERVICE_NAME` | `omnifeed` | `service.name` on every span |
 | `OMNIFEED_CACHE_ENABLED` | `true` | Cache successful `fetch_url` and `POST /crawl` results. See [Response cache](#response-cache). |
 | `OMNIFEED_CACHE_TTL_THREADS` | `10m` | How long a result from a dedicated engine (Reddit, Hacker News, Discourse, Bluesky, GitHub) stays cached. `0` turns caching off for them. |
 | `OMNIFEED_CACHE_TTL_PAGES` | `30m` | How long a generic page (the crawl4ai engine) stays cached. `0` turns caching off for them. |
@@ -366,14 +368,49 @@ cached result returns in milliseconds whatever the engine.
 
 Raw code, JSON, markdown and plain text have nothing for a browser to render, and Chromium's page-idle wait makes them slow: a raw `githubusercontent.com` file takes 30 to 39 s in the browser and about 200 ms direct. When a URL's extension looks raw (`.md`, `.txt`, `.json`, source files), the generic engine sends a HEAD request. If the server confirms a non-HTML text type, a plain GET fetches the body and returns it unchanged. Anything uncertain, such as a failed probe, `text/html`, binary bytes or blocked egress, falls back to the browser. With `OMNIFEED_BLOCK_PRIVATE_IPS` on, direct fetches refuse private and reserved addresses **when dialing**, so DNS rebinding can't bypass URL validation. This needs outbound access to the **target sites**, not just crawl4ai. Without it the probe fails and everything goes through crawl4ai.
 
+## Health
+
+On `OMNIFEED_METRICS_ADDR` (default `:9090`):
+
+- `/livez`: 200 while the process runs, 503 once shutdown starts.
+- `/readyz` (aliases `/healthz`, `/health`): 200 unless shutting down. It does **not** check crawl4ai or SearXNG: an outage of either fails the calls that need it, with a classified, retryable error, while the cache, the Reddit quota and the API engines keep serving. Pulling every pod out of the Service turned a partial outage into a total one. Dependency state is the `omnifeed_dependency_up` metric instead, probed every 30 s.
+
+## Request ids and log correlation
+
+Every response from the loader (`:8080`) and MCP (`:8081`) servers carries `X-Request-Id`. A caller's own `X-Request-Id` is reused when it is 1 to 128 characters from `A-Z a-z 0-9 . _ : -`; otherwise omnifeed generates one. MCP tool results return it as `_meta.request_id` (on stdio, one is generated per message). Log lines written for that request carry `request_id`, and `trace_id` and `span_id` when [tracing](#tracing) is on, so one id joins the caller's logs, omnifeed's logs and the trace.
+
+MCP log lines worth knowing:
+
+- `mcp client initialized`: `client_name`, `client_version`, `client` (the metric label), `protocol_version`.
+- `mcp tool call completed`: `tool`, `args`, `client`, `duration_ms`, `chars`, and when they apply `engine`, `cache`, `fallback_from`, `partial`, `truncated` and, for `web_search`, `query_id`, which joins the search audit lines (`OMNIFEED_SEARCH_AUDIT`). It is also in the `web_search` result `_meta`.
+- `mcp tool call failed`: the same plus `code`, the [error code](errors.md) the caller received.
+
+## Tracing
+
+Off unless `OTEL_EXPORTER_OTLP_ENDPOINT` is set. Then omnifeed exports OpenTelemetry traces over OTLP/HTTP, sampling parent-based and always-on, and propagates W3C `traceparent`:
+
+- Incoming: a server span per request on the loader and MCP servers, continuing the caller's `traceparent`. Spans are named by route (`POST /mcp`); `/livez`, `/readyz` and `/metrics` are not traced.
+- Outgoing: every call on the shared client (crawl4ai, SearXNG, GitHub, Hacker News, Bluesky, Discourse, FxTwitter) is a client span and sends `traceparent`. Direct fetches of target sites (the raw-text bypass, Twitter redirects) use their own guarded client and are not traced.
+- Inside: `mcp.tool` (`mcp.tool`, `mcp.client`), `engine.dispatch` and `engine.fallback` (`engine`, `fallback.from`, `fallback.reason`, `error.reason`), `limiter.wait` (`limiter.scope`, `engine`, `limiter.outcome`), `crawl4ai.rung` (`rung`: `base`, `pdf`, `networkidle`, `alt_fingerprint`, `no_selector`, `pdf_retry`; `attempt`), `cache.get` and `cache.set` (`cache.result`).
+
+Spans never carry a URL, a query or a path. Hosts appear as `server.address`. Before export, `url.full`, `url.query`, `url.path` and caller addresses are dropped, and URLs inside error texts are cut to `scheme://host`. On shutdown, omnifeed flushes buffered spans after the servers drain.
+
 ## Prometheus metrics
 
-Served at `/metrics` on `OMNIFEED_METRICS_ADDR`, default `:9090`, alongside the Go and process collectors:
+Served at `/metrics` on `OMNIFEED_METRICS_ADDR`, default `:9090`, alongside the Go and process collectors. The Go collector adds the runtime GC, scheduler and GC-CPU series (`go_gc_*`, `go_sched_*`, `go_cpu_classes_gc_*`). Don't alert on `go_sched_latencies_seconds`: Go 1.26 misreports it ([golang/go#79391](https://github.com/golang/go/issues/79391)).
 
 | Metric | Type | Labels | What it measures |
 |---|---|---|---|
-| `omnifeed_requests_total` | counter | `engine, tenant, status, reason` | Crawl requests, with a bounded failure `reason`, `ok` on success |
-| `omnifeed_request_seconds` | histogram | `engine, status, reason` | End-to-end crawl latency |
+| `omnifeed_build_info` | gauge | `version` | Always `1`; the running version |
+| `omnifeed_http_requests_total` | counter | `server, route, code` | HTTP requests by server (`loader`, `mcp`, `obs`), route (`/crawl`, `/search`, `/mcp`, `/mcp/sse`, `/livez`, `/readyz`, `/metrics`, anything else `other`) and status code |
+| `omnifeed_http_request_seconds` | histogram | `server, route` | Time until the handler returns. The SSE streams (`GET /mcp`, `/mcp/sse`) are counted but not timed: their duration is the connection's lifetime |
+| `omnifeed_http_in_flight` | gauge | `server` | Requests being served, open SSE streams included |
+| `omnifeed_mcp_tool_calls_total` | counter | `tool, outcome, client` | MCP `tools/call` by tool, `outcome` (`ok`, `error`, `invalid_params`) and `client`: `claude-code`, `opencode`, `openwebui`, `thedigestif`, `cursor` or `other`, read from the MCP `clientInfo` (initialize on stdio, per-request `_meta` in the 2026-07-28 era) or else the `User-Agent` |
+| `omnifeed_mcp_tool_seconds` | histogram | `tool, outcome` | MCP tool latency, cache hits included |
+| `omnifeed_panics_total` | counter | `where` | Recovered panics: `http`, `mcp_tool`, `loader_crawl`, `github_fanout`, `background`. Any increase is a bug; the request failed instead of the process |
+| `omnifeed_dependency_up` | gauge | `dependency` | `1` when the last 30-second probe of `crawl4ai`, `searxng` or `redis` succeeded, `0` when it failed. Only configured dependencies have a series. Not a readiness gate, see [Health](#health) |
+| `omnifeed_requests_total` | counter | `engine, tenant, status, reason, cache` | Crawl requests, with a bounded failure `reason`, `ok` on success. `cache` is `hit`, `miss`, `bypass` (`no_cache`) or `off` (cache disabled). Errors are never served from the cache, so they carry `miss`, `bypass` or `off` |
+| `omnifeed_request_seconds` | histogram | `engine, status, reason` | End-to-end crawl latency. **Cache hits are excluded**: they never reach an engine, and their microseconds would drag the quantiles down as the hit rate rose |
 | `omnifeed_request_attempts_total` | counter | `upstream, attempt` | HTTP attempts by the retrying client, `first` or `retry` |
 | `omnifeed_upstream_seconds` | histogram | `upstream, op, status` | Upstream round-trip per attempt, from start until the body is read: `crawl4ai/crawl`, `crawl4ai/execute_js`, `searxng/search`, `searxng/config`, `github/api`, `hackernews/api`, `discourse/api` |
 | `omnifeed_domain_limiter_wait_seconds` | histogram | `engine, outcome` | Time blocked acquiring the per-domain limiter, semaphore plus delay. `outcome="canceled"`: the wait died in the queue. `outcome="budget_exceeded"`: the wait exceeded the caller's remaining deadline, so nothing queued; about 0 seconds, with `reason="quota_exhausted"` on the request metric |
