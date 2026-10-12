@@ -32,6 +32,13 @@ type Config struct {
 	LogLevel    string
 	LogFormat   string
 	EnablePprof bool
+	// OTelEndpoint (OTEL_EXPORTER_OTLP_ENDPOINT) turns on OpenTelemetry
+	// tracing over OTLP/HTTP when set; empty = no tracing at all. The standard
+	// OTel names, not OMNIFEED_*, because the exporter reads the rest of the
+	// OTEL_EXPORTER_OTLP_* family itself. OTelServiceName (OTEL_SERVICE_NAME)
+	// defaults to "omnifeed".
+	OTelEndpoint    string
+	OTelServiceName string
 
 	// Auth.
 	APIKey      string
@@ -262,6 +269,8 @@ func Load() (Config, error) {
 		MetricsAddr:       env("OMNIFEED_METRICS_ADDR", ":9090"),
 		LogLevel:          env("OMNIFEED_LOG_LEVEL", "info"),
 		LogFormat:         env("OMNIFEED_LOG_FORMAT", "json"),
+		OTelEndpoint:      env("OTEL_EXPORTER_OTLP_ENDPOINT", ""),
+		OTelServiceName:   env("OTEL_SERVICE_NAME", "omnifeed"),
 		APIKey:            os.Getenv("OMNIFEED_API_KEY"),
 		Crawl4AIURL:       env("OMNIFEED_CRAWL4AI_URL", ""),
 		Crawl4AIWaitUntil: env("OMNIFEED_CRAWL4AI_WAIT_UNTIL", "domcontentloaded"),
