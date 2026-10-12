@@ -200,7 +200,7 @@ func (e *Engine) crawlPost(ctx context.Context, rawURL, id string, opts domain.E
 		failed.add(sourceCrawl4AI, gerr)
 		return domain.Document{}, domain.NoFallback(failed.classify())
 	}
-	e.logger.Warn("twitter APIs failed, served the x.com page through the generic engine",
+	e.logger.WarnContext(ctx, "twitter APIs failed, served the x.com page through the generic engine",
 		"id", id, "err", failed.summary())
 	if doc.Metadata == nil {
 		doc.Metadata = map[string]string{}
@@ -228,7 +228,7 @@ func (e *Engine) fetchBundle(ctx context.Context, id string) (bundle, error) {
 		if err == nil {
 			e.cache.put(id, b)
 			if len(chain.attempts) > 0 {
-				e.logger.Warn("twitter source fallback", "id", id, "served_by", b.Source, "failed", chain.summary())
+				e.logger.WarnContext(ctx, "twitter source fallback", "id", id, "served_by", b.Source, "failed", chain.summary())
 			}
 			return b, nil
 		}

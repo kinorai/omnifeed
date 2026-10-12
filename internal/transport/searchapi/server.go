@@ -124,7 +124,7 @@ func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 			opts.Site != "", time.Since(start))
 	}
 	if err != nil {
-		s.logger.Warn("search failed", "query", req.Query, "reason", observability.Reason(err), "err", err)
+		s.logger.WarnContext(r.Context(), "search failed", "query", req.Query, "reason", observability.Reason(err), "err", err)
 		// code/retryable mirror the MCP structuredContent verdict (docs/errors.md).
 		f := observability.Classify(err)
 		body := f.Fields()
@@ -134,7 +134,7 @@ func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 	}
 	// Success exemplar (query-level) for latency triage — see the matching
 	// "crawl completed" / "mcp tool call completed" lines.
-	s.logger.Info("search completed", "query", req.Query,
+	s.logger.InfoContext(r.Context(), "search completed", "query", req.Query,
 		"results", len(results), "duration_ms", time.Since(start).Milliseconds())
 
 	w.Header().Set("Content-Type", "application/json")

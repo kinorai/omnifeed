@@ -73,6 +73,7 @@ func run(cfg config.Config, logger *slog.Logger) error {
 	transport := httpx.NewTransport()
 	httpClient := httpx.New(&http.Client{Timeout: cfg.Crawl4AITimeout, Transport: transport})
 	metrics := observability.NewMetrics()
+	metrics.SetBuildInfo(version.Version)
 	// Count every HTTP attempt the crawl client makes (first try + retries) so
 	// retry waste shows up in metrics, not just reconstructed from logs, and
 	// time every upstream round-trip per attempt. Hooks must be set BEFORE the
@@ -287,8 +288,9 @@ func run(cfg config.Config, logger *slog.Logger) error {
 		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 		defer stop()
 		s := mcp.New(mcp.Config{
-			Tools:  mcpTools,
-			Logger: logger,
+			Tools:   mcpTools,
+			Logger:  logger,
+			Metrics: metrics,
 		})
 		return s.ServeStdio(ctx, os.Stdin, os.Stdout)
 	}
@@ -348,6 +350,7 @@ func run(cfg config.Config, logger *slog.Logger) error {
 		Tools:         mcpTools,
 		Authenticator: authn,
 		Logger:        logger,
+		Metrics:       metrics,
 	})
 	mcpMux := http.NewServeMux()
 	mcpServer.Register(mcpMux)
@@ -355,15 +358,18 @@ func run(cfg config.Config, logger *slog.Logger) error {
 	// --- Observability HTTP server (separate listener for /metrics + health) ---
 
 	obsMux := http.NewServeMux()
-	readyChecks := []observability.ReadyCheck{
-		upstreamReady("crawl4ai", httpClient, cfg.Crawl4AIURL),
-	}
-	if searcher != nil {
-		readyChecks = append(readyChecks,
-			upstreamReady("searxng", searxngClient, cfg.SearXNGURL+"/healthz"))
-	}
-	health := observability.NewHealth(5*time.Second, readyChecks...)
+	// Readiness is NOT gated on crawl4ai or SearXNG: an outage of either fails
+	// the calls that need it (classified, retryable), while the cache, the
+	// Reddit quota and the API engines keep serving. Pulling every pod out of
+	// the Service for it turned a partial outage into a total one. Their state
+	// is exported as omnifeed_dependency_up instead, for alerting.
+	health := observability.NewHealth(5 * time.Second)
 	health.Register(obsMux)
+	deps := &observability.DependencyChecker{
+		Checks:  dependencyChecks(cfg, rdb, searcher != nil),
+		Metrics: metrics,
+		Logger:  logger,
+	}
 	metrics.RegisterMetrics(obsMux)
 	if cfg.EnablePprof {
 		observability.RegisterPprof(obsMux)
@@ -377,10 +383,15 @@ func run(cfg config.Config, logger *slog.Logger) error {
 	// not inside one transport — so the loader and search APIs get the same
 	// guard, and so a future transport mounted here inherits it for free.
 	originGuard := auth.OriginGuard(cfg.AllowedOrigins)
+	// Outermost first: the request id (so every response, a recovered panic's
+	// 500 included, carries X-Request-Id), then RED metrics + panic recovery.
+	serve := func(server string, h http.Handler) http.Handler {
+		return observability.RequestID(metrics.HTTPMiddleware(server, h))
+	}
 	servers := []serverSpec{
-		{name: "loader", addr: cfg.ListenAddr, handler: originGuard(mainMux), writeTimeout: 300 * time.Second},
-		{name: "mcp", addr: cfg.MCPListenAddr, handler: originGuard(mcpMux), writeTimeout: 300 * time.Second},
-		{name: "observability", addr: cfg.MetricsAddr, handler: obsMux, writeTimeout: 30 * time.Second},
+		{name: "loader", addr: cfg.ListenAddr, handler: serve(observability.ServerLoader, originGuard(mainMux)), writeTimeout: 300 * time.Second},
+		{name: "mcp", addr: cfg.MCPListenAddr, handler: serve(observability.ServerMCP, originGuard(mcpMux)), writeTimeout: 300 * time.Second},
+		{name: "observability", addr: cfg.MetricsAddr, handler: metrics.HTTPMiddleware(observability.ServerObs, obsMux), writeTimeout: 30 * time.Second},
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -389,8 +400,15 @@ func run(cfg config.Config, logger *slog.Logger) error {
 	// Mint every enabled SearXNG engine's series at zero, in the background:
 	// SearXNG may still be starting, and readiness must not wait on metrics.
 	if searxngSearcher != nil {
-		go searxngSearcher.InitEngineMetrics(ctx)
+		go func() {
+			defer observability.Recover(observability.PanicBackground, nil)
+			searxngSearcher.InitEngineMetrics(ctx)
+		}()
 	}
+	go func() {
+		defer observability.Recover(observability.PanicBackground, nil)
+		deps.Run(ctx)
+	}()
 
 	logger.Info("starting servers",
 		"version", version.Version,
@@ -428,6 +446,10 @@ func runServers(ctx context.Context, logger *slog.Logger, health *observability.
 			ReadTimeout:       30 * time.Second,
 			WriteTimeout:      sp.writeTimeout,
 			IdleTimeout:       120 * time.Second,
+			// net/http's own errors (TLS handshakes, a panicking handler it
+			// recovered, a bad Content-Length…) go through slog too, so they
+			// are JSON lines like everything else instead of bare text.
+			ErrorLog: slog.NewLogLogger(logger.Handler(), slog.LevelWarn),
 		}
 		servers[i] = srv
 		wg.Add(1)
@@ -720,23 +742,35 @@ func redisClient(cfg config.Config, logger *slog.Logger) (redis.UniversalClient,
 	return client, func() { _ = client.Close() }, nil
 }
 
-// upstreamReady is a readiness check: GET the endpoint and report failure if
-// it isn't reachable. Any reachable status counts as up — even 405 means the
-// server is listening.
-func upstreamReady(name string, client *httpx.Client, endpoint string) observability.ReadyCheck {
+// dependencyChecks builds the periodic omnifeed_dependency_up probes: crawl4ai
+// always (it is mandatory), SearXNG when search is configured, Redis when
+// OMNIFEED_REDIS_URL is set. The probes use their own plain client, not the
+// shared outbound one: no retries, no upstream metrics, and no trace per probe.
+func dependencyChecks(cfg config.Config, rdb redis.UniversalClient, search bool) map[string]observability.DependencyCheck {
+	client := &http.Client{Timeout: 5 * time.Second}
+	checks := map[string]observability.DependencyCheck{
+		"crawl4ai": upstreamReachable(client, cfg.Crawl4AIURL),
+	}
+	if search {
+		checks["searxng"] = upstreamReachable(client, cfg.SearXNGURL+"/healthz")
+	}
+	if rdb != nil {
+		checks["redis"] = func(ctx context.Context) error { return rdb.Ping(ctx).Err() }
+	}
+	return checks
+}
+
+// upstreamReachable reports failure only when the endpoint cannot be reached.
+// Any HTTP status counts as up — even 405 means the server is listening.
+func upstreamReachable(client *http.Client, endpoint string) observability.DependencyCheck {
 	return func(ctx context.Context) error {
-		if endpoint == "" {
-			return nil
-		}
-		ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
-		defer cancel()
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 		if err != nil {
 			return err
 		}
-		resp, err := client.HTTP.Do(req)
+		resp, err := client.Do(req)
 		if err != nil {
-			return fmt.Errorf("%s unreachable: %w", name, err)
+			return err
 		}
 		_ = resp.Body.Close()
 		return nil

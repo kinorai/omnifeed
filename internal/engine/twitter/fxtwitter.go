@@ -81,12 +81,12 @@ func (e *Engine) fetchFxTwitter(ctx context.Context, id string) (bundle, error) 
 func (e *Engine) fetchThread(ctx context.Context, root *fxStatus) []fxStatus {
 	raw, err := e.get(ctx, e.fx, e.fxBase+"/2/thread/"+root.ID, "fxtwitter")
 	if err != nil {
-		e.logger.Warn("fxtwitter thread fetch failed, using the conversation's chain", "id", root.ID, "err", err)
+		e.logger.WarnContext(ctx, "fxtwitter thread fetch failed, using the conversation's chain", "id", root.ID, "err", err)
 		return nil
 	}
 	conv, err := parseFxConversation(raw)
 	if err != nil {
-		e.logger.Warn("fxtwitter thread parse failed, using the conversation's chain", "id", root.ID, "err", err)
+		e.logger.WarnContext(ctx, "fxtwitter thread parse failed, using the conversation's chain", "id", root.ID, "err", err)
 		return nil
 	}
 	var chain []fxStatus

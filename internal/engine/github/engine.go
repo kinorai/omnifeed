@@ -16,6 +16,7 @@ import (
 
 	"github.com/kinorai/omnifeed/internal/domain"
 	"github.com/kinorai/omnifeed/internal/httpx"
+	"github.com/kinorai/omnifeed/internal/observability"
 	"github.com/toon-format/toon-go"
 )
 
@@ -324,6 +325,9 @@ func runAll(fns ...func() error) error {
 		wg.Add(1)
 		go func(i int, fn func() error) {
 			defer wg.Done()
+			// Outside the request goroutine, an unrecovered panic kills the
+			// process: it fails this crawl instead.
+			defer observability.Recover(observability.PanicGitHubFanout, &errs[i])
 			errs[i] = fn()
 		}(i, fn)
 	}

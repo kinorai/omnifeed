@@ -34,6 +34,11 @@ type Tool struct {
 type ToolResult struct {
 	Text string
 	Meta map[string]string
+	// Log holds extra fields for the server's "mcp tool call completed" line
+	// only (e.g. the engine that served a fetch); it is never sent to the
+	// client. Values must not carry user content beyond what the line already
+	// logs (the arguments).
+	Log map[string]string
 }
 
 // ParamError marks a tools/call failure as a caller mistake (JSON-RPC

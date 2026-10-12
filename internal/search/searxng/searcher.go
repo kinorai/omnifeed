@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"math/rand"
 	"net/http"
 	"net/url"
 	"sort"
@@ -160,7 +159,12 @@ func (s *Searcher) Search(ctx context.Context, query string, opts domain.SearchO
 		return nil, fmt.Errorf("query is empty")
 	}
 
-	queryID := newQueryID()
+	// A caller that logs its own completion line passes the id in (see
+	// observability.WithQueryID) so that line joins the audit lines.
+	queryID := observability.QueryIDFrom(ctx)
+	if queryID == "" {
+		queryID = observability.NewQueryID()
+	}
 	params := url.Values{}
 	scoped := siteScoped(query, opts.Site)
 	params.Set("q", scoped)
@@ -239,14 +243,14 @@ func (s *Searcher) Search(ctx context.Context, query string, opts domain.SearchO
 	// wide engine pool, so treating this as an error turns honest zero-hit
 	// queries into failures (and pages). Return what we have and log the report.
 	if len(sr.UnresponsiveEngines) > 0 {
-		s.logger.Warn("searxng returned partial results",
+		s.logger.WarnContext(ctx, "searxng returned partial results",
 			"unresponsive_engines", formatUnresponsive(sr.UnresponsiveEngines),
 			"results", len(sr.Results))
 		s.countUnresponsive(sr.UnresponsiveEngines)
 		// The line above joins every failure into one string, which reads fine
 		// and cannot be aggregated. These carry engine and reason as their own
 		// fields so a log store can group by them.
-		s.logUnresponsive(queryID, sr.UnresponsiveEngines)
+		s.logUnresponsive(ctx, queryID, sr.UnresponsiveEngines)
 	}
 
 	// Zero results with NO failure report is the shape a silently blocked pool
@@ -257,7 +261,7 @@ func (s *Searcher) Search(ctx context.Context, query string, opts domain.SearchO
 	// are still contributing rows, and how often searches come back empty.
 	s.countEngineResults(sr.Results)
 	if len(sr.Results) == 0 && len(sr.UnresponsiveEngines) == 0 {
-		s.logger.Warn("searxng returned no results and no failure report",
+		s.logger.WarnContext(ctx, "searxng returned no results and no failure report",
 			"query", scoped, "site_scoped", scoped != query)
 		if s.metrics != nil {
 			s.metrics.ObserveEmptySearch(scoped != query)
@@ -268,7 +272,7 @@ func (s *Searcher) Search(ctx context.Context, query string, opts domain.SearchO
 	s.countZeroResultEngines(rows, len(sr.Results), sr.UnresponsiveEngines)
 
 	s.observeRanks(sr.Results)
-	s.logAudit(queryID, query, scoped, opts, sr, rows, time.Since(started))
+	s.logAudit(ctx, queryID, query, scoped, opts, sr, rows, time.Since(started))
 
 	results := make([]domain.SearchResult, 0, len(sr.Results))
 	for _, hit := range sr.Results {
@@ -465,17 +469,9 @@ const (
 	auditFull    = "full"
 )
 
-// newQueryID returns the correlation id shared by every line of one search.
-// Non-cryptographic: it only has to be unique among the searches a log store
-// holds at once, and it is never a secret or a capability.
-// #nosec G404 -- log correlation id, not a security token
-func newQueryID() string {
-	return strconv.FormatUint(rand.Uint64(), 36) //nolint:gosec // see above
-}
-
 // logAudit emits the search-level line, plus the per-result position table in
 // "full" mode.
-func (s *Searcher) logAudit(queryID, query, scoped string, opts domain.SearchOptions, sr searchResponse, rows map[string]int, took time.Duration) {
+func (s *Searcher) logAudit(ctx context.Context, queryID, query, scoped string, opts domain.SearchOptions, sr searchResponse, rows map[string]int, took time.Duration) {
 	if s.auditDisabled() {
 		return
 	}
@@ -483,7 +479,7 @@ func (s *Searcher) logAudit(queryID, query, scoped string, opts domain.SearchOpt
 	// array, for the same flattening reason as above: it stays greppable in
 	// every store, and the authoritative per-engine numbers are the
 	// omnifeed_search_engine_* metrics anyway.
-	s.logger.Info("search audit",
+	s.logger.InfoContext(ctx, "search audit",
 		"query_id", queryID,
 		"query", query,
 		"site", opts.Site,
@@ -503,7 +499,7 @@ func (s *Searcher) logAudit(queryID, query, scoped string, opts domain.SearchOpt
 		for i, engine := range engines {
 			// rank 0 records "this engine returned it, position unknown".
 			rank := rankOf(hit, i)
-			s.logger.Info("search result",
+			s.logger.InfoContext(ctx, "search result",
 				"query_id", queryID,
 				"engine", engine,
 				"position", rank,
@@ -518,7 +514,7 @@ func (s *Searcher) logAudit(queryID, query, scoped string, opts domain.SearchOpt
 
 // logUnresponsive emits one line per failed engine, with engine and reason as
 // separate fields.
-func (s *Searcher) logUnresponsive(queryID string, pairs [][]string) {
+func (s *Searcher) logUnresponsive(ctx context.Context, queryID string, pairs [][]string) {
 	if s.auditDisabled() {
 		return
 	}
@@ -530,7 +526,7 @@ func (s *Searcher) logUnresponsive(queryID string, pairs [][]string) {
 		if len(pair) > 1 {
 			reason = pair[1]
 		}
-		s.logger.Info("search engine unresponsive",
+		s.logger.InfoContext(ctx, "search engine unresponsive",
 			"query_id", queryID,
 			"engine", pair[0],
 			"reason", reason,
