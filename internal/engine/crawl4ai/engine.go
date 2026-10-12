@@ -19,6 +19,10 @@ import (
 	"github.com/kinorai/omnifeed/internal/antibot"
 	"github.com/kinorai/omnifeed/internal/domain"
 	"github.com/kinorai/omnifeed/internal/httpx"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // maxPageTimeoutMS is the highest page_timeout crawl4ai honours from a REST
@@ -288,6 +292,7 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, opts domain.EngineOpt
 	}
 
 	rawURL = consentBypassURL(xcomURL(rawURL))
+	ctx = context.WithValue(ctx, attemptKey{}, new(int))
 
 	release, err := e.limiter.Acquire(ctx, e.Name(), rawURL)
 	if err != nil {
@@ -312,13 +317,13 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, opts domain.EngineOpt
 	// A .pdf URL that serves HTML instead (a landing page, a paywall, a
 	// redirect to an error page) fails the PDF strategy; render it normally.
 	if looksLikePDF(rawURL) {
-		doc, err := e.crawlOnce(ctx, rawURL, crawlOpts{pdf: true})
+		doc, err := e.crawlOnce(ctx, rawURL, crawlOpts{pdf: true, rung: "pdf"})
 		if err == nil || ctx.Err() != nil || isBlock(err) {
 			return doc, err
 		}
 	}
 
-	base := crawlOpts{excludedSelector: e.excludedSelector, scanFullPage: scan}
+	base := crawlOpts{excludedSelector: e.excludedSelector, scanFullPage: scan, rung: "base"}
 	doc, err := e.crawlOnce(ctx, rawURL, base)
 	// Playwright's "page is navigating" race: a JS challenge or client redirect
 	// reloaded the page between load and extraction. One retry that waits for
@@ -326,6 +331,7 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, opts domain.EngineOpt
 	if err != nil && isNavigationRace(err) && ctx.Err() == nil {
 		settled := base
 		settled.waitUntil = "networkidle"
+		settled.rung = "networkidle"
 		doc, err = e.crawlOnce(ctx, rawURL, settled)
 	}
 	// A bot wall on the modern identity: retry once on crawl4ai's default
@@ -334,12 +340,13 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, opts domain.EngineOpt
 	if err != nil && e.userAgent != "" && isBlock(err) && ctx.Err() == nil {
 		alt := base
 		alt.altFingerprint = true
+		alt.rung = "alt_fingerprint"
 		if altDoc, altErr := e.crawlOnce(ctx, rawURL, alt); altErr == nil {
 			doc, err = altDoc, nil
 		}
 	}
 	if err != nil && e.excludedSelector != "" && isThinContent(err) && ctx.Err() == nil {
-		doc, err = e.crawlOnce(ctx, rawURL, crawlOpts{scanFullPage: scan})
+		doc, err = e.crawlOnce(ctx, rawURL, crawlOpts{scanFullPage: scan, rung: "no_selector"})
 	}
 	// Last resort: crawl4ai's content gate rejects a body it cannot render as a
 	// page — which is every JSON/plain-text API response served from a path with
@@ -357,7 +364,7 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, opts domain.EngineOpt
 	// rejects the body. One header-only probe confirms it before the PDF
 	// retry; pages that crawled fine, and walls, never pay for it.
 	if err != nil && (isRescuable(err) || strings.Contains(err.Error(), "Download is starting")) && ctx.Err() == nil && e.servesPDF(ctx, rawURL) {
-		return e.crawlOnce(ctx, rawURL, crawlOpts{pdf: true})
+		return e.crawlOnce(ctx, rawURL, crawlOpts{pdf: true, rung: "pdf_retry"})
 	}
 	return doc, err
 }
@@ -550,10 +557,41 @@ type crawlOpts struct {
 	waitUntil        string // "" = the engine's configured wait_until
 	pdf              bool   // browserless PDF strategy instead of a page render
 	altFingerprint   bool   // crawl4ai's default user agent (see browserParams)
+	rung             string // which step of Crawl's ladder this is; the trace span names it
 }
 
-// crawlOnce performs one crawl4ai request.
+// crawlOnce performs one crawl4ai request inside a "crawl4ai.rung" span: one
+// span per step of Crawl's retry ladder, attributed with the rung and the
+// attempt number within this crawl (bounded values only — never the URL).
 func (e *Engine) crawlOnce(ctx context.Context, rawURL string, o crawlOpts) (domain.Document, error) {
+	attempt := 1
+	if n, ok := ctx.Value(attemptKey{}).(*int); ok {
+		*n++
+		attempt = *n
+	}
+	rung := o.rung
+	if rung == "" {
+		rung = "base"
+	}
+	ctx, span := otel.Tracer("github.com/kinorai/omnifeed").Start(ctx, "crawl4ai.rung",
+		trace.WithAttributes(attribute.String("rung", rung), attribute.Int("attempt", attempt)))
+	defer span.End()
+	doc, err := e.crawlRung(ctx, rawURL, o)
+	if err != nil {
+		var fe *domain.FetchError
+		if errors.As(err, &fe) {
+			span.SetAttributes(attribute.String("error.kind", string(fe.Kind)))
+		}
+		span.SetStatus(codes.Error, "rung failed")
+	}
+	return doc, err
+}
+
+// attemptKey carries Crawl's per-call rung counter to crawlOnce.
+type attemptKey struct{}
+
+// crawlRung performs one crawl4ai request.
+func (e *Engine) crawlRung(ctx context.Context, rawURL string, o crawlOpts) (domain.Document, error) {
 	excludedSelector, scanFullPage, pdf := o.excludedSelector, o.scanFullPage, o.pdf
 	waitUntil := e.waitUntil
 	if o.waitUntil != "" {

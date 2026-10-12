@@ -39,6 +39,7 @@ import (
 	"github.com/kinorai/omnifeed/internal/transport/searchapi"
 	"github.com/kinorai/omnifeed/internal/version"
 	"github.com/redis/go-redis/v9"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
 func main() {
@@ -65,12 +66,38 @@ func main() {
 }
 
 func run(cfg config.Config, logger *slog.Logger) error {
+	// --- Tracing (only when OTEL_EXPORTER_OTLP_ENDPOINT is set) ---
+
+	shutdownTracing, tracing, err := observability.SetupTracing(context.Background(), observability.TracingConfig{
+		Endpoint:    cfg.OTelEndpoint,
+		ServiceName: cfg.OTelServiceName,
+		Version:     version.Version,
+	})
+	if err != nil {
+		return err
+	}
+	// Deferred first, so it runs last: after the servers drained, flush the
+	// spans they produced.
+	defer func() {
+		if err := shutdownTracing(context.Background()); err != nil {
+			logger.Warn("tracing shutdown: spans may be lost", "err", err)
+		}
+	}()
+	if tracing {
+		logger.Info("tracing enabled", "service_name", cfg.OTelServiceName)
+	}
+
 	// --- HTTP client with retry, shared by both engines ---
 
 	// One transport for every outbound client: a widened per-host idle pool so
 	// concurrent calls to the same upstream reuse connections instead of
 	// re-handshaking TLS (DefaultTransport keeps only 2 idle conns per host).
-	transport := httpx.NewTransport()
+	// With tracing on, it is wrapped once so every upstream call (crawl4ai,
+	// SearXNG, the API engines) is a client span and carries traceparent.
+	var transport http.RoundTripper = httpx.NewTransport()
+	if tracing {
+		transport = otelhttp.NewTransport(transport)
+	}
 	httpClient := httpx.New(&http.Client{Timeout: cfg.Crawl4AITimeout, Transport: transport})
 	metrics := observability.NewMetrics()
 	metrics.SetBuildInfo(version.Version)
@@ -98,6 +125,9 @@ func run(cfg config.Config, logger *slog.Logger) error {
 			MinDelay:      cfg.PerDomainDelay,
 		},
 		metrics, logger)
+	if tracing {
+		limiter = httpx.TraceLimiter("domain", limiter)
+	}
 	httpClient.OnRetryAfter = retryAfterHook(limiter, metrics)
 
 	// --- Engines ---
@@ -125,7 +155,7 @@ func run(cfg config.Config, logger *slog.Logger) error {
 	redditEngine := reddit.New(reddit.Config{
 		Fetcher: reddit.NewFetcher(reddit.FetcherConfig{
 			Browser: crawl4aiBrowser,
-			Quota:   redditQuota(cfg, rdb, metrics, logger),
+			Quota:   traceLimiter(tracing, "reddit", redditQuota(cfg, rdb, metrics, logger)),
 			Penalize: func(rawURL string, d time.Duration) {
 				redditPenalty("reddit", rawURL, d)
 			},
@@ -244,6 +274,9 @@ func run(cfg config.Config, logger *slog.Logger) error {
 	var searxngClient *httpx.Client
 	if cfg.SearXNGURL != "" {
 		searxngPacer := searxngLimiter(cfg, rdb, metrics, logger)
+		if tracing && searxngPacer != nil {
+			searxngPacer = httpx.TraceLimiter("searxng", searxngPacer)
+		}
 		searxngClient = httpx.New(&http.Client{Timeout: cfg.SearXNGTimeout, Transport: transport})
 		searxngClient.OnAttempt = metrics.ObserveAttempt
 		searxngClient.OnUpstream = metrics.ObserveUpstream
@@ -386,7 +419,11 @@ func run(cfg config.Config, logger *slog.Logger) error {
 	// Outermost first: the request id (so every response, a recovered panic's
 	// 500 included, carries X-Request-Id), then RED metrics + panic recovery.
 	serve := func(server string, h http.Handler) http.Handler {
-		return observability.RequestID(metrics.HTTPMiddleware(server, h))
+		h = observability.RequestID(metrics.HTTPMiddleware(server, h))
+		if tracing {
+			h = tracedHandler(server, h)
+		}
+		return h
 	}
 	servers := []serverSpec{
 		{name: "loader", addr: cfg.ListenAddr, handler: serve(observability.ServerLoader, originGuard(mainMux)), writeTimeout: 300 * time.Second},
@@ -479,6 +516,34 @@ func runServers(ctx context.Context, logger *slog.Logger, health *observability.
 	wg.Wait()
 	logger.Info("shutdown complete")
 	return nil
+}
+
+// tracedHandler wraps an API server's handler in otelhttp: a server span per
+// request, continuing the caller's W3C traceparent when it sent one. Span names
+// use the bounded route, never the raw path; health and metrics probes are not
+// traced (the observability server is not wrapped at all).
+func tracedHandler(server string, h http.Handler) http.Handler {
+	return otelhttp.NewHandler(h, server,
+		otelhttp.WithSpanNameFormatter(func(_ string, r *http.Request) string {
+			return r.Method + " " + observability.RouteOf(r.URL.Path)
+		}),
+		otelhttp.WithFilter(func(r *http.Request) bool {
+			switch observability.RouteOf(r.URL.Path) {
+			case "/livez", "/readyz", "/metrics":
+				return false
+			}
+			return true
+		}),
+	)
+}
+
+// traceLimiter wraps a possibly-nil limiter in a limiter.wait span when
+// tracing is on. A nil limiter stays a nil INTERFACE (callers test == nil).
+func traceLimiter(tracing bool, scope string, l httpx.Limiter) httpx.Limiter {
+	if !tracing || l == nil {
+		return l
+	}
+	return httpx.TraceLimiter(scope, l)
 }
 
 // pacer is a limiter as main.go wires it: the httpx.Limiter every engine sees,

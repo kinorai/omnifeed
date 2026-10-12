@@ -8,11 +8,14 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"unicode/utf8"
 
 	"github.com/kinorai/omnifeed/internal/domain"
 	"github.com/kinorai/omnifeed/internal/httpx"
 	"github.com/kinorai/omnifeed/internal/observability"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // Registry holds an ordered list of engines and a fallback. Lookup is
@@ -86,7 +89,7 @@ func (r *Registry) Crawl(ctx context.Context, rawURL string, opts domain.EngineO
 		if !e.Matches(rawURL) {
 			continue
 		}
-		doc, err := e.Crawl(ctx, rawURL, opts)
+		doc, err := traceCrawl(ctx, "engine.dispatch", e, rawURL, opts)
 		err = classifyPacing(err)
 		// A dedicated engine failing (rate limit, API change, upstream hiccup)
 		// must not hard-fail a URL the generic browser fallback can still
@@ -105,7 +108,8 @@ func (r *Registry) Crawl(ctx context.Context, rawURL string, opts domain.EngineO
 			if r.metrics != nil {
 				r.metrics.ObserveFallback(e.Name(), reason)
 			}
-			doc, err = r.fallback.Crawl(ctx, rawURL, opts)
+			doc, err = traceCrawl(ctx, "engine.fallback", r.fallback, rawURL, opts,
+				attribute.String("fallback.from", e.Name()), attribute.String("fallback.reason", reason))
 			err = classifyPacing(err)
 			r.observeChars(r.fallback, doc, err)
 			if err == nil {
@@ -119,9 +123,30 @@ func (r *Registry) Crawl(ctx context.Context, rawURL string, opts domain.EngineO
 	if r.fallback == nil {
 		return domain.Document{}, fmt.Errorf("no engine available for %s and no fallback configured", rawURL)
 	}
-	doc, err := r.fallback.Crawl(ctx, rawURL, opts)
+	doc, err := traceCrawl(ctx, "engine.dispatch", r.fallback, rawURL, opts)
 	err = classifyPacing(err)
 	r.observeChars(r.fallback, doc, err)
+	return doc, err
+}
+
+// traceCrawl runs one engine's Crawl inside a span. Attributes are bounded:
+// the engine, the target host (never the URL), the classified failure reason,
+// and the caller's extras. A no-op span when tracing is off.
+func traceCrawl(ctx context.Context, name string, e domain.Engine, rawURL string,
+	opts domain.EngineOptions, extra ...attribute.KeyValue) (domain.Document, error) {
+	attrs := append([]attribute.KeyValue{attribute.String("engine", e.Name())}, extra...)
+	if u, err := url.Parse(rawURL); err == nil && u.Host != "" {
+		attrs = append(attrs, attribute.String("server.address", u.Hostname()))
+	}
+	ctx, span := observability.Tracer().Start(ctx, name, trace.WithAttributes(attrs...))
+	defer span.End()
+	doc, err := e.Crawl(ctx, rawURL, opts)
+	if err != nil {
+		span.SetAttributes(attribute.String("error.reason", observability.Reason(err)))
+		observability.SpanError(span, err)
+	} else if doc.Metadata[domain.PartialKey] == "true" {
+		span.SetAttributes(attribute.Bool("partial", true))
+	}
 	return doc, err
 }
 

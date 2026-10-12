@@ -49,6 +49,8 @@ import (
 	"github.com/kinorai/omnifeed/internal/auth"
 	"github.com/kinorai/omnifeed/internal/observability"
 	"github.com/kinorai/omnifeed/internal/version"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // modernProtocolVersion is the newest MCP revision this server speaks: the
@@ -491,7 +493,11 @@ func (s *Server) handleToolsCall(ctx context.Context, req rpcRequest, probe para
 	client := callerLabel(ctx, probe)
 	requestID := observability.RequestIDFrom(ctx)
 	start := time.Now()
+	ctx, span := observability.Tracer().Start(ctx, "mcp.tool", trace.WithAttributes(
+		attribute.String("mcp.tool", name), attribute.String("mcp.client", client)))
 	res, err := s.callTool(ctx, tool, p.Arguments)
+	observability.SpanError(span, err)
+	span.End()
 	if err != nil {
 		var paramErr ParamError
 		if errors.As(err, &paramErr) {

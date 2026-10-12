@@ -32,6 +32,7 @@ import (
 	"github.com/kinorai/omnifeed/internal/domain"
 	"github.com/kinorai/omnifeed/internal/engine"
 	"github.com/kinorai/omnifeed/internal/observability"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // Metadata keys the cache adds to every document it returns.
@@ -156,7 +157,7 @@ func (c *Cache) Crawl(ctx context.Context, rawURL string, opts domain.EngineOpti
 		return c.store(ctx, key, rawURL, doc, ResultBypass), nil
 	}
 
-	e, hit, err := c.backend.Get(ctx, key)
+	e, hit, err := c.get(ctx, key)
 	switch {
 	case err != nil && ctx.Err() != nil:
 		// The caller hung up during the lookup; nobody is left to serve.
@@ -247,7 +248,7 @@ func (c *Cache) store(ctx context.Context, key, rawURL string, doc domain.Docume
 	now := c.now().UTC()
 	// WithoutCancel: a caller that hangs up after the upstream answered must
 	// not throw the answer away. The backend bounds its own operation time.
-	err := c.backend.Set(context.WithoutCancel(ctx), key, Entry{Doc: doc, CachedAt: now}, ttl)
+	err := c.set(context.WithoutCancel(ctx), key, Entry{Doc: doc, CachedAt: now}, ttl)
 	if err != nil {
 		if !errors.Is(err, ErrUnavailable) && !errors.Is(err, ErrTooLarge) {
 			c.logger.WarnContext(ctx, "fetch cache write failed", "err", err)
@@ -255,6 +256,35 @@ func (c *Cache) store(ctx context.Context, key, rawURL string, doc domain.Docume
 		return mark(doc, result, time.Time{})
 	}
 	return mark(doc, result, now)
+}
+
+// get is backend.Get inside a "cache.get" span (cache.result hit|miss|error).
+func (c *Cache) get(ctx context.Context, key string) (Entry, bool, error) {
+	ctx, span := observability.Tracer().Start(ctx, "cache.get")
+	defer span.End()
+	e, hit, err := c.backend.Get(ctx, key)
+	result := ResultMiss
+	switch {
+	case err != nil:
+		result = ResultError
+	case hit:
+		result = ResultHit
+	}
+	span.SetAttributes(attribute.String("cache.result", result))
+	return e, hit, err
+}
+
+// set is backend.Set inside a "cache.set" span (cache.result ok|error).
+func (c *Cache) set(ctx context.Context, key string, e Entry, ttl time.Duration) error {
+	ctx, span := observability.Tracer().Start(ctx, "cache.set")
+	defer span.End()
+	err := c.backend.Set(ctx, key, e, ttl)
+	result := "ok"
+	if err != nil {
+		result = ResultError
+	}
+	span.SetAttributes(attribute.String("cache.result", result))
+	return err
 }
 
 // ttlFor picks the TTL by the engine that handles rawURL. Fallback renders are
