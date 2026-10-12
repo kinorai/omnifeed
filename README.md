@@ -182,7 +182,7 @@ docker compose up # full stack, tokenless, ports 8080 / 8081 / 9090
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the workflow and [SECURITY.md](SECURITY.md) to report a vulnerability. Coding agents read [AGENTS.md](AGENTS.md).
 
-Prometheus metrics are on `:9090/metrics`. [docs/configuration.md](docs/configuration.md#prometheus-metrics) lists them.
+Prometheus metrics are on `:9090/metrics`. [docs/configuration.md](docs/configuration.md#prometheus-metrics) lists them. Set `OTEL_EXPORTER_OTLP_ENDPOINT` to export OpenTelemetry traces ([Tracing](docs/configuration.md#tracing)); every response carries `X-Request-Id` ([Request ids](docs/configuration.md#request-ids-and-log-correlation)).
 
 <img src="https://user-images.githubusercontent.com/74038190/212284100-561aa473-3905-4a80-b561-0d28506553ee.gif" width="100%">
 

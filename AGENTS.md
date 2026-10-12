@@ -57,7 +57,7 @@ internal/
     searchapi/   POST /search (REST mirror of the web_search tool)
   auth/          Authenticator (shared bearer / always-allow)
   httpx/         HTTP client w/ retry, per-domain limiter, URL validation (SSRF)
-  observability/ metrics, health (livez/readyz), logging, error classification
+  observability/ metrics, health (livez/readyz), logging, request ids, tracing, error classification
   antibot/       block-page / CAPTCHA detection
   linkfmt/       link text + target -> bare URL or [text](href) (Discourse, Bluesky)
   config/        all OMNIFEED_* env loading, declared once
