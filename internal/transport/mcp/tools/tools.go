@@ -204,14 +204,17 @@ func crawlHandler(reg engine.Dispatcher, defaults reddit.Options, metrics *obser
 		}
 
 		start := time.Now()
+		engName := engineName(reg, rawURL)
 		doc, err := reg.Crawl(ctx, rawURL, opts)
 		// omnifeed_response_chars is recorded inside the registry (which knows
 		// the engine that actually served a fallback crawl), not here.
-		observe(metrics, engineName(reg, rawURL), engine.CacheLabel(reg, doc, err, opts.NoCache), err, start)
+		observe(metrics, engName, engine.CacheLabel(reg, doc, err, opts.NoCache), err, start)
 		if err != nil {
 			return mcp.ToolResult{}, err
 		}
-		return sized(doc, resolveMaxChars(args, defaultMaxChars), argInt(args, "start_char")), nil
+		res := sized(doc, resolveMaxChars(args, defaultMaxChars), argInt(args, "start_char"))
+		res.Log = map[string]string{"engine": engName}
+		return res, nil
 	}
 }
 
@@ -325,6 +328,11 @@ func WebSearch(searcher domain.Searcher, maxResults int, metrics *observability.
 				opts.Site = site
 			}
 
+			// The searcher tags its audit lines with this id; it is returned in
+			// _meta so the MCP completion line (and the caller) carry it too.
+			queryID := observability.NewQueryID()
+			ctx = observability.WithQueryID(ctx, queryID)
+
 			start := time.Now()
 			results, err := searcher.Search(ctx, query, opts)
 			if metrics != nil {
@@ -343,6 +351,7 @@ func WebSearch(searcher domain.Searcher, maxResults int, metrics *observability.
 				Text: string(text),
 				Meta: map[string]string{
 					"query":    query,
+					"query_id": queryID,
 					"count":    strconv.Itoa(len(results)),
 					"searcher": searcher.Name(),
 				},

@@ -96,11 +96,11 @@ func (r *Registry) Crawl(ctx context.Context, rawURL string, opts domain.EngineO
 		if err != nil && r.fallback != nil && ctx.Err() == nil {
 			reason := observability.Reason(err)
 			if why := fallbackRefused(e, opts, err, reason); why != "" {
-				r.logger.Warn("engine failed, not falling back to generic crawl",
+				r.logger.WarnContext(ctx, "engine failed, not falling back to generic crawl",
 					"engine", e.Name(), "url", rawURL, "reason", reason, "why", why, "err", err)
 				return doc, err
 			}
-			r.logger.Warn("engine failed, falling back to generic crawl",
+			r.logger.WarnContext(ctx, "engine failed, falling back to generic crawl",
 				"engine", e.Name(), "url", rawURL, "err", err)
 			if r.metrics != nil {
 				r.metrics.ObserveFallback(e.Name(), reason)

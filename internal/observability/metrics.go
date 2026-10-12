@@ -3,6 +3,7 @@ package observability
 import (
 	"net/http"
 	"net/http/pprof"
+	"regexp"
 	"strconv"
 	"time"
 
@@ -39,6 +40,14 @@ type Metrics struct {
 	CacheBytes          prometheus.Gauge
 	CacheBackend        *prometheus.GaugeVec   // backend
 	CacheBackendErrors  *prometheus.CounterVec // op, kind
+
+	HTTPRequests *prometheus.CounterVec   // server, route, code
+	HTTPSecs     *prometheus.HistogramVec // server, route
+	HTTPInFlight *prometheus.GaugeVec     // server
+	MCPToolCalls *prometheus.CounterVec   // tool, outcome, client
+	MCPToolSecs  *prometheus.HistogramVec // tool, outcome
+	DependencyUp *prometheus.GaugeVec     // dependency
+	BuildInfo    *prometheus.GaugeVec     // version
 }
 
 // NewMetrics builds and registers all collectors.
@@ -176,6 +185,40 @@ func NewMetrics() *Metrics {
 			Help: `Redis errors in the fetch_url response cache by op (get|set|probe) and kind: noperm (ACL/auth refusal; the cache switches to the in-process backend), transient (timeout, refused connection…; cooldown and retry), other (startup probe: an answer the cache cannot use).`,
 		}, []string{"op", "kind"}),
 	}
+	m.HTTPRequests = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "omnifeed_http_requests_total",
+		Help: `HTTP requests served, by server (loader|mcp|obs), route (/crawl, /search, /mcp, /mcp/sse, /livez, /readyz, /metrics, other) and status code.`,
+	}, []string{"server", "route", "code"})
+	m.HTTPSecs = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name: "omnifeed_http_request_seconds",
+		Help: "HTTP request latency by server and route, until the handler returns. The SSE streams (GET /mcp, /mcp/sse) are counted in omnifeed_http_requests_total but not observed here: their duration is the connection's lifetime.",
+		// 14 buckets, 5ms → ~745s: a /crawl
+		// batch can run to the 300s write timeout.
+		Buckets: prometheus.ExponentialBuckets(0.005, 2.5, 14),
+	}, []string{"server", "route"})
+	m.HTTPInFlight = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "omnifeed_http_in_flight",
+		Help: "HTTP requests currently being served, by server (open SSE streams included).",
+	}, []string{"server"})
+	m.MCPToolCalls = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "omnifeed_mcp_tool_calls_total",
+		Help: `MCP tools/call requests by tool, outcome (ok|error|invalid_params) and client (claude-code|opencode|openwebui|thedigestif|cursor|other — from the MCP clientInfo when the client sent one, else the User-Agent).`,
+	}, []string{"tool", "outcome", "client"})
+	m.MCPToolSecs = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "omnifeed_mcp_tool_seconds",
+		Help:    "MCP tools/call handler latency by tool and outcome, cache hits included (the per-engine crawl latency without them is omnifeed_request_seconds).",
+		Buckets: prometheus.ExponentialBuckets(0.005, 2.5, 14),
+	}, []string{"tool", "outcome"})
+	m.DependencyUp = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "omnifeed_dependency_up",
+		Help: "1 when the last periodic check of a dependency (crawl4ai, searxng, redis) succeeded, 0 when it failed. Only configured dependencies have a series. Readiness does not depend on these: omnifeed keeps serving what it can.",
+	}, []string{"dependency"})
+	m.BuildInfo = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "omnifeed_build_info",
+		Help: "Always 1; the version label is the running build.",
+	}, []string{"version"})
+	reg.MustRegister(m.HTTPRequests, m.HTTPSecs, m.HTTPInFlight, m.MCPToolCalls, m.MCPToolSecs,
+		m.DependencyUp, m.BuildInfo, panicsTotal)
 	reg.MustRegister(m.RequestsTotal, m.RequestAttempts, m.RequestSecs, m.UpstreamSecs,
 		m.LimiterWaitSecs, m.RatelimitErrors, m.RatelimitPenalties, m.RatelimitDegraded,
 		m.ResponseChars, m.EngineFallbacks, m.SearxngUnresponsive,
@@ -184,11 +227,22 @@ func NewMetrics() *Metrics {
 		m.SearchEnginePos, m.SearchEngineUnique, m.CacheRequests, m.CacheBytes,
 		m.CacheBackend, m.CacheBackendErrors)
 	reg.MustRegister(
-		collectors.NewGoCollector(),
+		// The default go_* set plus the runtime/metrics GC, scheduler and GC-CPU
+		// subset (go_gc_*, go_sched_*, go_cpu_classes_gc_*) — not MetricsAll,
+		// which adds ~100 series nobody reads. go_sched_latencies_seconds is
+		// exported for dashboards only: Go 1.26 misreports it (golang/go#79391),
+		// so nothing should alert on it.
+		collectors.NewGoCollector(collectors.WithGoCollectorRuntimeMetrics(
+			collectors.GoRuntimeMetricsRule{Matcher: goRuntimeMetrics},
+		)),
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
 	)
 	return m
 }
+
+// goRuntimeMetrics selects the runtime/metrics names exported beyond the
+// default Go collector set: GC, scheduler, and the GC share of CPU.
+var goRuntimeMetrics = regexp.MustCompile(`^/(gc|sched|cpu/classes/gc)/`)
 
 // Cache results as the omnifeed_requests_total `cache` label. CacheOff means
 // the response cache is disabled for this deployment.
@@ -210,6 +264,27 @@ func (m *Metrics) Observe(engine, tenant, status, reason, cache string, duration
 	if cache != CacheHit {
 		m.RequestSecs.WithLabelValues(engine, status, reason).Observe(duration.Seconds())
 	}
+}
+
+// SetBuildInfo publishes omnifeed_build_info{version} = 1.
+func (m *Metrics) SetBuildInfo(version string) {
+	m.BuildInfo.WithLabelValues(version).Set(1)
+}
+
+// ObserveMCPToolCall records one MCP tools/call: tool and client must already
+// be bounded (known tool names; ClientLabel output).
+func (m *Metrics) ObserveMCPToolCall(tool, outcome, client string, duration time.Duration) {
+	m.MCPToolCalls.WithLabelValues(tool, outcome, client).Inc()
+	m.MCPToolSecs.WithLabelValues(tool, outcome).Observe(duration.Seconds())
+}
+
+// SetDependencyUp records the result of one periodic dependency check.
+func (m *Metrics) SetDependencyUp(dependency string, up bool) {
+	v := 0.0
+	if up {
+		v = 1
+	}
+	m.DependencyUp.WithLabelValues(dependency).Set(v)
 }
 
 // ObserveAttempt records one HTTP attempt from the retrying client against the
