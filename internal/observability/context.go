@@ -7,6 +7,9 @@ import (
 	"math/rand/v2"
 	"net/http"
 	"strconv"
+
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // RequestIDHeader is the header a caller may send to name its request, and the
@@ -73,6 +76,8 @@ func RequestID(next http.Handler) http.Handler {
 			id = NewRequestID()
 		}
 		w.Header().Set(RequestIDHeader, id)
+		// Joins the trace to the logs and to what the caller quotes.
+		trace.SpanFromContext(r.Context()).SetAttributes(attribute.String("request.id", id))
 		next.ServeHTTP(w, r.WithContext(WithRequestID(r.Context(), id)))
 	})
 }
