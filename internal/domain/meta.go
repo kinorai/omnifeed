@@ -14,4 +14,8 @@ const (
 	// fallback rendered the document instead. A fallback render is a stand-in,
 	// so it is never cached either.
 	FallbackFromKey = "fallback_from"
+
+	// CacheKey is the response cache's verdict on a document: "hit", "miss"
+	// or "bypass". Absent when no cache sits in front of the engines.
+	CacheKey = "cache"
 )
