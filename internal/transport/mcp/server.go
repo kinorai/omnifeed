@@ -531,10 +531,8 @@ func (s *Server) handleToolsCall(ctx context.Context, req rpcRequest, probe para
 		"duration_ms", time.Since(start).Milliseconds(),
 		"chars", utf8.RuneCountInString(res.Text),
 	}
-	for _, k := range []string{"engine"} {
-		if v := res.Log[k]; v != "" {
-			attrs = append(attrs, k, v)
-		}
+	for k, v := range res.Log {
+		attrs = append(attrs, k, v)
 	}
 	for _, k := range []string{"cache", "fallback_from", "partial", "truncated", "query_id"} {
 		if v := res.Meta[k]; v != "" {

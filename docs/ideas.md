@@ -13,6 +13,30 @@ ref, nobody can recover the code.
 
 ---
 
+## Gate `/readyz` on crawl4ai and SearXNG
+
+**Status.** Shipped with the health endpoints; removed 2026-10-13.
+**Code.** `git show v0.35.1:cmd/omnifeed/main.go` (`upstreamReady` and the `readyChecks` slice).
+
+### The idea
+
+`/readyz` GET-probed crawl4ai and, when search was configured, SearXNG, and failed when
+either was unreachable, so Kubernetes took the pod out of the Service until they came back.
+
+### Why it was removed
+
+Every replica shares the same crawl4ai and SearXNG, so an outage of either failed readiness
+on all pods at once and the Service had no endpoints left. The cache, the Reddit quota and
+the API engines (GitHub, HN, Bluesky, Discourse, Twitter's API sources) could still have
+served; a partial outage became a total one. A dependency outage now fails only the calls
+that need it, classified and retryable, and its state is exported as
+`omnifeed_dependency_up{dependency}` for alerting.
+
+### What would justify bringing it back
+
+Replicas that do not share their dependencies (a crawl4ai sidecar per pod, say), where
+pulling one pod out of rotation routes traffic to a healthy one instead of to nothing.
+
 ## Serve `cleaned_html` when crawl4ai returns no markdown
 
 **Status.** Shipped since the first crawl4ai engine; removed 2026-10-09.
