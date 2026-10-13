@@ -21,6 +21,7 @@ What it caches: successful, complete documents only. Errors, generic fallback re
 - [type Backend](<#Backend>)
 - [type Cache](<#Cache>)
   - [func New\(cfg Config\) \*Cache](<#New>)
+  - [func \(c \*Cache\) CacheEnabled\(\) bool](<#Cache.CacheEnabled>)
   - [func \(c \*Cache\) Crawl\(ctx context.Context, rawURL string, opts domain.EngineOptions\) \(domain.Document, error\)](<#Cache.Crawl>)
   - [func \(c \*Cache\) Resolve\(rawURL string\) domain.Engine](<#Cache.Resolve>)
 - [type Config](<#Config>)
@@ -55,7 +56,7 @@ const (
     // MetaCache is "hit" (served from the cache, or shared with an identical
     // in-flight request), "miss" (fetched upstream) or "bypass" (the caller
     // asked for no_cache).
-    MetaCache = "cache"
+    MetaCache = domain.CacheKey
     // MetaCachedAt is when the content was fetched upstream and stored
     // (RFC 3339, UTC). Absent when the response is not in the cache — an
     // error, a fallback render, a partial crawl, or a failed store.
@@ -164,6 +165,15 @@ func New(cfg Config) *Cache
 ```
 
 New builds a Cache.
+
+<a name="Cache.CacheEnabled"></a>
+### func \(\*Cache\) CacheEnabled
+
+```go
+func (c *Cache) CacheEnabled() bool
+```
+
+CacheEnabled reports that a response cache sits in front of the engines \(engine.CacheReporter\), so a transport labels an uncached error "miss" rather than "off".
 
 <a name="Cache.Crawl"></a>
 ### func \(\*Cache\) Crawl

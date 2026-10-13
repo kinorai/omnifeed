@@ -98,7 +98,9 @@ JSON-RPC error:
 - `content[1]` repeats `structuredContent` as JSON text, as the MCP spec recommends for
   clients that predate `structuredContent` (added in protocol 2025-06-18). Older clients
   ignore the unknown field.
-- Modern-era (2026-07-28) requests get the usual `resultType` and `_meta` on this result too.
+- `_meta.request_id` is the request's id (the `X-Request-Id` response header over HTTP);
+  quote it when reporting a failure. Modern-era (2026-07-28) requests also get the usual
+  `resultType` and `_meta.io.modelcontextprotocol/serverInfo`.
 
 JSON-RPC errors are kept for protocol-level problems only: malformed params and a
 missing required argument (`-32602`), an unknown tool (`-32602`), an unknown method
