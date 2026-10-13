@@ -35,9 +35,8 @@ func (t *TracedLimiter) Acquire(ctx context.Context, engine, rawURL string) (fun
 		attrs = append(attrs, attribute.String("server.address", u.Hostname()))
 	}
 	ctx, span := otel.Tracer("github.com/kinorai/omnifeed").Start(ctx, "limiter.wait", trace.WithAttributes(attrs...))
-	start := time.Now()
+	// The span's own duration is the wait.
 	release, err := t.inner.Acquire(ctx, engine, rawURL)
-	span.SetAttributes(attribute.Int64("limiter.wait_ms", time.Since(start).Milliseconds()))
 	if err != nil {
 		span.SetStatus(codes.Error, "limiter refused")
 		span.SetAttributes(attribute.String("limiter.outcome", "refused"))

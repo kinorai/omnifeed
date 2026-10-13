@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"strings"
 	"time"
 
 	"go.opentelemetry.io/otel"
@@ -95,6 +96,11 @@ var urlInText = regexp.MustCompile(`https?://[^\s"'<>]+`)
 
 // ScrubText replaces every absolute URL in s with its scheme and host.
 func ScrubText(s string) string {
+	// Every span attribute passes through here at export: skip the regex for
+	// the common value that cannot hold an absolute URL.
+	if !strings.Contains(s, "://") {
+		return s
+	}
 	return urlInText.ReplaceAllStringFunc(s, func(m string) string {
 		u, err := url.Parse(m)
 		if err != nil || u.Host == "" {

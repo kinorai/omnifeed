@@ -46,7 +46,8 @@ func isStream(r *http.Request, route string) bool {
 // status code, latency by route, requests in flight — and recovers a handler
 // panic: it is counted (omnifeed_panics_total{where="http"}), logged with its
 // stack, and answered with a 500 when nothing was written yet, instead of
-// net/http's bare connection reset.
+// net/http's bare connection reset (after a partial write, the connection is
+// aborted instead, so a truncated body never passes for a complete one).
 func (m *Metrics) HTTPMiddleware(server string, next http.Handler) http.Handler {
 	inFlight := m.HTTPInFlight.WithLabelValues(server)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -64,9 +65,16 @@ func (m *Metrics) HTTPMiddleware(server string, next http.Handler) http.Handler 
 					panic(v)
 				}
 				ObservePanic(PanicHTTP, v)
-				if !rec.wrote {
-					http.Error(rec, "internal server error", http.StatusInternalServerError)
+				if rec.wrote {
+					// Headers (and maybe part of the body) are already out:
+					// a 500 is impossible, and returning normally would end
+					// a truncated response as if it were complete. Abort the
+					// connection so the client sees the failure.
+					inFlight.Dec()
+					m.observeHTTP(server, route, r, rec, start)
+					panic(http.ErrAbortHandler)
 				}
+				http.Error(rec, "internal server error", http.StatusInternalServerError)
 			}
 			inFlight.Dec()
 			m.observeHTTP(server, route, r, rec, start)
