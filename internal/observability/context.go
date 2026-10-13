@@ -3,8 +3,8 @@ package observability
 import (
 	"context"
 	crand "crypto/rand"
+	"encoding/binary"
 	"encoding/hex"
-	"math/rand/v2"
 	"net/http"
 	"strconv"
 
@@ -95,9 +95,11 @@ func QueryIDFrom(ctx context.Context) string {
 	return id
 }
 
-// NewQueryID returns a correlation id for one search. Non-cryptographic: it
-// only has to be unique among the searches a log store holds at once, and it
-// is never a secret or a capability.
+// NewQueryID returns a correlation id for one search. It only has to be
+// unique among the searches a log store holds at once and is never a secret;
+// crypto/rand costs nothing here and keeps the scanners quiet.
 func NewQueryID() string {
-	return strconv.FormatUint(rand.Uint64(), 36) //nolint:gosec // log correlation id, not a security token
+	var b [8]byte
+	_, _ = crand.Read(b[:]) // never fails (crypto/rand.Read panics instead)
+	return strconv.FormatUint(binary.LittleEndian.Uint64(b[:]), 36)
 }
