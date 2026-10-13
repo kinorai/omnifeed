@@ -83,6 +83,32 @@ func TestHTTPMiddlewareRecoversPanics(t *testing.T) {
 	}
 }
 
+// A panic after the response started cannot become a 500: the middleware
+// counts it, then aborts the connection (http.ErrAbortHandler) so the client
+// never takes the truncated body for a complete one.
+func TestHTTPMiddlewareAbortsPanicAfterWrite(t *testing.T) {
+	m := NewMetrics()
+	before := counterValue(t, panicsTotal.WithLabelValues(PanicHTTP))
+	h := m.HTTPMiddleware(ServerLoader, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("[{\"partial\":"))
+		panic("boom")
+	}))
+	func() {
+		defer func() {
+			if v := recover(); v != http.ErrAbortHandler { //nolint:errorlint // sentinel identity
+				t.Fatalf("recovered %v, want http.ErrAbortHandler", v)
+			}
+		}()
+		h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/crawl", nil))
+	}()
+	if got := counterValue(t, panicsTotal.WithLabelValues(PanicHTTP)) - before; got != 1 {
+		t.Fatalf(`panics_total{where="http"} delta = %v, want 1`, got)
+	}
+	if got := gaugeValue(t, m.HTTPInFlight.WithLabelValues("loader")); got != 0 {
+		t.Fatalf("in flight after abort = %v, want 0", got)
+	}
+}
+
 // The SSE endpoint type-asserts http.Flusher; the recorder must keep it, and
 // stream durations stay out of the latency histogram.
 func TestHTTPMiddlewareKeepsFlusherAndSkipsStreams(t *testing.T) {
