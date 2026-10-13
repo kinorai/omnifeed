@@ -51,6 +51,13 @@ type Config struct {
     LogLevel    string
     LogFormat   string
     EnablePprof bool
+    // OTelEndpoint (OTEL_EXPORTER_OTLP_ENDPOINT) turns on OpenTelemetry
+    // tracing over OTLP/HTTP when set; empty = no tracing at all. The standard
+    // OTel names, not OMNIFEED_*, because the exporter reads the rest of the
+    // OTEL_EXPORTER_OTLP_* family itself. OTelServiceName (OTEL_SERVICE_NAME)
+    // defaults to "omnifeed".
+    OTelEndpoint    string
+    OTelServiceName string
 
     // Auth.
     APIKey      string

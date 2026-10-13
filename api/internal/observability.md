@@ -10,11 +10,37 @@ Package observability wires structured logging, Prometheus metrics, and Kubernet
 
 ## Index
 
+- [Constants](<#constants>)
 - [func Explain\(err error\) string](<#Explain>)
 - [func NewLogger\(level, format string\) \*slog.Logger](<#NewLogger>)
+- [func NewQueryID\(\) string](<#NewQueryID>)
+- [func NewRequestID\(\) string](<#NewRequestID>)
+- [func ObservePanic\(where string, v any\)](<#ObservePanic>)
+- [func QueryIDFrom\(ctx context.Context\) string](<#QueryIDFrom>)
 - [func Reason\(err error\) string](<#Reason>)
+- [func Recover\(where string, errp \*error\)](<#Recover>)
 - [func RegisterPprof\(mux \*http.ServeMux\)](<#RegisterPprof>)
+- [func RequestID\(next http.Handler\) http.Handler](<#RequestID>)
+- [func RequestIDFrom\(ctx context.Context\) string](<#RequestIDFrom>)
+- [func RouteOf\(path string\) string](<#RouteOf>)
+- [func ScrubText\(s string\) string](<#ScrubText>)
+- [func SetupTracing\(ctx context.Context, cfg TracingConfig\) \(shutdown func\(context.Context\) error, enabled bool, err error\)](<#SetupTracing>)
+- [func SpanError\(span trace.Span, err error\)](<#SpanError>)
 - [func StatusOf\(err error\) string](<#StatusOf>)
+- [func Tracer\(\) trace.Tracer](<#Tracer>)
+- [func ValidRequestID\(id string\) bool](<#ValidRequestID>)
+- [func WithQueryID\(ctx context.Context, id string\) context.Context](<#WithQueryID>)
+- [func WithRequestID\(ctx context.Context, id string\) context.Context](<#WithRequestID>)
+- [type ContextHandler](<#ContextHandler>)
+  - [func NewContextHandler\(inner slog.Handler\) \*ContextHandler](<#NewContextHandler>)
+  - [func \(h \*ContextHandler\) Enabled\(ctx context.Context, l slog.Level\) bool](<#ContextHandler.Enabled>)
+  - [func \(h \*ContextHandler\) Handle\(ctx context.Context, r slog.Record\) error](<#ContextHandler.Handle>)
+  - [func \(h \*ContextHandler\) WithAttrs\(attrs \[\]slog.Attr\) slog.Handler](<#ContextHandler.WithAttrs>)
+  - [func \(h \*ContextHandler\) WithGroup\(name string\) slog.Handler](<#ContextHandler.WithGroup>)
+- [type DependencyCheck](<#DependencyCheck>)
+- [type DependencyChecker](<#DependencyChecker>)
+  - [func \(d \*DependencyChecker\) CheckOnce\(ctx context.Context\)](<#DependencyChecker.CheckOnce>)
+  - [func \(d \*DependencyChecker\) Run\(ctx context.Context\)](<#DependencyChecker.Run>)
 - [type ErrorCode](<#ErrorCode>)
 - [type Failure](<#Failure>)
   - [func Classify\(err error\) Failure](<#Classify>)
@@ -26,8 +52,9 @@ Package observability wires structured logging, Prometheus metrics, and Kubernet
   - [func \(h \*Health\) Register\(mux \*http.ServeMux\)](<#Health.Register>)
 - [type Metrics](<#Metrics>)
   - [func NewMetrics\(\) \*Metrics](<#NewMetrics>)
+  - [func \(m \*Metrics\) HTTPMiddleware\(server string, next http.Handler\) http.Handler](<#Metrics.HTTPMiddleware>)
   - [func \(m \*Metrics\) InitSearxngEngine\(engine string, errorTypes \[\]string\)](<#Metrics.InitSearxngEngine>)
-  - [func \(m \*Metrics\) Observe\(engine, tenant, status, reason string, duration time.Duration\)](<#Metrics.Observe>)
+  - [func \(m \*Metrics\) Observe\(engine, tenant, status, reason, cache string, duration time.Duration\)](<#Metrics.Observe>)
   - [func \(m \*Metrics\) ObserveAttempt\(upstream string, retry bool\)](<#Metrics.ObserveAttempt>)
   - [func \(m \*Metrics\) ObserveCache\(result string\)](<#Metrics.ObserveCache>)
   - [func \(m \*Metrics\) ObserveCacheBackendError\(op, kind string\)](<#Metrics.ObserveCacheBackendError>)
@@ -37,6 +64,7 @@ Package observability wires structured logging, Prometheus metrics, and Kubernet
   - [func \(m \*Metrics\) ObserveEngineZeroResults\(engine string\)](<#Metrics.ObserveEngineZeroResults>)
   - [func \(m \*Metrics\) ObserveFallback\(fromEngine, reason string\)](<#Metrics.ObserveFallback>)
   - [func \(m \*Metrics\) ObserveLimiterWait\(engine, outcome string, duration time.Duration\)](<#Metrics.ObserveLimiterWait>)
+  - [func \(m \*Metrics\) ObserveMCPToolCall\(tool, outcome, client string, duration time.Duration\)](<#Metrics.ObserveMCPToolCall>)
   - [func \(m \*Metrics\) ObserveRatelimitBackendError\(op string\)](<#Metrics.ObserveRatelimitBackendError>)
   - [func \(m \*Metrics\) ObserveRatelimitPenalty\(upstream string\)](<#Metrics.ObserveRatelimitPenalty>)
   - [func \(m \*Metrics\) ObserveResponseChars\(engine string, chars int\)](<#Metrics.ObserveResponseChars>)
@@ -45,11 +73,68 @@ Package observability wires structured logging, Prometheus metrics, and Kubernet
   - [func \(m \*Metrics\) ObserveUnresponsiveEngine\(engine, errType string\)](<#Metrics.ObserveUnresponsiveEngine>)
   - [func \(m \*Metrics\) ObserveUpstream\(upstream, op, status string, duration time.Duration\)](<#Metrics.ObserveUpstream>)
   - [func \(m \*Metrics\) RegisterMetrics\(mux \*http.ServeMux\)](<#Metrics.RegisterMetrics>)
+  - [func \(m \*Metrics\) SetBuildInfo\(version string\)](<#Metrics.SetBuildInfo>)
   - [func \(m \*Metrics\) SetCacheBackend\(name string\)](<#Metrics.SetCacheBackend>)
   - [func \(m \*Metrics\) SetCacheBytes\(n int\)](<#Metrics.SetCacheBytes>)
+  - [func \(m \*Metrics\) SetDependencyUp\(dependency string, up bool\)](<#Metrics.SetDependencyUp>)
   - [func \(m \*Metrics\) SetRatelimitDegraded\(scope string, down bool\)](<#Metrics.SetRatelimitDegraded>)
 - [type ReadyCheck](<#ReadyCheck>)
+- [type TracingConfig](<#TracingConfig>)
 
+
+## Constants
+
+<a name="ServerLoader"></a>Server names, the values of the omnifeed\_http\_\* \`server\` label.
+
+```go
+const (
+    ServerLoader = "loader"
+    ServerMCP    = "mcp"
+    ServerObs    = "obs"
+)
+```
+
+<a name="CacheHit"></a>Cache results as the omnifeed\_requests\_total \`cache\` label. CacheOff means the response cache is disabled for this deployment.
+
+```go
+const (
+    CacheHit    = "hit"
+    CacheMiss   = "miss"
+    CacheBypass = "bypass"
+    CacheOff    = "off"
+)
+```
+
+<a name="PanicHTTP"></a>Panic sites, the values of omnifeed\_panics\_total's \`where\` label. A fixed set: every recover point in the binary names one of these.
+
+```go
+const (
+    PanicHTTP         = "http"          // an HTTP handler (any server)
+    PanicMCPTool      = "mcp_tool"      // an MCP tool handler (stdio or HTTP)
+    PanicLoaderCrawl  = "loader_crawl"  // one URL of a POST /crawl batch
+    PanicGitHubFanout = "github_fanout" // one parallel GitHub API call
+    PanicBackground   = "background"    // a background loop (dependency checks, SearXNG init)
+
+)
+```
+
+<a name="RequestIDHeader"></a>RequestIDHeader is the header a caller may send to name its request, and the header every response carries back, so one id joins the caller's logs, omnifeed's logs and the MCP result \(\_meta.request\_id\).
+
+```go
+const RequestIDHeader = "X-Request-Id"
+```
+
+<a name="RouteOther"></a>RouteOther is the route label of every path outside the fixed set.
+
+```go
+const RouteOther = "other"
+```
+
+<a name="TracerName"></a>TracerName is the instrumentation scope of omnifeed's own spans.
+
+```go
+const TracerName = "github.com/kinorai/omnifeed"
+```
 
 <a name="Explain"></a>
 ## func Explain
@@ -69,6 +154,42 @@ func NewLogger(level, format string) *slog.Logger
 
 NewLogger returns a slog.Logger configured per the given level and format. Level: debug | info | warn | error \(default info\). Format: json | text \(default json\).
 
+<a name="NewQueryID"></a>
+## func NewQueryID
+
+```go
+func NewQueryID() string
+```
+
+NewQueryID returns a correlation id for one search. It only has to be unique among the searches a log store holds at once and is never a secret; crypto/rand costs nothing here and keeps the scanners quiet.
+
+<a name="NewRequestID"></a>
+## func NewRequestID
+
+```go
+func NewRequestID() string
+```
+
+NewRequestID returns a fresh random request id \(16 bytes, hex\).
+
+<a name="ObservePanic"></a>
+## func ObservePanic
+
+```go
+func ObservePanic(where string, v any)
+```
+
+ObservePanic counts and logs one recovered panic. v is what recover\(\) returned. Callers that recover themselves \(middleware that must also write a 500\) use this; everyone else defers Recover.
+
+<a name="QueryIDFrom"></a>
+## func QueryIDFrom
+
+```go
+func QueryIDFrom(ctx context.Context) string
+```
+
+QueryIDFrom returns the search correlation id carried by ctx, or "".
+
 <a name="Reason"></a>
 ## func Reason
 
@@ -77,6 +198,21 @@ func Reason(err error) string
 ```
 
 Reason maps a crawl error to the bounded \`reason\` label recorded on omnifeed\_requests\_total, so metrics and alerts can tell a 403 from a CAPTCHA from a timeout. It reads the classified cause from a domain.FetchError that the engines attach as data — no error\-string parsing. Errors that aren't a FetchError fall back to canceled \(caller abort\), timeout \(context deadline\), or "error".
+
+<a name="Recover"></a>
+## func Recover
+
+```go
+func Recover(where string, errp *error)
+```
+
+Recover is deferred at the top of a goroutine \(or a call that must not take the process down\): it recovers a panic, counts it in omnifeed\_panics\_total, logs it with its stack and, when errp is non\-nil, turns it into an error.
+
+```
+defer observability.Recover(observability.PanicGitHubFanout, &err)
+```
+
+It must be deferred directly — recover\(\) only stops a panic when called by the deferred function itself.
 
 <a name="RegisterPprof"></a>
 ## func RegisterPprof
@@ -87,6 +223,62 @@ func RegisterPprof(mux *http.ServeMux)
 
 RegisterPprof attaches /debug/pprof/\* to mux. Opt\-in via OMNIFEED\_ENABLE\_PPROF.
 
+<a name="RequestID"></a>
+## func RequestID
+
+```go
+func RequestID(next http.Handler) http.Handler
+```
+
+RequestID is the HTTP middleware that adopts the caller's X\-Request\-Id when it is valid \(see ValidRequestID\) or generates one, puts it in the request context and returns it in the response header.
+
+<a name="RequestIDFrom"></a>
+## func RequestIDFrom
+
+```go
+func RequestIDFrom(ctx context.Context) string
+```
+
+RequestIDFrom returns the request id carried by ctx, or "".
+
+<a name="RouteOf"></a>
+## func RouteOf
+
+```go
+func RouteOf(path string) string
+```
+
+RouteOf maps a request path to its bounded route label.
+
+<a name="ScrubText"></a>
+## func ScrubText
+
+```go
+func ScrubText(s string) string
+```
+
+ScrubText replaces every absolute URL in s with its scheme and host.
+
+<a name="SetupTracing"></a>
+## func SetupTracing
+
+```go
+func SetupTracing(ctx context.Context, cfg TracingConfig) (shutdown func(context.Context) error, enabled bool, err error)
+```
+
+SetupTracing installs an OTLP/HTTP tracer provider \(parent\-based, always\-on sampling\) and the W3C trace\-context propagator as the globals. With an empty Endpoint it installs nothing and returns enabled=false and a no\-op shutdown. shutdown flushes buffered spans; call it on exit.
+
+The exporter reads the rest of the standard OTEL\_EXPORTER\_OTLP\_\* variables \(headers, timeout, …\) itself. Every exported span passes through scrubExporter first, which removes full URLs, queries and paths: the HTTP instrumentation records them by default, and they carry the caller's URLs.
+
+<a name="SpanError"></a>
+## func SpanError
+
+```go
+func SpanError(span trace.Span, err error)
+```
+
+SpanError marks span failed with err \(scrubbed at export\). A nil err is a no\-op, so callers can defer it unconditionally.
+
 <a name="StatusOf"></a>
 ## func StatusOf
 
@@ -95,6 +287,141 @@ func StatusOf(err error) string
 ```
 
 StatusOf reports the coarse request status recorded alongside Reason on the crawl/search metrics: "ok" when err is nil, "error" otherwise.
+
+<a name="Tracer"></a>
+## func Tracer
+
+```go
+func Tracer() trace.Tracer
+```
+
+Tracer returns omnifeed's tracer from the global provider: a no\-op until SetupTracing installs a real one, so instrumented code costs \~nothing when tracing is off.
+
+<a name="ValidRequestID"></a>
+## func ValidRequestID
+
+```go
+func ValidRequestID(id string) bool
+```
+
+ValidRequestID reports whether a caller\-supplied id is safe to adopt: 1\-128 characters from \[A\-Za\-z0\-9.\_:\-\]. Anything else \(empty, too long, spaces, quotes, control bytes\) is replaced by a generated id rather than echoed into logs and response headers.
+
+<a name="WithQueryID"></a>
+## func WithQueryID
+
+```go
+func WithQueryID(ctx context.Context, id string) context.Context
+```
+
+WithQueryID returns ctx carrying the search correlation id \(query\_id\) the searcher should use for its audit lines, so the caller can log the same id on its own completion line.
+
+<a name="WithRequestID"></a>
+## func WithRequestID
+
+```go
+func WithRequestID(ctx context.Context, id string) context.Context
+```
+
+WithRequestID returns ctx carrying id as the request id.
+
+<a name="ContextHandler"></a>
+## type ContextHandler
+
+ContextHandler decorates a slog.Handler with the request\-scoped fields the context carries: request\_id \(see RequestID\) and, when a span is recording, trace\_id and span\_id — so a log line joins its request and its trace. Only the \*Context logging calls \(InfoContext, WarnContext, …\) pass a context; the plain ones log without these fields, exactly as before.
+
+```go
+type ContextHandler struct {
+    // contains filtered or unexported fields
+}
+```
+
+<a name="NewContextHandler"></a>
+### func NewContextHandler
+
+```go
+func NewContextHandler(inner slog.Handler) *ContextHandler
+```
+
+NewContextHandler wraps inner.
+
+<a name="ContextHandler.Enabled"></a>
+### func \(\*ContextHandler\) Enabled
+
+```go
+func (h *ContextHandler) Enabled(ctx context.Context, l slog.Level) bool
+```
+
+Enabled implements slog.Handler.
+
+<a name="ContextHandler.Handle"></a>
+### func \(\*ContextHandler\) Handle
+
+```go
+func (h *ContextHandler) Handle(ctx context.Context, r slog.Record) error
+```
+
+Handle implements slog.Handler.
+
+<a name="ContextHandler.WithAttrs"></a>
+### func \(\*ContextHandler\) WithAttrs
+
+```go
+func (h *ContextHandler) WithAttrs(attrs []slog.Attr) slog.Handler
+```
+
+WithAttrs implements slog.Handler.
+
+<a name="ContextHandler.WithGroup"></a>
+### func \(\*ContextHandler\) WithGroup
+
+```go
+func (h *ContextHandler) WithGroup(name string) slog.Handler
+```
+
+WithGroup implements slog.Handler.
+
+<a name="DependencyCheck"></a>
+## type DependencyCheck
+
+DependencyCheck probes one dependency; nil means up.
+
+```go
+type DependencyCheck func(ctx context.Context) error
+```
+
+<a name="DependencyChecker"></a>
+## type DependencyChecker
+
+DependencyChecker probes each configured dependency on an interval and publishes omnifeed\_dependency\_up\{dependency\}. It replaces gating /readyz on crawl4ai and SearXNG: a dependency outage fails the calls that need it \(and says so, classified\), while the pod stays in rotation for everything else — the Reddit quota, the GitHub/HN/Bluesky engines and the cache keep serving.
+
+```go
+type DependencyChecker struct {
+    Checks   map[string]DependencyCheck
+    Interval time.Duration // between rounds; defaults to 30s
+    Timeout  time.Duration // per check; defaults to 5s
+    Metrics  *Metrics
+    Logger   *slog.Logger
+    // contains filtered or unexported fields
+}
+```
+
+<a name="DependencyChecker.CheckOnce"></a>
+### func \(\*DependencyChecker\) CheckOnce
+
+```go
+func (d *DependencyChecker) CheckOnce(ctx context.Context)
+```
+
+CheckOnce runs every check once and publishes the results.
+
+<a name="DependencyChecker.Run"></a>
+### func \(\*DependencyChecker\) Run
+
+```go
+func (d *DependencyChecker) Run(ctx context.Context)
+```
+
+Run checks immediately, then every Interval, until ctx ends.
 
 <a name="ErrorCode"></a>
 ## type ErrorCode
@@ -218,7 +545,7 @@ Metrics holds Prometheus collectors emitted by the proxy.
 
 ```go
 type Metrics struct {
-    RequestsTotal       *prometheus.CounterVec   // engine, tenant, status, reason
+    RequestsTotal       *prometheus.CounterVec   // engine, tenant, status, reason, cache
     RequestAttempts     *prometheus.CounterVec   // upstream, attempt (first|retry)
     RequestSecs         *prometheus.HistogramVec // engine, status, reason
     UpstreamSecs        *prometheus.HistogramVec // upstream, op, status
@@ -242,6 +569,14 @@ type Metrics struct {
     CacheBytes          prometheus.Gauge
     CacheBackend        *prometheus.GaugeVec   // backend
     CacheBackendErrors  *prometheus.CounterVec // op, kind
+
+    HTTPRequests *prometheus.CounterVec   // server, route, code
+    HTTPSecs     *prometheus.HistogramVec // server, route
+    HTTPInFlight *prometheus.GaugeVec     // server
+    MCPToolCalls *prometheus.CounterVec   // tool, outcome, client
+    MCPToolSecs  *prometheus.HistogramVec // tool, outcome
+    DependencyUp *prometheus.GaugeVec     // dependency
+    BuildInfo    *prometheus.GaugeVec     // version
     // contains filtered or unexported fields
 }
 ```
@@ -254,6 +589,15 @@ func NewMetrics() *Metrics
 ```
 
 NewMetrics builds and registers all collectors.
+
+<a name="Metrics.HTTPMiddleware"></a>
+### func \(\*Metrics\) HTTPMiddleware
+
+```go
+func (m *Metrics) HTTPMiddleware(server string, next http.Handler) http.Handler
+```
+
+HTTPMiddleware records RED metrics for one server — requests by route and status code, latency by route, requests in flight — and recovers a handler panic: it is counted \(omnifeed\_panics\_total\{where="http"\}\), logged with its stack, and answered with a 500 when nothing was written yet, instead of net/http's bare connection reset \(after a partial write, the connection is aborted instead, so a truncated body never passes for a complete one\).
 
 <a name="Metrics.InitSearxngEngine"></a>
 ### func \(\*Metrics\) InitSearxngEngine
@@ -268,10 +612,10 @@ InitSearxngEngine creates every per\-engine search series for engine at zero: re
 ### func \(\*Metrics\) Observe
 
 ```go
-func (m *Metrics) Observe(engine, tenant, status, reason string, duration time.Duration)
+func (m *Metrics) Observe(engine, tenant, status, reason, cache string, duration time.Duration)
 ```
 
-Observe records a single crawl result. reason is a bounded classification of WHY a request failed \(see Reason\); it is "ok" on success.
+Observe records a single crawl result. reason is a bounded classification of WHY a request failed \(see Reason\); it is "ok" on success. cache is the response\-cache result \(CacheHit, CacheMiss, CacheBypass, CacheOff\). A hit is counted but not timed: it never reached an engine, and its microseconds would make the latency histogram claim the engines got faster as the hit ratio rose.
 
 <a name="Metrics.ObserveAttempt"></a>
 ### func \(\*Metrics\) ObserveAttempt
@@ -354,6 +698,15 @@ func (m *Metrics) ObserveLimiterWait(engine, outcome string, duration time.Durat
 
 ObserveLimiterWait records the time an engine spent blocked acquiring the per\-domain limiter. Wired as the DomainLimiter's OnWait hook. outcome is "acquired", "canceled" \(the wait died in the queue\) or "budget\_exceeded" \(the wait was longer than the caller's budget, so the limiter refused to queue\).
 
+<a name="Metrics.ObserveMCPToolCall"></a>
+### func \(\*Metrics\) ObserveMCPToolCall
+
+```go
+func (m *Metrics) ObserveMCPToolCall(tool, outcome, client string, duration time.Duration)
+```
+
+ObserveMCPToolCall records one MCP tools/call: tool and client must already be bounded \(known tool names; ClientLabel output\).
+
 <a name="Metrics.ObserveRatelimitBackendError"></a>
 ### func \(\*Metrics\) ObserveRatelimitBackendError
 
@@ -426,6 +779,15 @@ func (m *Metrics) RegisterMetrics(mux *http.ServeMux)
 
 RegisterMetrics attaches /metrics to mux.
 
+<a name="Metrics.SetBuildInfo"></a>
+### func \(\*Metrics\) SetBuildInfo
+
+```go
+func (m *Metrics) SetBuildInfo(version string)
+```
+
+SetBuildInfo publishes omnifeed\_build\_info\{version\} = 1.
+
 <a name="Metrics.SetCacheBackend"></a>
 ### func \(\*Metrics\) SetCacheBackend
 
@@ -443,6 +805,15 @@ func (m *Metrics) SetCacheBytes(n int)
 ```
 
 SetCacheBytes publishes the in\-process response cache's approximate size.
+
+<a name="Metrics.SetDependencyUp"></a>
+### func \(\*Metrics\) SetDependencyUp
+
+```go
+func (m *Metrics) SetDependencyUp(dependency string, up bool)
+```
+
+SetDependencyUp records the result of one periodic dependency check.
 
 <a name="Metrics.SetRatelimitDegraded"></a>
 ### func \(\*Metrics\) SetRatelimitDegraded
@@ -462,6 +833,19 @@ ReadyCheck is a function that reports whether the binary is ready to serve. Retu
 
 ```go
 type ReadyCheck func(context.Context) error
+```
+
+<a name="TracingConfig"></a>
+## type TracingConfig
+
+TracingConfig configures SetupTracing. Endpoint is OTEL\_EXPORTER\_OTLP\_ENDPOINT \(a base URL; the exporter appends /v1/traces\); empty disables tracing.
+
+```go
+type TracingConfig struct {
+    Endpoint    string
+    ServiceName string
+    Version     string
+}
 ```
 
 Generated by [gomarkdoc](<https://github.com/princjef/gomarkdoc>)

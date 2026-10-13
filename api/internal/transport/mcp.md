@@ -21,6 +21,7 @@ The server is a pure transport: it owns JSON\-RPC framing, auth, and SSE keepali
 
 ## Index
 
+- [func ClientLabel\(s string\) string](<#ClientLabel>)
 - [func InvalidParams\(msg string\) error](<#InvalidParams>)
 - [type Config](<#Config>)
 - [type ParamError](<#ParamError>)
@@ -33,6 +34,15 @@ The server is a pure transport: it owns JSON\-RPC framing, auth, and SSE keepali
 - [type Tool](<#Tool>)
 - [type ToolResult](<#ToolResult>)
 
+
+<a name="ClientLabel"></a>
+## func ClientLabel
+
+```go
+func ClientLabel(s string) string
+```
+
+ClientLabel maps an MCP clientInfo.name or an HTTP User\-Agent to the bounded client label. Matching is a case\-insensitive substring test, first match wins, because both shapes wrap the product name: clientInfo "claude\-code", UA "claude\-code/2.1.3 \(cli\)"; UA "thedigestif/1.4.0".
 
 <a name="InvalidParams"></a>
 ## func InvalidParams
@@ -55,6 +65,9 @@ type Config struct {
     Tools         []Tool
     Authenticator auth.Authenticator
     Logger        *slog.Logger
+    // Metrics records omnifeed_mcp_tool_calls_total / omnifeed_mcp_tool_seconds.
+    // Nil disables them.
+    Metrics *observability.Metrics
 }
 ```
 
@@ -167,6 +180,11 @@ ToolResult is what a Tool handler returns: the text content plus optional metada
 type ToolResult struct {
     Text string
     Meta map[string]string
+    // Log holds extra fields for the server's "mcp tool call completed" line
+    // only (e.g. the engine that served a fetch); it is never sent to the
+    // client. Values must not carry user content beyond what the line already
+    // logs (the arguments).
+    Log map[string]string
 }
 ```
 

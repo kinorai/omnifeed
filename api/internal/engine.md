@@ -11,6 +11,8 @@ Package engine defines the dispatch mechanism that picks the right per\-URL hand
 ## Index
 
 - [Constants](<#constants>)
+- [func CacheLabel\(d Dispatcher, doc domain.Document, err error, noCache bool\) string](<#CacheLabel>)
+- [type CacheReporter](<#CacheReporter>)
 - [type Dispatcher](<#Dispatcher>)
 - [type Registry](<#Registry>)
   - [func New\(\) \*Registry](<#New>)
@@ -29,6 +31,26 @@ Package engine defines the dispatch mechanism that picks the right per\-URL hand
 
 ```go
 const FallbackNotice = "> Note: the dedicated %s engine failed (%s); this is the generic page render instead.\n\n"
+```
+
+<a name="CacheLabel"></a>
+## func CacheLabel
+
+```go
+func CacheLabel(d Dispatcher, doc domain.Document, err error, noCache bool) string
+```
+
+CacheLabel is the omnifeed\_requests\_total \`cache\` label for one crawl through d: the cache's own verdict on a document \(hit|miss|bypass\), and for an error — which is never served from the cache — bypass when the caller asked for no\_cache, else miss. off when d has no cache in front of it.
+
+<a name="CacheReporter"></a>
+## type CacheReporter
+
+CacheReporter is implemented by a Dispatcher that serves through a response cache \(internal/fetchcache\). Transports read it only to label metrics.
+
+```go
+type CacheReporter interface {
+    CacheEnabled() bool
+}
 ```
 
 <a name="Dispatcher"></a>

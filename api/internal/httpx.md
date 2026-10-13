@@ -34,6 +34,10 @@ Package httpx provides HTTP utilities shared across engines: a retrying HTTP cli
 - [type RetryConfig](<#RetryConfig>)
 - [type StatusError](<#StatusError>)
   - [func \(e \*StatusError\) Error\(\) string](<#StatusError.Error>)
+- [type TracedLimiter](<#TracedLimiter>)
+  - [func TraceLimiter\(scope string, l Limiter\) \*TracedLimiter](<#TraceLimiter>)
+  - [func \(t \*TracedLimiter\) Acquire\(ctx context.Context, engine, rawURL string\) \(func\(\), error\)](<#TracedLimiter.Acquire>)
+  - [func \(t \*TracedLimiter\) Penalize\(rawURL string, d time.Duration\)](<#TracedLimiter.Penalize>)
 - [type WaitBudgetError](<#WaitBudgetError>)
   - [func \(e \*WaitBudgetError\) Error\(\) string](<#WaitBudgetError.Error>)
 
@@ -356,6 +360,44 @@ func (e *StatusError) Error() string
 ```
 
 
+
+<a name="TracedLimiter"></a>
+## type TracedLimiter
+
+TracedLimiter wraps a Limiter in a "limiter.wait" span per Acquire, so a trace shows how long a request queued for its pacing slot and in which scope. Wired only when tracing is on. Attributes are bounded: the scope, the engine, the target host \(never the URL\) and the outcome.
+
+```go
+type TracedLimiter struct {
+    // contains filtered or unexported fields
+}
+```
+
+<a name="TraceLimiter"></a>
+### func TraceLimiter
+
+```go
+func TraceLimiter(scope string, l Limiter) *TracedLimiter
+```
+
+TraceLimiter wraps l. l must be non\-nil.
+
+<a name="TracedLimiter.Acquire"></a>
+### func \(\*TracedLimiter\) Acquire
+
+```go
+func (t *TracedLimiter) Acquire(ctx context.Context, engine, rawURL string) (func(), error)
+```
+
+Acquire implements Limiter.
+
+<a name="TracedLimiter.Penalize"></a>
+### func \(\*TracedLimiter\) Penalize
+
+```go
+func (t *TracedLimiter) Penalize(rawURL string, d time.Duration)
+```
+
+Penalize forwards an upstream's Retry\-After hold to the wrapped limiter.
 
 <a name="WaitBudgetError"></a>
 ## type WaitBudgetError
