@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -27,6 +28,7 @@ import (
 	"github.com/kinorai/omnifeed/internal/engine/github"
 	"github.com/kinorai/omnifeed/internal/engine/hackernews"
 	"github.com/kinorai/omnifeed/internal/engine/reddit"
+	"github.com/kinorai/omnifeed/internal/engine/reddit/redisstate"
 	"github.com/kinorai/omnifeed/internal/engine/twitter"
 	"github.com/kinorai/omnifeed/internal/fetchcache"
 	"github.com/kinorai/omnifeed/internal/httpx"
@@ -144,22 +146,79 @@ func run(cfg config.Config, logger *slog.Logger) error {
 		MaxTopLevel: cfg.RedditMaxTopLevel,
 	}
 
-	// The Reddit engine fetches through a real browser because Reddit's edge
-	// blocks non-browser HTTP clients — see reddit.Fetcher.
+	// The Reddit engine tries a chain of methods: a credential over plain HTTP
+	// first, the browser last — see reddit.Fetcher and docs/adr/0001.
 	crawl4aiBrowser := browsercrawl4ai.New(httpClient, cfg.Crawl4AIURL, cfg.Crawl4AIToken)
 	// Reddit's 429 never reaches the retry client (the fetch runs inside the
 	// browser, and crawl4ai answers 200), so the engine reports Reddit's own
 	// back-off and it is fed to the crawl limiter here, through the same hook
 	// and cap as any other upstream's Retry-After.
 	redditPenalty := retryAfterHook(limiter, metrics)
+	redditFetcher := reddit.NewFetcher(reddit.FetcherConfig{
+		Browser:       crawl4aiBrowser,
+		ClientID:      cfg.RedditClientID,
+		SessionCookie: cfg.RedditSession,
+		UserAgent:     "omnifeed/" + version.Version,
+		HTTP: &http.Client{
+			Timeout:   time.Minute,
+			Transport: transport,
+			// Share links resolve from the Location header, not by following.
+			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+		},
+		Methods:  cfg.RedditMethods,
+		Cooldown: cfg.RedditMethodCooldown,
+		OnOutcome: func(method, outcome string) {
+			metrics.RedditMethodCalls.WithLabelValues(method, outcome).Inc()
+		},
+		OnState: func(method string, up bool) {
+			v := 0.0
+			if up {
+				v = 1
+			}
+			metrics.RedditMethodUp.WithLabelValues(method).Set(v)
+			if !up {
+				logger.Warn("reddit: method failing, skipped for the cooldown", "method", method, "cooldown", cfg.RedditMethodCooldown)
+			} else {
+				logger.Info("reddit: method working again", "method", method)
+			}
+		},
+		Quota: traceLimiter(tracing, "reddit", redditQuota(cfg, rdb, metrics, logger)),
+		Penalize: func(rawURL string, d time.Duration) {
+			redditPenalty("reddit", rawURL, d)
+		},
+		Shared: redditShared(rdb, cfg.RedisKeyPrefix),
+		// Same metrics and log lines as the rate limiters' Redis backend,
+		// under their own op and scope labels.
+		OnSharedError: func(op string, err error) {
+			metrics.ObserveRatelimitBackendError("reddit_method_" + op)
+			logger.Warn("reddit method state backend operation failed", "op", op, "err", err)
+		},
+		OnSharedDown: func(down bool) {
+			metrics.SetRatelimitDegraded("reddit_methods", down)
+			if down {
+				logger.Warn("reddit method state degraded to per-pod (redis unreachable)")
+				return
+			}
+			logger.Info("reddit method state shared again (redis reachable)")
+		},
+	})
+	if rdb != nil {
+		metrics.SetRatelimitDegraded("reddit_methods", false)
+	}
+	for _, m := range redditFetcher.Methods() {
+		metrics.RedditMethodUp.WithLabelValues(m).Set(1)
+	}
+	logger.Info("reddit: method chain", "methods", strings.Join(redditFetcher.Methods(), ","), "cooldown", cfg.RedditMethodCooldown)
+	if cfg.RedditSession != "" {
+		if exp, ok := reddit.SessionExpiry(cfg.RedditSession); ok {
+			metrics.RedditSessionExpiry.Set(float64(exp.Unix()))
+			if left := time.Until(exp); left < 14*24*time.Hour {
+				logger.Warn("reddit: session cookie expires soon, log in again and refresh OMNIFEED_REDDIT_SESSION", "expires", exp.Format(time.DateOnly), "days_left", int(left.Hours()/24))
+			}
+		}
+	}
 	redditEngine := reddit.New(reddit.Config{
-		Fetcher: reddit.NewFetcher(reddit.FetcherConfig{
-			Browser: crawl4aiBrowser,
-			Quota:   traceLimiter(tracing, "reddit", redditQuota(cfg, rdb, metrics, logger)),
-			Penalize: func(rawURL string, d time.Duration) {
-				redditPenalty("reddit", rawURL, d)
-			},
-		}),
+		Fetcher:     redditFetcher,
 		Limiter:     limiter,
 		Timeout:     cfg.RedditTimeout,
 		DefaultOpts: redditDefaults,
@@ -596,6 +655,16 @@ func retryAfterHook(p pacer, metrics *observability.Metrics) func(upstream, rawU
 //
 // The returned value is a nil interface, never a typed nil pointer, when off:
 // the fetcher checks Quota == nil.
+// redditShared shares the Reddit method chain's holds between replicas when
+// Redis is configured. It returns a nil interface otherwise, so the chain
+// keeps its holds in memory.
+func redditShared(rdb redis.UniversalClient, prefix string) reddit.SharedState {
+	if rdb == nil {
+		return nil
+	}
+	return redisstate.New(rdb, prefix)
+}
+
 func redditQuota(cfg config.Config, rdb redis.UniversalClient, metrics *observability.Metrics, logger *slog.Logger) httpx.Limiter {
 	if cfg.RedditQuota <= 0 {
 		return nil

@@ -60,9 +60,10 @@ func TestUnwrapEnvelope_RateLimitHeaders(t *testing.T) {
 	}
 }
 
-// On a 429 the fetcher hands Reddit's Retry-After to Penalize, keyed on the
-// host the engine's limiter paces (www.reddit.com): the next crawl is then
-// refused by the limiter up front instead of walking into the same wall.
+// On a 429 the method that got it is held for Reddit's Retry-After (or the
+// chain cooldown, when longer). With no other method configured, the next
+// crawl is refused up front instead of walking into the same wall. The shared
+// crawl limiter is not penalized: in a chain it would stall every method.
 func TestFetch_RateLimitPenalizesDomain(t *testing.T) {
 	limiter := httpx.NewDomainLimiter(2, 0)
 	var penalized []string
@@ -83,8 +84,8 @@ func TestFetch_RateLimitPenalizesDomain(t *testing.T) {
 	if !errors.As(err, &fe) || fe.Kind != domain.KindHTTP429 || fe.RetryAfter != 120*time.Second {
 		t.Fatalf("first crawl err = %v, want http_429 with RetryAfter 120s", err)
 	}
-	if len(penalized) != 1 || penalized[0] != redditOrigin+"/" {
-		t.Fatalf("Penalize calls = %v, want one for %s/", penalized, redditOrigin)
+	if len(penalized) != 0 {
+		t.Fatalf("Penalize calls = %v, want none: the hold is on the method", penalized)
 	}
 
 	// The next crawl, with a budget shorter than the hold, is refused before it
