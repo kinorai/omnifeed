@@ -236,8 +236,12 @@ func (c *Chain) runOn(ctx context.Context, directOnly bool, fn func(*Session) er
 	}
 	if len(candidates) == 0 {
 		// Nothing is sent: Reddit is out of reach until a hold ends. Counted
-		// apart from the methods, so it can be told from our own pacing.
-		f.outcome(MethodChain, "all_held")
+		// apart from the methods, so it can be told from our own pacing. A
+		// direct-only call (FetchMoreChildren) leaves the browser out, so its
+		// empty candidate list says nothing about Reddit being out of reach.
+		if !directOnly {
+			f.outcome(MethodChain, "all_held")
+		}
 		return &domain.FetchError{Kind: domain.KindQuotaExhausted, RetryAfter: soonest,
 			Err: fmt.Errorf("every reddit method is cooling down after failures; retry in %ds", int(soonest.Seconds())+1)}
 	}

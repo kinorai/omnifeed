@@ -91,6 +91,8 @@ func TestBrowserPageWithoutPost(t *testing.T) {
 		{"banned community", missingEnv(200, "This community has been banned"), domain.KindHTTP403, "forbidden", true, false},
 		{"network security wall", missingEnv(403, "You've been blocked by network security."), domain.KindCaptcha, "captcha", false, true},
 		{"unknown page", missingEnv(200, "Welcome to the new Reddit!"), domain.KindLayout, "layout", false, false},
+		{"rate-limit page", missingEnv(429, "Too many requests"), domain.KindHTTP429, "http_429", false, true},
+		{"server error page", missingEnv(503, "Our CDN was unable to reach our servers"), domain.KindUpstreamError, "upstream_error", false, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -209,6 +211,24 @@ func TestChainCountsAllHeld(t *testing.T) {
 	}
 	if got := fmt.Sprint(fx.outcomes); got != "[browser=captcha chain=all_held]" {
 		t.Errorf("outcomes = %s", got)
+	}
+}
+
+// A direct-only call (more replies) that finds no direct method leaves the
+// browser out by design: it is not "every method held".
+func TestChainDirectOnlyDoesNotCountAllHeld(t *testing.T) {
+	fx := &browserFixture{}
+	f := newBrowserFetcher(fx, pageSession(func(string) string { return missingEnv(200, "unused") }))
+	c, err := f.OpenChain(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = c.Close(context.Background()) })
+	if _, err := c.FetchMoreChildren(context.Background(), "t3_abc123", []string{"x"}, "top"); err == nil {
+		t.Fatal("want an error with no direct method")
+	}
+	if len(fx.outcomes) != 0 {
+		t.Errorf("outcomes = %v, want none", fx.outcomes)
 	}
 }
 
