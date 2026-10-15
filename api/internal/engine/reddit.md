@@ -11,11 +11,19 @@ Package reddit implements the Reddit\-specific engine: fetches threads via the p
 ## Index
 
 - [Constants](<#constants>)
+- [Variables](<#variables>)
 - [func IsRedditURL\(rawURL string\) bool](<#IsRedditURL>)
 - [func IsShareURL\(rawURL string\) bool](<#IsShareURL>)
 - [func MergeExpanded\(thread \*Thread, newC \[\]Comment, newG \[\]Gap, requestedIDs \[\]string, usedGapIdx \[\]int\)](<#MergeExpanded>)
 - [func NormalizePermalink\(rawURL string\) \(string, error\)](<#NormalizePermalink>)
 - [func ParseMoreChildren\(raw \[\]byte, opts Options\) \(\[\]Comment, \[\]Gap, error\)](<#ParseMoreChildren>)
+- [func SessionExpiry\(cookie string\) \(time.Time, bool\)](<#SessionExpiry>)
+- [type Chain](<#Chain>)
+  - [func \(c \*Chain\) Close\(ctx context.Context\) error](<#Chain.Close>)
+  - [func \(c \*Chain\) FetchListing\(ctx context.Context, sub, sort string, limit int, t string\) \(\[\]byte, error\)](<#Chain.FetchListing>)
+  - [func \(c \*Chain\) FetchMoreChildren\(ctx context.Context, linkID string, childIDs \[\]string, sort string\) \(\[\]byte, error\)](<#Chain.FetchMoreChildren>)
+  - [func \(c \*Chain\) FetchThread\(ctx context.Context, permalink string, limit, depth int, sort string\) \(\[\]byte, error\)](<#Chain.FetchThread>)
+  - [func \(c \*Chain\) ResolveShareURL\(ctx context.Context, shareURL string\) \(string, error\)](<#Chain.ResolveShareURL>)
 - [type Comment](<#Comment>)
 - [type Config](<#Config>)
 - [type Engine](<#Engine>)
@@ -26,7 +34,8 @@ Package reddit implements the Reddit\-specific engine: fetches threads via the p
   - [func \(\*Engine\) SameHostAsPage\(\) bool](<#Engine.SameHostAsPage>)
 - [type Fetcher](<#Fetcher>)
   - [func NewFetcher\(cfg FetcherConfig\) \*Fetcher](<#NewFetcher>)
-  - [func \(f \*Fetcher\) Open\(ctx context.Context\) \(\*Session, error\)](<#Fetcher.Open>)
+  - [func \(f \*Fetcher\) Methods\(\) \[\]string](<#Fetcher.Methods>)
+  - [func \(f \*Fetcher\) OpenChain\(context.Context\) \(\*Chain, error\)](<#Fetcher.OpenChain>)
 - [type FetcherConfig](<#FetcherConfig>)
 - [type Gap](<#Gap>)
 - [type ListingRequest](<#ListingRequest>)
@@ -40,6 +49,7 @@ Package reddit implements the Reddit\-specific engine: fetches threads via the p
   - [func \(s \*Session\) FetchMoreChildren\(ctx context.Context, linkID string, childIDs \[\]string, sort string\) \(\[\]byte, error\)](<#Session.FetchMoreChildren>)
   - [func \(s \*Session\) FetchThread\(ctx context.Context, permalink string, limit, depth int, sort string\) \(\[\]byte, error\)](<#Session.FetchThread>)
   - [func \(s \*Session\) ResolveShareURL\(ctx context.Context, shareURL string\) \(string, error\)](<#Session.ResolveShareURL>)
+- [type SharedState](<#SharedState>)
 - [type SubredditListing](<#SubredditListing>)
 - [type Thread](<#Thread>)
   - [func ParseThread\(raw \[\]byte, opts Options\) \(Thread, error\)](<#ParseThread>)
@@ -47,10 +57,38 @@ Package reddit implements the Reddit\-specific engine: fetches threads via the p
 
 ## Constants
 
+<a name="MethodClientID"></a>The ways the fetcher can read Reddit, in the order the chain tries them by default. Reddit closed logged\-out .json in 2026, so each needs something:
+
+- MethodClientID: an OAuth client ID \(installed\-client grant\). No account, 1000 requests per window, but Reddit closes the public API in March 2027.
+- MethodSession: a logged\-in reddit\_session cookie. 100 requests per window, and a human must log in again about every 6 months.
+- MethodBrowser: the rendered page through crawl4ai. Slow, and logged out unless crawl4ai itself holds a session.
+
+```go
+const (
+    MethodClientID = "client_id"
+    MethodSession  = "session"
+    MethodBrowser  = "browser"
+)
+```
+
+<a name="DefaultMethodCooldown"></a>DefaultMethodCooldown is how long a method that failed in a way another method can get around \(blocked, rate\-limited, refused credential\) is skipped before the chain tries it again.
+
+```go
+const DefaultMethodCooldown = 10 * time.Minute
+```
+
 <a name="MaxExpansionRounds"></a>MaxExpansionRounds is the hard cap on /api/morechildren iterations, applied even when expand=full is requested. Each round fetches up to 100 child IDs, so 40 rounds ≈ 4,000 comments — covers any realistic thread while bounding total latency and rate\-limit exposure.
 
 ```go
 const MaxExpansionRounds = 40
+```
+
+## Variables
+
+<a name="DefaultMethods"></a>DefaultMethods is the chain order when none is configured.
+
+```go
+var DefaultMethods = []string{MethodClientID, MethodSession, MethodBrowser}
 ```
 
 <a name="IsRedditURL"></a>
@@ -97,6 +135,71 @@ func ParseMoreChildren(raw []byte, opts Options) ([]Comment, []Gap, error)
 ```
 
 ParseMoreChildren parses the /api/morechildren response: \{ json: \{ data: \{ things: \[...\] \} \} \}
+
+<a name="SessionExpiry"></a>
+## func SessionExpiry
+
+```go
+func SessionExpiry(cookie string) (time.Time, bool)
+```
+
+SessionExpiry reads the expiry from a reddit\_session cookie. The cookie is a signed token whose payload carries \`exp\`, and Reddit does not renew it on use, so this is the date a human must log in again by. The signature is not checked: the value only feeds a warning and a metric.
+
+<a name="Chain"></a>
+## type Chain
+
+Chain is one crawl's view of every configured method. Each call goes to the first available method; on a failover error the method is skipped for its cooldown and the call moves to the next one. Not safe for concurrent use.
+
+```go
+type Chain struct {
+    // contains filtered or unexported fields
+}
+```
+
+<a name="Chain.Close"></a>
+### func \(\*Chain\) Close
+
+```go
+func (c *Chain) Close(ctx context.Context) error
+```
+
+Close releases every session the chain opened.
+
+<a name="Chain.FetchListing"></a>
+### func \(\*Chain\) FetchListing
+
+```go
+func (c *Chain) FetchListing(ctx context.Context, sub, sort string, limit int, t string) ([]byte, error)
+```
+
+FetchListing is Session.FetchListing over the chain.
+
+<a name="Chain.FetchMoreChildren"></a>
+### func \(\*Chain\) FetchMoreChildren
+
+```go
+func (c *Chain) FetchMoreChildren(ctx context.Context, linkID string, childIDs []string, sort string) ([]byte, error)
+```
+
+FetchMoreChildren is Session.FetchMoreChildren over the direct methods only. The browser would POST /api/morechildren logged out, which Reddit refuses with 403, and that 403 would hold the browser method, the one path left that still reads threads. Only a direct thread has child IDs to expand \(the HTML path reports its gaps without them\), so a failure here costs the expansion only: the engine keeps the partial thread.
+
+<a name="Chain.FetchThread"></a>
+### func \(\*Chain\) FetchThread
+
+```go
+func (c *Chain) FetchThread(ctx context.Context, permalink string, limit, depth int, sort string) ([]byte, error)
+```
+
+FetchThread is Session.FetchThread over the chain.
+
+<a name="Chain.ResolveShareURL"></a>
+### func \(\*Chain\) ResolveShareURL
+
+```go
+func (c *Chain) ResolveShareURL(ctx context.Context, shareURL string) (string, error)
+```
+
+ResolveShareURL is Session.ResolveShareURL over the chain.
 
 <a name="Comment"></a>
 ## type Comment
@@ -190,9 +293,12 @@ SameHostAsPage reports true: the engine's JSON comes from www.reddit.com, the pa
 <a name="Fetcher"></a>
 ## type Fetcher
 
-Fetcher retrieves Reddit data through a real headless browser. Reddit's edge hard\-blocks non\-browser HTTP clients \(Go's net/http gets a 403 "network security" wall keyed on the TLS/JA3 fingerprint\), so we never hit Reddit directly. Instead a crawl opens a browser Session, navigates to a reddit.com page \(which clears the bot challenge\), and runs a same\-origin fetch\(\) of the target JSON endpoint from inside that page — the browser context passes the wall and the in\-page fetch inherits it, so the JSON comes back exactly as a logged\-out browser would see it \(no auth, no cookies\).
+Fetcher retrieves Reddit data. Reddit closed logged\-out .json in 2026, so every method needs something the logged\-out web lacks:
 
-The Session is backed by a browser.Browser \(crawl4ai's /execute\_js\).
+- client\_id and session call Reddit's JSON endpoints over plain HTTP with a credential \(see directClient\). Logged in, Go's net/http passes.
+- browser reads the rendered thread page through a browser.Browser \(crawl4ai's /execute\_js\), the only logged\-out path left.
+
+OpenChain tries them in the configured order \(see Chain\). Open uses one backend only: the first credential, else the browser.
 
 ```go
 type Fetcher struct {
@@ -209,14 +315,23 @@ func NewFetcher(cfg FetcherConfig) *Fetcher
 
 NewFetcher constructs a Fetcher from cfg.
 
-<a name="Fetcher.Open"></a>
-### func \(\*Fetcher\) Open
+<a name="Fetcher.Methods"></a>
+### func \(\*Fetcher\) Methods
 
 ```go
-func (f *Fetcher) Open(ctx context.Context) (*Session, error)
+func (f *Fetcher) Methods() []string
 ```
 
-Open starts a crawl session. The caller owns it and must Close it.
+Methods returns the configured chain methods, in order.
+
+<a name="Fetcher.OpenChain"></a>
+### func \(\*Fetcher\) OpenChain
+
+```go
+func (f *Fetcher) OpenChain(context.Context) (*Chain, error)
+```
+
+OpenChain starts a crawl over the configured methods. Each method's session opens on first use. The caller owns the chain and must Close it.
 
 <a name="FetcherConfig"></a>
 ## type FetcherConfig
@@ -234,11 +349,37 @@ type FetcherConfig struct {
     // (OMNIFEED_REDDIT_QUOTA=0, the default).
     Quota httpx.Limiter
 
-    // Penalize, when non-nil, is told how long Reddit asked us to stay away
-    // (Retry-After / X-Ratelimit-Reset on a 429, or when X-Ratelimit-Remaining
-    // hits 0), keyed on the Reddit origin. main.go points it at the per-domain
-    // limiter, so the next crawl waits out the block instead of extending it.
-    Penalize func(rawURL string, d time.Duration)
+    // ClientID and SessionCookie, when set, enable the client_id and session
+    // methods: Reddit still serves its .json endpoints to authenticated
+    // clients, plain HTTP ones included (see directClient). ClientID is an
+    // OAuth app's client ID, used with the installed-client grant. HTTP is
+    // the client for both; it must not follow redirects (share links resolve
+    // from the Location header).
+    ClientID      string
+    SessionCookie string
+    UserAgent     string
+    HTTP          *http.Client
+
+    // Methods is the chain order (MethodClientID, MethodSession,
+    // MethodBrowser); a method without its credential is left out. Empty
+    // means DefaultMethods. Cooldown is how long a method that failed in a way
+    // the next one can get around is skipped; 0 means DefaultMethodCooldown.
+    Methods  []string
+    Cooldown time.Duration
+    // OnOutcome is told each call's result per method ("ok", "error", or the
+    // failure kind that moved the call on); OnState is told when a method
+    // starts or stops being skipped. Both are for metrics and can be nil.
+    OnOutcome func(method, outcome string)
+    OnState   func(method string, up bool)
+
+    // Shared, when non-nil, shares the methods' holds between replicas
+    // (main.go sets it when OMNIFEED_REDIS_URL is set). It fails open: on an
+    // error the chain uses only this pod's memory for 30s. OnSharedError is
+    // told each failed operation, and OnSharedDown each change between shared
+    // and per-pod state. Both can be nil.
+    Shared        SharedState
+    OnSharedError func(op string, err error)
+    OnSharedDown  func(down bool)
 }
 ```
 
@@ -352,7 +493,7 @@ ParseSubredditListing decodes a subreddit listing \(.json\) — a single Listing
 <a name="Session"></a>
 ## type Session
 
-Session is one crawl's browser session. All fetches in a crawl share one Session so state like the recorded thread page carries across them. Not safe for concurrent use.
+Session is one chain method's connection for one crawl: a browser session, or a direct client. Not safe for concurrent use.
 
 ```go
 type Session struct {
@@ -376,7 +517,7 @@ Close releases the browser session.
 func (s *Session) FetchListing(ctx context.Context, sub, sort string, limit int, t string) ([]byte, error)
 ```
 
-FetchListing retrieves a subreddit listing \(hot/new/top/…\) via its .json endpoint, fetched same\-origin from inside a real browser on reddit.com — the same bot\-wall evasion FetchThread uses. limit caps the number of posts, and t is Reddit's time window \(hour|day|week|month|year|all\), appended only when set. Whether a window is meaningful for the sort is ParseListingURL's call — it only sets t for top/controversial — so this appends whatever it is handed.
+FetchListing retrieves a subreddit listing \(hot/new/top/…\) from its rendered HTML page, read from inside a real browser on reddit.com — the same path FetchThread uses. limit caps the number of posts, and t is Reddit's time window \(hour|day|week|month|year|all\), appended only when set. Whether a window is meaningful for the sort is ParseListingURL's call — it only sets t for top/controversial — so this appends whatever it is handed.
 
 <a name="Session.FetchMoreChildren"></a>
 ### func \(\*Session\) FetchMoreChildren
@@ -385,7 +526,7 @@ FetchListing retrieves a subreddit listing \(hot/new/top/…\) via its .json end
 func (s *Session) FetchMoreChildren(ctx context.Context, linkID string, childIDs []string, sort string) ([]byte, error)
 ```
 
-FetchMoreChildren expands collapsed reply branches via /api/morechildren. linkID must include the t3\_ prefix; childIDs are bare IDs \(no prefix\). It re\-navigates the thread page FetchThread recorded and runs the same\-origin POST from it.
+FetchMoreChildren expands collapsed reply branches via /api/morechildren. linkID must include the t3\_ prefix; childIDs are bare IDs \(no prefix\). Only a direct method can: Reddit refuses the logged\-out call with 403, so the browser session has no path to it \(the chain never asks it\).
 
 <a name="Session.FetchThread"></a>
 ### func \(\*Session\) FetchThread
@@ -394,7 +535,7 @@ FetchMoreChildren expands collapsed reply branches via /api/morechildren. linkID
 func (s *Session) FetchThread(ctx context.Context, permalink string, limit, depth int, sort string) ([]byte, error)
 ```
 
-FetchThread retrieves a thread via the .json endpoint, fetched from inside a real browser on the reddit.com origin. limit/depth/sort map directly onto Reddit's comments\-endpoint query params \(limit = max comments, depth = max subtree nesting\): https://www.reddit.com/dev/api/#GET_comments_{article}
+FetchThread retrieves a thread from its rendered HTML page, read from inside a real browser on the reddit.com origin \(see html.go for why not .json\). It returns the \[post, comments\] listing pair the .json endpoint used to, so ParseThread reads it unchanged. limit is the comment count at which the in\-page expansion stops. depth is not applied: the page renders its own nesting.
 
 <a name="Session.ResolveShareURL"></a>
 ### func \(\*Session\) ResolveShareURL
@@ -404,6 +545,23 @@ func (s *Session) ResolveShareURL(ctx context.Context, shareURL string) (string,
 ```
 
 ResolveShareURL resolves a Reddit share link \(/r/\{sub\}/s/\{code\}\) to its canonical /comments/ permalink: the browser follows the 301 redirect and we read the resulting location. Returns the full canonical URL \(tracking query params and all — NormalizePermalink only looks at the path\).
+
+<a name="SharedState"></a>
+## type SharedState
+
+SharedState shares the methods' holds between replicas, so a back\-off or a refused credential seen by one pod stops every pod. Reddit's budget belongs to the credential, not to the pod. Implementations: redisstate.Store.
+
+```go
+type SharedState interface {
+    // Holds returns the time left on each held method. A method that is not
+    // held is absent from the map.
+    Holds(ctx context.Context, methods []string) (map[string]time.Duration, error)
+    // Hold skips method for at least d. It never shortens a longer hold.
+    Hold(ctx context.Context, method string, d time.Duration) error
+    // Clear ends the hold on method.
+    Clear(ctx context.Context, method string) error
+}
+```
 
 <a name="SubredditListing"></a>
 ## type SubredditListing

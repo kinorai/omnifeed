@@ -13,6 +13,33 @@ ref, nobody can recover the code.
 
 ---
 
+## Fetch Reddit's `.json` from inside a logged-out browser
+
+**Status.** Shipped as the only Reddit path. Removed 2026-10-15.
+**Code.** `git show v0.36.0:internal/engine/reddit/fetcher.go` (`getJS`, `postJS`,
+`Fetcher.Open`, and the browser branch of `Session.FetchMoreChildren`).
+
+### The idea
+
+The engine opened a reddit.com page in crawl4ai's browser, then ran a same-origin
+`fetch()` of the thread's `.json`, and a `POST` to `/api/morechildren` for each
+expansion round. The page cleared Reddit's bot wall, and the in-page fetch inherited
+that state. Reddit's `429` back-off held `www.reddit.com` on the crawl limiter.
+
+### Why it was removed
+
+Reddit closed logged-out `.json`. From 2026-10-15, every logged-out `.json` request
+got `403`, from a browser too. Expansion now runs on the direct methods only. A
+logged-out expansion would get `403` and hold the `browser` method, which is the one
+logged-out path that still reads threads. The host hold is removed too: it would stall
+a working credential. [ADR 0001](adr/0001-reddit-access.md) records the measurements.
+
+### What would justify bringing it back
+
+Reddit serving `.json` and `/api/morechildren` to logged-out browsers again. Before
+you bring it back, run one logged-out `.json` fetch and one `morechildren` POST from
+a browser and get `200` for both.
+
 ## Gate `/readyz` on crawl4ai and SearXNG
 
 **Status.** Shipped with the health endpoints; removed 2026-10-13.

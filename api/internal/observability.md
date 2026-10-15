@@ -561,6 +561,9 @@ type Metrics struct {
     SearxngQueries      *prometheus.CounterVec   // scoped
     SearxngEngineZero   *prometheus.CounterVec   // engine
     RedditRounds        prometheus.Histogram
+    RedditMethodCalls   *prometheus.CounterVec // method, outcome
+    RedditMethodUp      *prometheus.GaugeVec   // method
+    RedditSessionExpiry prometheus.Gauge
     SearchesTotal       *prometheus.CounterVec   // searcher, status, reason, scoped
     SearchSecs          *prometheus.HistogramVec // searcher, status
     SearchEnginePos     *prometheus.HistogramVec // engine
