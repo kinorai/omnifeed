@@ -238,6 +238,23 @@ type Config struct {
     RedditQuota       int
     RedditQuotaWindow time.Duration
 
+    // RedditSession is a logged-in reddit_session cookie value. When set, the
+    // Reddit engine calls Reddit's JSON endpoints directly with it instead of
+    // reading pages through the browser. Secret: never log it.
+    RedditSession string
+
+    // RedditClientID is a Reddit OAuth app's client ID, used with the
+    // installed-client grant (no secret, no account). When set, it wins over
+    // RedditSession: it has ten times the request budget.
+    RedditClientID string
+
+    // RedditMethods is the order the Reddit chain tries its methods in
+    // (client_id, session, browser); methods without a credential are left
+    // out. RedditMethodCooldown is how long a method that failed in a way the
+    // next one can get around is skipped.
+    RedditMethods        []string
+    RedditMethodCooldown time.Duration
+
     // Distributed rate limiting (optional). RedisURL is the single opt-in
     // switch: unset keeps pacing entirely in process, exactly as before. Set,
     // the limiters share their state through Redis so every replica counts
