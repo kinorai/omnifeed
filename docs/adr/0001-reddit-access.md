@@ -73,6 +73,10 @@ Failure handling:
 - **All methods down:** when every method is cooling down, the call fails at once with
   `quota_exhausted` and the shortest wait. It does not wait, and it does not retry a
   method that asked for back-off.
+- **Expansion:** `/api/morechildren` runs on the direct methods only. Logged out,
+  Reddit refuses it with `403`, and that `403` would hold `browser`, the one
+  logged-out path that still reads threads. If the expansion fails, the engine keeps
+  the partial thread.
 - **Transient 403:** a direct method retries one `403` after 2 seconds. In a 14-thread
   run, one `403` came between successes, and the same URL answered `200` seconds later.
 

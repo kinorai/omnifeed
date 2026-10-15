@@ -62,11 +62,17 @@ func (m *method) hold(now time.Time, d time.Duration) {
 	}
 }
 
-// clear ends this pod's skip.
-func (m *method) clear() {
+// clear ends this pod's skip, unless a hold placed after start (by a
+// concurrent call that failed while this one ran) still runs. It reports
+// whether the skip ended.
+func (m *method) clear(start time.Time) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.downUntil.After(start) {
+		return false
+	}
 	m.downUntil = time.Time{}
+	return true
 }
 
 // report records the method's state and reports whether it changed, so the
@@ -119,9 +125,8 @@ func failover(err error) bool {
 // first available method; on a failover error the method is skipped for its
 // cooldown and the call moves to the next one. Not safe for concurrent use.
 type Chain struct {
-	f          *Fetcher
-	legs       map[string]*Session
-	threadPage string
+	f    *Fetcher
+	legs map[string]*Session
 }
 
 // OpenChain starts a crawl over the configured methods. Each method's
@@ -156,12 +161,20 @@ func (c *Chain) leg(ctx context.Context, m *method) (*Session, error) {
 // shortest wait: waiting would hold the caller for minutes, and retrying a
 // method that just asked for back-off extends its block.
 func (c *Chain) run(ctx context.Context, fn func(*Session) error) error {
+	return c.runOn(ctx, false, fn)
+}
+
+// runOn is run, limited to the direct methods when directOnly is set.
+func (c *Chain) runOn(ctx context.Context, directOnly bool, fn func(*Session) error) error {
 	f := c.f
 	now := f.clock()
 	shared := f.sharedHolds(ctx)
 	candidates := make([]*method, 0, len(f.methods))
 	var soonest time.Duration
 	for _, m := range f.methods {
+		if directOnly && m.name == MethodBrowser {
+			continue
+		}
 		until := m.until()
 		if left, ok := shared[m.name]; ok && now.Add(left).After(until) {
 			until = now.Add(left)
@@ -191,7 +204,7 @@ func (c *Chain) run(ctx context.Context, fn func(*Session) error) error {
 				// skipped for that hold (set by its penalize hook).
 				s.held = false
 			} else {
-				f.markUp(ctx, m)
+				f.markUp(ctx, m, now)
 			}
 			f.outcome(m.name, "ok")
 			return nil
@@ -217,7 +230,6 @@ func (c *Chain) run(ctx context.Context, fn func(*Session) error) error {
 
 // FetchThread is Session.FetchThread over the chain.
 func (c *Chain) FetchThread(ctx context.Context, permalink string, limit, depth int, sort string) ([]byte, error) {
-	c.threadPage = threadPageURL(permalink, sort)
 	var out []byte
 	err := c.run(ctx, func(s *Session) (err error) {
 		out, err = s.FetchThread(ctx, permalink, limit, depth, sort)
@@ -236,14 +248,15 @@ func (c *Chain) FetchListing(ctx context.Context, sub, sort string, limit int, t
 	return out, err
 }
 
-// FetchMoreChildren is Session.FetchMoreChildren over the chain. A browser
-// session that did not fetch the thread itself gets the thread page here.
+// FetchMoreChildren is Session.FetchMoreChildren over the direct methods
+// only. The browser would POST /api/morechildren logged out, which Reddit
+// refuses with 403, and that 403 would hold the browser method, the one path
+// left that still reads threads. Only a direct thread has child IDs to expand
+// (the HTML path reports its gaps without them), so a failure here costs the
+// expansion only: the engine keeps the partial thread.
 func (c *Chain) FetchMoreChildren(ctx context.Context, linkID string, childIDs []string, sort string) ([]byte, error) {
 	var out []byte
-	err := c.run(ctx, func(s *Session) (err error) {
-		if s.direct == nil && s.threadPage == "" {
-			s.threadPage = c.threadPage
-		}
+	err := c.runOn(ctx, true, func(s *Session) (err error) {
 		out, err = s.FetchMoreChildren(ctx, linkID, childIDs, sort)
 		return err
 	})

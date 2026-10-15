@@ -25,21 +25,27 @@ func reply(r *http.Request, status int, body string, hdr map[string]string) *htt
 	return &http.Response{StatusCode: status, Header: h, Body: io.NopCloser(strings.NewReader(body)), Request: r}
 }
 
+// cookieFetcher is a fetcher whose only method is the session cookie, sent to
+// a fake Reddit.
+func cookieFetcher(rt roundTrip) *Fetcher {
+	return NewFetcher(FetcherConfig{SessionCookie: "sess-123", UserAgent: "omnifeed/test",
+		HTTP: &http.Client{Transport: rt}})
+}
+
 func directSession(t *testing.T, rt roundTrip, penalize func(string, time.Duration)) *Session {
 	t.Helper()
 	f := NewFetcher(FetcherConfig{
 		SessionCookie: "sess-123",
 		UserAgent:     "omnifeed/test",
-		Penalize:      penalize,
 		HTTP: &http.Client{Transport: rt,
 			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
 	})
-	if !f.Direct() {
-		t.Fatal("a session cookie must switch the fetcher to direct mode")
+	if got := fmt.Sprint(f.Methods()); got != "[session]" {
+		t.Fatalf("methods = %s, a session cookie must enable the session method", got)
 	}
-	s, err := f.Open(context.Background())
-	if err != nil {
-		t.Fatal(err)
+	s := openFirst(t, f)
+	if penalize != nil {
+		s.penalize = penalize
 	}
 	return s
 }
@@ -167,7 +173,7 @@ func TestDirectTokenMode(t *testing.T) {
 	})
 	f := NewFetcher(FetcherConfig{ClientID: "app-id", SessionCookie: "ignored", UserAgent: "omnifeed/test",
 		HTTP: &http.Client{Transport: rt}})
-	s, _ := f.Open(context.Background())
+	s := openFirst(t, f)
 	for range 2 {
 		if _, err := s.FetchThread(context.Background(), "/r/news/comments/abc123/t/", 500, 20, "top"); err != nil {
 			t.Fatal(err)
@@ -187,5 +193,35 @@ func TestSessionExpiry(t *testing.T) {
 	}
 	if _, ok := SessionExpiry("not-a-token"); ok {
 		t.Error("a non-token value must not parse")
+	}
+}
+
+// A share link refused without a redirect is a classified failure, so the
+// chain can move on to the next method.
+func TestDirectShareRefusedIsClassified(t *testing.T) {
+	s := directSession(t, func(r *http.Request) *http.Response {
+		return reply(r, 403, "<html>blocked</html>", nil)
+	}, nil)
+	_, err := s.ResolveShareURL(context.Background(), "https://www.reddit.com/r/news/s/AbC123")
+	if !failover(err) {
+		t.Fatalf("err = %v, want a failover error", err)
+	}
+}
+
+// A short or missing expires_in still gives a usable token life.
+func TestTokenLife(t *testing.T) {
+	for _, tc := range []struct {
+		expiresIn int
+		want      time.Duration
+	}{
+		{86400, 24*time.Hour - 5*time.Minute},
+		{300, 150 * time.Second},
+		{60, 30 * time.Second},
+		{0, 55 * time.Minute},
+		{-1, 55 * time.Minute},
+	} {
+		if got := tokenLife(tc.expiresIn); got != tc.want {
+			t.Errorf("tokenLife(%d) = %v, want %v", tc.expiresIn, got, tc.want)
+		}
 	}
 }

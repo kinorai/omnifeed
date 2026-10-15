@@ -125,14 +125,14 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, eo domain.EngineOptio
 	// "reddit.com" != "www.reddit.com".
 	release, lerr := e.limiter.Acquire(ctx, e.Name(), redditOrigin+"/")
 	if lerr != nil {
-		// Classified so a hold Reddit asked for (see FetcherConfig.Penalize)
-		// reaches the caller as quota_exhausted with its retry_after_s.
+		// Classified so a pacing refusal reaches the caller as
+		// quota_exhausted with its retry_after_s.
 		return domain.Document{}, httpx.ClassifyClientError(lerr, domain.KindError)
 	}
 	defer release()
 
-	// One browser session for the whole crawl (share resolve + thread fetch + all
-	// expansion rounds), so the live-page backend reuses its page across them.
+	// One chain for the whole crawl (share resolve + thread fetch + all
+	// expansion rounds), so each method opens its session once.
 	sess, err := e.fetcher.OpenChain(ctx)
 	if err != nil {
 		return domain.Document{}, fmt.Errorf("open reddit session: %w", err)
@@ -364,8 +364,8 @@ func encode[T any](v T, format string) ([]byte, error) {
 func (e *Engine) crawlListing(ctx context.Context, rawURL string, req ListingRequest, opts Options) (domain.Document, error) {
 	release, lerr := e.limiter.Acquire(ctx, e.Name(), redditOrigin+"/r/"+req.Sub+"/"+req.Sort)
 	if lerr != nil {
-		// Classified so a hold Reddit asked for (see FetcherConfig.Penalize)
-		// reaches the caller as quota_exhausted with its retry_after_s.
+		// Classified so a pacing refusal reaches the caller as
+		// quota_exhausted with its retry_after_s.
 		return domain.Document{}, httpx.ClassifyClientError(lerr, domain.KindError)
 	}
 	defer release()
