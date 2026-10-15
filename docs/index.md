@@ -24,3 +24,9 @@ Install and quick start are in the [README](https://github.com/kinorai/omnifeed#
 - [Ideas and parked work](ideas.md): features considered and not built, or built and
   removed, with the measurements, what would justify revisiting each, and the git ref
   that holds the code.
+
+## Decisions
+
+- [ADR 0001: Reading Reddit after the logged-out JSON shutdown](adr/0001-reddit-access.md):
+  why the Reddit engine uses a `client_id → session → browser` method chain, with every
+  option measured or rejected, and how to refresh the session cookie.

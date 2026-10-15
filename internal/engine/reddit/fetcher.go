@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -23,20 +24,37 @@ import (
 // www stays clear.
 const redditOrigin = "https://www.reddit.com"
 
-// Fetcher retrieves Reddit data through a real headless browser. Reddit's edge
-// hard-blocks non-browser HTTP clients (Go's net/http gets a 403 "network
-// security" wall keyed on the TLS/JA3 fingerprint), so we never hit Reddit
-// directly. Instead a crawl opens a browser Session, navigates to a reddit.com
-// page (which clears the bot challenge), and runs a same-origin fetch() of the
-// target JSON endpoint from inside that page — the browser context passes the
-// wall and the in-page fetch inherits it, so the JSON comes back exactly as a
-// logged-out browser would see it (no auth, no cookies).
+// Fetcher retrieves Reddit data. Reddit closed logged-out .json in 2026, so
+// every method needs something the logged-out web lacks:
+//   - client_id and session call Reddit's JSON endpoints over plain HTTP with
+//     a credential (see directClient). Logged in, Go's net/http passes.
+//   - browser reads the rendered thread page through a browser.Browser
+//     (crawl4ai's /execute_js), the only logged-out path left.
 //
-// The Session is backed by a browser.Browser (crawl4ai's /execute_js).
+// OpenChain tries them in the configured order (see Chain). Open uses one
+// backend only: the first credential, else the browser.
 type Fetcher struct {
 	browser  browser.Browser
+	direct   *directClient
 	quota    httpx.Limiter
 	penalize func(rawURL string, d time.Duration)
+
+	// The chain (see Chain): configured methods in order, how long a failed
+	// one is skipped, and the hooks that report outcomes and state changes.
+	methods   []*method
+	cooldown  time.Duration
+	onOutcome func(method, outcome string)
+	onState   func(method string, up bool)
+
+	// The holds shared with other replicas, when configured. After a failure
+	// the chain uses only its own memory until sharedDownUntil.
+	shared          SharedState
+	onSharedError   func(op string, err error)
+	onSharedDown    func(down bool)
+	sharedMu        sync.Mutex
+	sharedDownUntil time.Time
+
+	now func() time.Time // the clock, nil meaning time.Now (tests set it)
 }
 
 // FetcherConfig configures a Fetcher.
@@ -55,15 +73,231 @@ type FetcherConfig struct {
 	// hits 0), keyed on the Reddit origin. main.go points it at the per-domain
 	// limiter, so the next crawl waits out the block instead of extending it.
 	Penalize func(rawURL string, d time.Duration)
+
+	// ClientID or SessionCookie, when set, switch the fetcher to direct mode:
+	// Reddit still serves its .json endpoints to authenticated clients, plain
+	// HTTP ones included, so the fetcher calls them directly and never opens
+	// the browser (see directClient). ClientID, an OAuth app's client ID used
+	// with the installed-client grant, wins when both are set: it needs no
+	// account and has ten times the budget. HTTP is the client for direct
+	// mode; it must not follow redirects (share links resolve from the
+	// Location header).
+	ClientID      string
+	SessionCookie string
+	UserAgent     string
+	HTTP          *http.Client
+
+	// Methods is the chain order (MethodClientID, MethodSession,
+	// MethodBrowser); a method without its credential is left out. Empty
+	// means DefaultMethods. Cooldown is how long a method that failed in a way
+	// the next one can get around is skipped; 0 means DefaultMethodCooldown.
+	Methods  []string
+	Cooldown time.Duration
+	// OnOutcome is told each call's result per method ("ok", "error", or the
+	// failure kind that moved the call on); OnState is told when a method
+	// starts or stops being skipped. Both are for metrics and may be nil.
+	OnOutcome func(method, outcome string)
+	OnState   func(method string, up bool)
+
+	// Shared, when non-nil, shares the methods' holds between replicas
+	// (main.go sets it when OMNIFEED_REDIS_URL is set). It fails open: on an
+	// error the chain uses only this pod's memory for 30s. OnSharedError is
+	// told each failed operation, and OnSharedDown each change between shared
+	// and per-pod state. Both may be nil.
+	Shared        SharedState
+	OnSharedError func(op string, err error)
+	OnSharedDown  func(down bool)
 }
 
 // NewFetcher constructs a Fetcher from cfg.
 func NewFetcher(cfg FetcherConfig) *Fetcher {
-	return &Fetcher{browser: cfg.Browser, quota: cfg.Quota, penalize: cfg.Penalize}
+	f := &Fetcher{browser: cfg.Browser, quota: cfg.Quota, penalize: cfg.Penalize,
+		cooldown: cfg.Cooldown, onOutcome: cfg.OnOutcome, onState: cfg.OnState,
+		shared: cfg.Shared, onSharedError: cfg.OnSharedError, onSharedDown: cfg.OnSharedDown}
+	if f.cooldown <= 0 {
+		f.cooldown = DefaultMethodCooldown
+	}
+	var token, cookie *directClient
+	if cfg.ClientID != "" {
+		token = newTokenClient(cfg.HTTP, cfg.UserAgent, cfg.ClientID)
+	}
+	if cfg.SessionCookie != "" {
+		cookie = newCookieClient(cfg.HTTP, cfg.UserAgent, cfg.SessionCookie)
+	}
+	// Open (one backend, no chain) uses the first credential there is.
+	if token != nil {
+		f.direct = token
+	} else {
+		f.direct = cookie
+	}
+	order := cfg.Methods
+	if len(order) == 0 {
+		order = DefaultMethods
+	}
+	for _, name := range order {
+		switch {
+		case name == MethodClientID && token != nil:
+			f.methods = append(f.methods, f.directMethod(name, token))
+		case name == MethodSession && cookie != nil:
+			f.methods = append(f.methods, f.directMethod(name, cookie))
+		case name == MethodBrowser && cfg.Browser != nil:
+			f.methods = append(f.methods, f.browserMethod())
+		}
+	}
+	return f
 }
+
+// directMethod is a chain method over one credential. It does not penalize
+// the www.reddit.com crawl limiter: each credential has its own budget, so a
+// 429 on one is handled by skipping that method, not by holding the others.
+func (f *Fetcher) directMethod(name string, c *directClient) *method {
+	m := &method{name: name}
+	m.open = func(context.Context) (*Session, error) {
+		s := &Session{direct: c, quota: f.quota}
+		s.penalize = f.penalizeMethod(m, s)
+		return s, nil
+	}
+	return m
+}
+
+// browserMethod is the chain method over the browser. Like the direct ones,
+// Reddit's back-off holds this method only: on the crawl limiter it would
+// stall every method behind www.reddit.com, a working credential included.
+func (f *Fetcher) browserMethod() *method {
+	m := &method{name: MethodBrowser}
+	m.open = func(ctx context.Context) (*Session, error) {
+		s, err := f.openBrowser(ctx)
+		if err == nil {
+			s.penalize = f.penalizeMethod(m, s)
+		}
+		return s, err
+	}
+	return m
+}
+
+// penalizeMethod turns a session's penalize call into a hold on its method.
+func (f *Fetcher) penalizeMethod(m *method, s *Session) func(string, time.Duration) {
+	return func(_ string, d time.Duration) {
+		s.held = true
+		f.holdMethod(context.Background(), m, d)
+	}
+}
+
+// holdMethod skips m for at least d, on this pod and, when shared, on every
+// replica.
+func (f *Fetcher) holdMethod(ctx context.Context, m *method, d time.Duration) {
+	m.hold(f.clock(), d)
+	f.setDown(m, true)
+	if f.sharedReady() {
+		f.sharedDone("hold", f.shared.Hold(context.WithoutCancel(ctx), m.name, d))
+	}
+}
+
+// markUp records a success through m. If m was down, it ends the hold on
+// every replica too.
+func (f *Fetcher) markUp(ctx context.Context, m *method) {
+	m.clear()
+	if f.setDown(m, false) && f.sharedReady() {
+		f.sharedDone("clear", f.shared.Clear(context.WithoutCancel(ctx), m.name))
+	}
+}
+
+// setDown reports m's state through OnState when it changes, and reports
+// whether it changed.
+func (f *Fetcher) setDown(m *method, down bool) bool {
+	if !m.report(down) {
+		return false
+	}
+	f.state(m.name, !down)
+	return true
+}
+
+// sharedHolds reads the holds other replicas recorded. It returns nil when
+// nothing is shared or the shared state is failing.
+func (f *Fetcher) sharedHolds(ctx context.Context) map[string]time.Duration {
+	if !f.sharedReady() {
+		return nil
+	}
+	holds, err := f.shared.Holds(ctx, f.Methods())
+	if ctx.Err() != nil {
+		// The caller's own deadline, not the backend's health.
+		return nil
+	}
+	f.sharedDone("read", err)
+	return holds
+}
+
+// sharedReady reports whether the shared state is configured and not in its
+// failure cooldown.
+func (f *Fetcher) sharedReady() bool {
+	if f.shared == nil {
+		return false
+	}
+	f.sharedMu.Lock()
+	defer f.sharedMu.Unlock()
+	return !f.clock().Before(f.sharedDownUntil)
+}
+
+// sharedDone records the result of one shared operation. An error starts the
+// failure cooldown, and a success after one ends it.
+func (f *Fetcher) sharedDone(op string, err error) {
+	f.sharedMu.Lock()
+	was := !f.sharedDownUntil.IsZero()
+	if err != nil {
+		f.sharedDownUntil = f.clock().Add(sharedCooldown)
+	} else {
+		f.sharedDownUntil = time.Time{}
+	}
+	f.sharedMu.Unlock()
+	if err != nil && f.onSharedError != nil {
+		f.onSharedError(op, err)
+	}
+	if now := err != nil; now != was && f.onSharedDown != nil {
+		f.onSharedDown(now)
+	}
+}
+
+func (f *Fetcher) clock() time.Time {
+	if f.now != nil {
+		return f.now()
+	}
+	return time.Now()
+}
+
+// Methods returns the configured chain methods, in order.
+func (f *Fetcher) Methods() []string {
+	names := make([]string, len(f.methods))
+	for i, m := range f.methods {
+		names[i] = m.name
+	}
+	return names
+}
+
+func (f *Fetcher) outcome(method, outcome string) {
+	if f.onOutcome != nil {
+		f.onOutcome(method, outcome)
+	}
+}
+
+func (f *Fetcher) state(method string, up bool) {
+	if f.onState != nil {
+		f.onState(method, up)
+	}
+}
+
+// Direct reports whether the fetcher calls Reddit's JSON endpoints with a
+// credential instead of reading pages through the browser.
+func (f *Fetcher) Direct() bool { return f.direct != nil }
 
 // Open starts a crawl session. The caller owns it and must Close it.
 func (f *Fetcher) Open(ctx context.Context) (*Session, error) {
+	if f.direct != nil {
+		return &Session{direct: f.direct, quota: f.quota, penalize: f.penalize}, nil
+	}
+	return f.openBrowser(ctx)
+}
+
+func (f *Fetcher) openBrowser(ctx context.Context) (*Session, error) {
 	bs, err := f.browser.Open(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("open %s browser: %w", f.browser.Name(), err)
@@ -76,7 +310,9 @@ func (f *Fetcher) Open(ctx context.Context) (*Session, error) {
 // for concurrent use.
 type Session struct {
 	active     browser.Session
-	threadPage string // the thread page FetchThread navigated to, reused by morechildren
+	direct     *directClient // set in direct mode; active is nil then
+	held       bool          // Reddit asked for back-off on the last answer (chain use)
+	threadPage string        // the thread page FetchThread navigated to, reused by morechildren
 	quota      httpx.Limiter
 	penalize   func(rawURL string, d time.Duration)
 }
@@ -121,6 +357,46 @@ func (s *Session) fetchViaBrowser(ctx context.Context, navURL, js string) ([]byt
 	if err != nil {
 		return nil, err
 	}
+	return s.unwrap(envStr)
+}
+
+// fetchDirect GETs a Reddit JSON endpoint with the logged-in session and
+// unwraps the response the same way as a browser fetch.
+func (s *Session) fetchDirect(ctx context.Context, rawURL string) ([]byte, error) {
+	release, err := s.admit(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	env, err := s.direct.get(ctx, rawURL)
+	if err == nil && env.S == http.StatusForbidden {
+		// Reddit's edge refuses a valid session now and then: in a 14-thread
+		// run one 403 came between successes and the same URL answered 200
+		// seconds later. One spaced retry absorbs that; an expired session
+		// fails both.
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(directRetryDelay):
+		}
+		env, err = s.direct.get(ctx, rawURL)
+	}
+	if err != nil {
+		return nil, err
+	}
+	envStr, _ := json.Marshal(env)
+	out, err := s.unwrap(string(envStr))
+	if err != nil && env.S == http.StatusForbidden {
+		return nil, fmt.Errorf("reddit refused this request twice with the configured credential (if every Reddit fetch fails this way, check OMNIFEED_REDDIT_CLIENT_ID, or refresh OMNIFEED_REDDIT_SESSION): %w", err)
+	}
+	return out, err
+}
+
+// directRetryDelay spaces the one retry after a 403 in logged-in mode.
+var directRetryDelay = 2 * time.Second
+
+// unwrap decodes an envelope and hands Reddit's back-off to the limiter.
+func (s *Session) unwrap(envStr string) ([]byte, error) {
 	out, wait, err := unwrapEnvelope(envStr)
 	// Reddit's own back-off answer outlives this request: hand it to the
 	// limiter so the NEXT crawl waits it out, instead of walking into the same
@@ -178,34 +454,44 @@ func unwrapEnvelope(envStr string) (body string, wait time.Duration, err error) 
 	return env.B, wait, nil
 }
 
-// FetchThread retrieves a thread via the .json endpoint, fetched from inside a
-// real browser on the reddit.com origin. limit/depth/sort map directly onto
-// Reddit's comments-endpoint query params (limit = max comments, depth = max
-// subtree nesting): https://www.reddit.com/dev/api/#GET_comments_{article}
+// FetchThread retrieves a thread from its rendered HTML page, read from inside
+// a real browser on the reddit.com origin (see html.go for why not .json). It
+// returns the [post, comments] listing pair the .json endpoint used to, so
+// ParseThread reads it unchanged. limit is the comment count at which the
+// in-page expansion stops. depth is not applied: the page renders its own
+// nesting.
 func (s *Session) FetchThread(ctx context.Context, permalink string, limit, depth int, sort string) ([]byte, error) {
-	page := redditOrigin + permalink
-	jsonURL := fmt.Sprintf("%s%s.json?limit=%d&depth=%d&sort=%s&raw_json=1",
-		redditOrigin, strings.TrimSuffix(permalink, "/"), limit, depth, url.QueryEscape(sort))
+	if s.direct != nil {
+		return s.fetchDirect(ctx, fmt.Sprintf("%s%s.json?limit=%d&depth=%d&sort=%s&raw_json=1",
+			s.direct.origin, strings.TrimSuffix(permalink, "/"), limit, depth, url.QueryEscape(sort)))
+	}
+	page := threadPageURL(permalink, url.QueryEscape(sort))
 	// Record the thread page so morechildren re-navigates to the exact same URL —
 	// on the live-page backend that makes its Navigate a no-op and the page is
 	// reused across all expansion rounds.
 	s.threadPage = page
-	return s.fetchViaBrowser(ctx, page, getJS(jsonURL))
+	return s.fetchViaBrowser(ctx, page, threadHTMLJS(limit))
 }
 
-// FetchListing retrieves a subreddit listing (hot/new/top/…) via its .json
-// endpoint, fetched same-origin from inside a real browser on reddit.com — the
-// same bot-wall evasion FetchThread uses. limit caps the number of posts, and t
-// is Reddit's time window (hour|day|week|month|year|all), appended only when set.
-// Whether a window is meaningful for the sort is ParseListingURL's call — it
-// only sets t for top/controversial — so this appends whatever it is handed.
+// FetchListing retrieves a subreddit listing (hot/new/top/…) from its rendered
+// HTML page, read from inside a real browser on reddit.com — the same path
+// FetchThread uses. limit caps the number of posts, and t is Reddit's time
+// window (hour|day|week|month|year|all), appended only when set. Whether a
+// window is meaningful for the sort is ParseListingURL's call — it only sets t
+// for top/controversial — so this appends whatever it is handed.
 func (s *Session) FetchListing(ctx context.Context, sub, sort string, limit int, t string) ([]byte, error) {
-	page := fmt.Sprintf("%s/r/%s/%s/", redditOrigin, sub, sort)
-	jsonURL := fmt.Sprintf("%s/r/%s/%s.json?limit=%d&raw_json=1", redditOrigin, sub, sort, limit)
-	if t != "" {
-		jsonURL += "&t=" + url.QueryEscape(t)
+	if s.direct != nil {
+		u := fmt.Sprintf("%s/r/%s/%s.json?limit=%d&raw_json=1", s.direct.origin, sub, sort, limit)
+		if t != "" {
+			u += "&t=" + url.QueryEscape(t)
+		}
+		return s.fetchDirect(ctx, u)
 	}
-	return s.fetchViaBrowser(ctx, page, getJS(jsonURL))
+	page := fmt.Sprintf("%s/r/%s/%s/", redditOrigin, sub, sort)
+	if t != "" {
+		page += "?t=" + url.QueryEscape(t)
+	}
+	return s.fetchViaBrowser(ctx, page, listingHTMLJS(limit))
 }
 
 // FetchMoreChildren expands collapsed reply branches via /api/morechildren.
@@ -213,14 +499,6 @@ func (s *Session) FetchListing(ctx context.Context, sub, sort string, limit int,
 // re-navigates the thread page FetchThread recorded and runs the same-origin
 // POST from it.
 func (s *Session) FetchMoreChildren(ctx context.Context, linkID string, childIDs []string, sort string) ([]byte, error) {
-	page := s.threadPage
-	if page == "" {
-		// Deriving a page from the link id here would navigate a URL that never
-		// matches the one FetchThread recorded, silently defeating the live-page
-		// no-op — fail loudly instead.
-		return nil, fmt.Errorf("FetchMoreChildren before FetchThread: no thread page recorded")
-	}
-
 	form := url.Values{}
 	form.Set("api_type", "json")
 	form.Set("link_id", linkID)
@@ -228,6 +506,16 @@ func (s *Session) FetchMoreChildren(ctx context.Context, linkID string, childIDs
 	form.Set("limit_children", "false")
 	form.Set("sort", sort)
 	form.Set("raw_json", "1")
+	if s.direct != nil {
+		return s.fetchDirect(ctx, s.direct.origin+"/api/morechildren.json?"+form.Encode())
+	}
+	page := s.threadPage
+	if page == "" {
+		// Deriving a page from the link id here would navigate a URL that never
+		// matches the one FetchThread recorded, silently defeating the live-page
+		// no-op — fail loudly instead.
+		return nil, fmt.Errorf("FetchMoreChildren before FetchThread: no thread page recorded")
+	}
 	return s.fetchViaBrowser(ctx, page, postJS(redditOrigin+"/api/morechildren", form.Encode()))
 }
 
@@ -241,10 +529,15 @@ func (s *Session) ResolveShareURL(ctx context.Context, shareURL string) (string,
 		return "", err
 	}
 	defer release()
-	if err := s.active.Navigate(ctx, shareURL); err != nil {
-		return "", err
+	var resolved string
+	if s.direct != nil {
+		resolved, err = s.direct.location(ctx, shareURL)
+	} else {
+		if err := s.active.Navigate(ctx, shareURL); err != nil {
+			return "", err
+		}
+		resolved, err = s.active.Eval(ctx, "return location.href;")
 	}
-	resolved, err := s.active.Eval(ctx, "return location.href;")
 	if err != nil {
 		return "", err
 	}

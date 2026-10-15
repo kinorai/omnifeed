@@ -219,6 +219,23 @@ type Config struct {
 	RedditQuota       int
 	RedditQuotaWindow time.Duration
 
+	// RedditSession is a logged-in reddit_session cookie value. When set, the
+	// Reddit engine calls Reddit's JSON endpoints directly with it instead of
+	// reading pages through the browser. Secret: never log it.
+	RedditSession string
+
+	// RedditClientID is a Reddit OAuth app's client ID, used with the
+	// installed-client grant (no secret, no account). When set, it wins over
+	// RedditSession: it has ten times the request budget.
+	RedditClientID string
+
+	// RedditMethods is the order the Reddit chain tries its methods in
+	// (client_id, session, browser); methods without a credential are left
+	// out. RedditMethodCooldown is how long a method that failed in a way the
+	// next one can get around is skipped.
+	RedditMethods        []string
+	RedditMethodCooldown time.Duration
+
 	// Distributed rate limiting (optional). RedisURL is the single opt-in
 	// switch: unset keeps pacing entirely in process, exactly as before. Set,
 	// the limiters share their state through Redis so every replica counts
@@ -287,8 +304,10 @@ func Load() (Config, error) {
 
 		TwitterFxTwitterURL: env("OMNIFEED_TWITTER_FXTWITTER_URL", "https://api.fxtwitter.com"),
 
-		RedditFormat: env("OMNIFEED_REDDIT_FORMAT", "toon"),
-		RedditSort:   env("OMNIFEED_REDDIT_SORT", domain.DefaultRedditSort),
+		RedditFormat:   env("OMNIFEED_REDDIT_FORMAT", "toon"),
+		RedditSession:  strings.TrimSpace(env("OMNIFEED_REDDIT_SESSION", "")),
+		RedditClientID: strings.TrimSpace(env("OMNIFEED_REDDIT_CLIENT_ID", "")),
+		RedditSort:     env("OMNIFEED_REDDIT_SORT", domain.DefaultRedditSort),
 	}
 
 	// Tri-state: unset = the shipped default list, set = that list verbatim,
@@ -413,6 +432,19 @@ func Load() (Config, error) {
 	}
 	if c.RedditQuota, err = envInt("OMNIFEED_REDDIT_QUOTA", 0); err != nil {
 		return c, err
+	}
+	if c.RedditMethodCooldown, err = envDuration("OMNIFEED_REDDIT_METHOD_COOLDOWN", 10*time.Minute); err != nil {
+		return c, err
+	}
+	for _, m := range strings.Split(env("OMNIFEED_REDDIT_METHODS", "client_id,session,browser"), ",") {
+		m = strings.ToLower(strings.TrimSpace(m))
+		switch m {
+		case "":
+		case "client_id", "session", "browser":
+			c.RedditMethods = append(c.RedditMethods, m)
+		default:
+			return c, fmt.Errorf("OMNIFEED_REDDIT_METHODS: unknown method %q (want client_id, session or browser)", m)
+		}
 	}
 	if c.RedditQuotaWindow, err = envDuration("OMNIFEED_REDDIT_QUOTA_WINDOW", time.Minute); err != nil {
 		return c, err
