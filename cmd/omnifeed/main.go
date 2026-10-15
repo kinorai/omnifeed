@@ -179,7 +179,7 @@ func run(cfg config.Config, logger *slog.Logger) error {
 				logger.Info("reddit: method working again", "method", method)
 			}
 		},
-		Quota: traceLimiter(tracing, "reddit", redditQuota(cfg, rdb, metrics, logger)),
+		Quota:  traceLimiter(tracing, "reddit", redditQuota(cfg, rdb, metrics, logger)),
 		Shared: redditShared(rdb, cfg.RedisKeyPrefix),
 		// Same metrics and log lines as the rate limiters' Redis backend,
 		// under their own op and scope labels.
