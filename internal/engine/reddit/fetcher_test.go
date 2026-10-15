@@ -128,13 +128,15 @@ func TestFetchThreadShape(t *testing.T) {
 	if string(got) != validListing {
 		t.Fatalf("body = %q", got)
 	}
-	if len(sess.navs) != 1 || !strings.Contains(sess.navs[0], "/r/news/comments/abc123/") {
-		t.Errorf("FetchThread must navigate the thread page; navs = %v", sess.navs)
+	if len(sess.navs) != 1 || sess.navs[0] != "https://www.reddit.com/r/news/comments/abc123/some_title/?sort=new" {
+		t.Errorf("FetchThread must navigate the sorted thread page; navs = %v", sess.navs)
 	}
-	for _, want := range []string{"limit=123", "depth=4", "sort=new"} {
-		if !strings.Contains(sess.evals[0], want) {
-			t.Errorf("thread fetch JS missing %q; js = %s", want, sess.evals[0])
-		}
+	// Reddit 403s logged-out .json, so the thread is read from the page itself.
+	if strings.Contains(sess.evals[0], ".json") {
+		t.Errorf("thread fetch must not request .json; js = %s", sess.evals[0])
+	}
+	if !strings.Contains(sess.evals[0], "LIMIT = 123,") {
+		t.Errorf("thread fetch JS missing the comment limit; js = %s", sess.evals[0])
 	}
 }
 
@@ -145,24 +147,19 @@ func TestFetchListingShape(t *testing.T) {
 	if _, err := s.FetchListing(context.Background(), "golang", "hot", 25, ""); err != nil {
 		t.Fatal(err)
 	}
-	if len(sess.navs) != 1 || !strings.Contains(sess.navs[0], "/r/golang/hot/") {
+	// An empty time window must not leak a bare `?t=` into the page URL.
+	if len(sess.navs) != 1 || sess.navs[0] != "https://www.reddit.com/r/golang/hot/" {
 		t.Errorf("navs = %v", sess.navs)
 	}
-	if !strings.Contains(sess.evals[0], "/r/golang/hot.json") {
-		t.Errorf("listing JS missing the .json URL; js = %s", sess.evals[0])
+	if strings.Contains(sess.evals[0], ".json") {
+		t.Errorf("listing fetch must not request .json; js = %s", sess.evals[0])
 	}
-	if !strings.Contains(sess.evals[0], "limit=25") {
-		t.Errorf("listing JS missing limit=25; js = %s", sess.evals[0])
-	}
-	// An empty time window must not leak a bare `&t=` into the URL: the query
-	// ends right after raw_json=1. (The separators are JSON-escaped inside the
-	// JS, so match on the query terminating rather than on a literal "&t=".)
-	if !strings.Contains(sess.evals[0], `raw_json=1"`) {
-		t.Errorf("listing JS should end at raw_json=1 with no t param; js = %s", sess.evals[0])
+	if !strings.Contains(sess.evals[0], ".slice(0, 25)") {
+		t.Errorf("listing JS missing the 25-post cap; js = %s", sess.evals[0])
 	}
 }
 
-// A listing URL's `?t=` / `?limit=` must reach Reddit's .json endpoint — without
+// A listing URL's `?t=` / `?limit=` must reach the page Reddit renders — without
 // them, /r/selfhosted/top/?t=week silently returns top-of-day.
 func TestFetchListingTimeWindow(t *testing.T) {
 	sess := alwaysBody(`{"kind":"Listing","data":{"children":[]}}`)
@@ -171,10 +168,11 @@ func TestFetchListingTimeWindow(t *testing.T) {
 	if _, err := s.FetchListing(context.Background(), "selfhosted", "top", 50, "week"); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"/r/selfhosted/top.json", "limit=50", "t=week"} {
-		if !strings.Contains(sess.evals[0], want) {
-			t.Errorf("listing JS missing %q; js = %s", want, sess.evals[0])
-		}
+	if len(sess.navs) != 1 || sess.navs[0] != "https://www.reddit.com/r/selfhosted/top/?t=week" {
+		t.Errorf("navs = %v", sess.navs)
+	}
+	if !strings.Contains(sess.evals[0], ".slice(0, 50)") {
+		t.Errorf("listing JS missing the 50-post cap; js = %s", sess.evals[0])
 	}
 }
 

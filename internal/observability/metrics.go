@@ -32,6 +32,9 @@ type Metrics struct {
 	SearxngQueries      *prometheus.CounterVec   // scoped
 	SearxngEngineZero   *prometheus.CounterVec   // engine
 	RedditRounds        prometheus.Histogram
+	RedditMethodCalls   *prometheus.CounterVec // method, outcome
+	RedditMethodUp      *prometheus.GaugeVec   // method
+	RedditSessionExpiry prometheus.Gauge
 	SearchesTotal       *prometheus.CounterVec   // searcher, status, reason, scoped
 	SearchSecs          *prometheus.HistogramVec // searcher, status
 	SearchEnginePos     *prometheus.HistogramVec // engine
@@ -88,7 +91,7 @@ func NewMetrics() *Metrics {
 		// fails because of it and no `reason` label ever changes.
 		RatelimitErrors: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "omnifeed_ratelimit_backend_errors_total",
-			Help: `Failed Redis operations in the distributed rate limiter, by operation: op="acquire" (the admission attempt — the limiter then paces in process), op="release" (the completion bump) or op="penalize" (an upstream Retry-After hold); the latter two cost pacing accuracy only.`,
+			Help: `Failed Redis operations in the distributed rate limiter, by operation: op="acquire" (the admission attempt — the limiter then paces in process), op="release" (the completion bump) or op="penalize" (an upstream Retry-After hold); the latter two cost pacing accuracy only. The Reddit method chain's shared state adds op="reddit_method_read", "reddit_method_hold" and "reddit_method_clear"; on a failure the chain keeps its holds per pod for 30s.`,
 		}, []string{"op"}),
 		// The upstream label, never the host: hosts are unbounded, upstreams are
 		// the closed set this client already labels its attempts with.
@@ -98,7 +101,7 @@ func NewMetrics() *Metrics {
 		}, []string{"upstream"}),
 		RatelimitDegraded: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "omnifeed_ratelimit_degraded",
-			Help: "1 while pacing is degraded to per-pod limits because the Redis backend is unreachable, 0 while it is shared, by limiter scope. Always 0 when distributed rate limiting is off (OMNIFEED_REDIS_URL unset).",
+			Help: "1 while pacing is degraded to per-pod limits because the Redis backend is unreachable, 0 while it is shared, by limiter scope. Scope reddit_methods is the Reddit method chain's shared holds. Always 0 when distributed rate limiting is off (OMNIFEED_REDIS_URL unset).",
 		}, []string{"scope"}),
 		ResponseChars: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name:    "omnifeed_response_chars",
@@ -141,6 +144,18 @@ func NewMetrics() *Metrics {
 			Name:    "omnifeed_reddit_expansion_rounds",
 			Help:    "Number of /api/morechildren rounds per Reddit crawl.",
 			Buckets: prometheus.LinearBuckets(0, 5, 9),
+		}),
+		RedditMethodCalls: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "omnifeed_reddit_method_calls_total",
+			Help: "Reddit calls per chain method (client_id, session, browser) and outcome: ok, error (no failover), or the failure kind that moved the call to the next method.",
+		}, []string{"method", "outcome"}),
+		RedditMethodUp: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "omnifeed_reddit_method_up",
+			Help: "1 when a configured Reddit method is in use, 0 while it is skipped after a failure. Only configured methods appear.",
+		}, []string{"method"}),
+		RedditSessionExpiry: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "omnifeed_reddit_session_expiry_timestamp_seconds",
+			Help: "Unix time the configured reddit_session cookie expires; a human must log in again before it. 0 when no cookie is set or its expiry is unreadable.",
 		}),
 		SearchesTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "omnifeed_search_requests_total",
@@ -223,7 +238,7 @@ func NewMetrics() *Metrics {
 		m.LimiterWaitSecs, m.RatelimitErrors, m.RatelimitPenalties, m.RatelimitDegraded,
 		m.ResponseChars, m.EngineFallbacks, m.SearxngUnresponsive,
 		m.SearxngEngineHits, m.SearxngEmpty, m.SearxngQueries, m.SearxngEngineZero,
-		m.RedditRounds, m.SearchesTotal, m.SearchSecs,
+		m.RedditRounds, m.RedditMethodCalls, m.RedditMethodUp, m.RedditSessionExpiry, m.SearchesTotal, m.SearchSecs,
 		m.SearchEnginePos, m.SearchEngineUnique, m.CacheRequests, m.CacheBytes,
 		m.CacheBackend, m.CacheBackendErrors)
 	reg.MustRegister(

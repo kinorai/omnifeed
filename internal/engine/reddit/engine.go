@@ -133,9 +133,9 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, eo domain.EngineOptio
 
 	// One browser session for the whole crawl (share resolve + thread fetch + all
 	// expansion rounds), so the live-page backend reuses its page across them.
-	sess, err := e.fetcher.Open(ctx)
+	sess, err := e.fetcher.OpenChain(ctx)
 	if err != nil {
-		return domain.Document{}, fmt.Errorf("open browser session: %w", err)
+		return domain.Document{}, fmt.Errorf("open reddit session: %w", err)
 	}
 	defer func() { _ = sess.Close(ctx) }()
 
@@ -303,7 +303,7 @@ func (e *Engine) resolveOptions(eo domain.EngineOptions) Options {
 // when a round failed before the budget or the gaps ran out, the classified
 // reason (e.g. "http_429", "timeout", "parse_error"); "" means the expansion
 // was not cut short by a failure.
-func (e *Engine) expandGaps(ctx context.Context, sess *Session, thread *Thread, opts Options) (int, string) {
+func (e *Engine) expandGaps(ctx context.Context, sess *Chain, thread *Thread, opts Options) (int, string) {
 	linkFullID := kindPostPrefix + thread.Post.ID
 	rounds := 0
 	for round := 0; round < opts.MaxRounds; round++ {
@@ -370,9 +370,9 @@ func (e *Engine) crawlListing(ctx context.Context, rawURL string, req ListingReq
 	}
 	defer release()
 
-	sess, err := e.fetcher.Open(ctx)
+	sess, err := e.fetcher.OpenChain(ctx)
 	if err != nil {
-		return domain.Document{}, fmt.Errorf("open browser session: %w", err)
+		return domain.Document{}, fmt.Errorf("open reddit session: %w", err)
 	}
 	defer func() { _ = sess.Close(ctx) }()
 
