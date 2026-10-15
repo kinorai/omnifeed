@@ -136,6 +136,9 @@ func TestEvalErrorClassification(t *testing.T) {
 		// classify as bot_block (the OmnifeedRedditBlocked alert keys on it), not
 		// upstream_error.
 		{"5xx anti-bot", 500, []byte(`{"error":"Blocked by anti-bot protection"}`), "500", domain.KindBotBlock},
+		// Any other 5xx is crawl4ai's own fault: it must not read as Reddit's
+		// verdict, which would hold the browser method for its cooldown.
+		{"5xx without a verdict", 503, []byte(`{"error":"Service Unavailable"}`), "503", domain.KindUpstreamError},
 		{"4xx passthrough", 400, []byte(`{"error":"bad request"}`), "crawl4ai returned 400", domain.KindError},
 		{"result success=false", 200, mustJSON(map[string]interface{}{
 			"success": false, "error_message": "nav timeout",

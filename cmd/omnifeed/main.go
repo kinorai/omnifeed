@@ -166,17 +166,25 @@ func run(cfg config.Config, logger *slog.Logger) error {
 		Cooldown: cfg.RedditMethodCooldown,
 		OnOutcome: func(method, outcome string) {
 			metrics.RedditMethodCalls.WithLabelValues(method, outcome).Inc()
+			if outcome == "ok" || outcome == "incomplete" {
+				metrics.RedditMethodLastSuccess.WithLabelValues(method).SetToCurrentTime()
+			}
 		},
-		OnState: func(method string, up bool) {
+		OnState: func(method string, up bool, why string, hold time.Duration) {
 			v := 0.0
 			if up {
 				v = 1
 			}
 			metrics.RedditMethodUp.WithLabelValues(method).Set(v)
-			if !up {
-				logger.Warn("reddit: method failing, skipped for the cooldown", "method", method, "cooldown", cfg.RedditMethodCooldown)
-			} else {
+			switch {
+			case up:
 				logger.Info("reddit: method working again", "method", method)
+			case why == "backoff":
+				logger.Info("reddit: method held for Reddit's back-off", "method", method, "hold", hold)
+			case why == "held":
+				logger.Info("reddit: method on hold, skipped", "method", method, "hold", hold.Round(time.Second))
+			default:
+				logger.Warn("reddit: method failing, skipped", "method", method, "hold", hold)
 			}
 		},
 		Quota:  traceLimiter(tracing, "reddit", redditQuota(cfg, rdb, metrics, logger)),
@@ -204,7 +212,13 @@ func run(cfg config.Config, logger *slog.Logger) error {
 	}
 	for _, m := range redditFetcher.Methods() {
 		metrics.RedditMethodUp.WithLabelValues(m).Set(1)
+		metrics.RedditMethodLastSuccess.WithLabelValues(m)
 	}
+	// A hold another replica recorded still applies to this pod: report it
+	// now rather than at the first call.
+	loadCtx, cancelLoad := context.WithTimeout(context.Background(), cfg.RedisTimeout)
+	redditFetcher.LoadSharedHolds(loadCtx)
+	cancelLoad()
 	logger.Info("reddit: method chain", "methods", strings.Join(redditFetcher.Methods(), ","), "cooldown", cfg.RedditMethodCooldown)
 	if cfg.RedditSession != "" {
 		if exp, ok := reddit.SessionExpiry(cfg.RedditSession); ok {

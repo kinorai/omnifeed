@@ -18,6 +18,7 @@ package crawl4ai
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -125,8 +126,14 @@ func (s *session) Eval(ctx context.Context, js string) (string, error) {
 		httpx.RetryConfig{MaxAttempts: 2, RetryableStatus: antibot.RetryableStatus})
 	if err != nil {
 		// A nav that trips crawl4ai's anti-bot detector surfaces here as a 5xx
-		// (DoRetry error path); classify unmatched client errors as a block.
-		return "", httpx.ClassifyClientError(err, domain.KindBotBlock)
+		// whose body names the verdict: a block. Anything else (crawl4ai
+		// unreachable or restarting, a scrubbed 500) is crawl4ai's own fault,
+		// not Reddit's verdict, and must not hold the browser method as one.
+		var se *httpx.StatusError
+		if errors.As(err, &se) && antibot.IsBlockResponse(se.Body) {
+			return "", &domain.FetchError{Kind: domain.KindBotBlock, StatusCode: se.StatusCode, Err: err}
+		}
+		return "", httpx.ClassifyClientError(err, domain.KindUpstreamError)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
