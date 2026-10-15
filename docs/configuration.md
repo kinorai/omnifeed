@@ -97,11 +97,12 @@ When an upstream answers `429` or `503` with `Retry-After`, omnifeed holds that 
 for the given duration, capped at 5 minutes, across later requests. With
 `OMNIFEED_REDIS_URL` set, the hold spans replicas. It applies only to upstreams an
 engine calls directly, because crawl4ai hides the crawled site's own `Retry-After`.
-Reddit is the exception: its fetch runs inside the browser, so the engine reads
-`Retry-After`, `X-Ratelimit-Reset` and `X-Ratelimit-Remaining` from the in-page
-response. On a `429`, or when `X-Ratelimit-Remaining` reaches `0`, it holds
-`www.reddit.com` for `Retry-After`, else `X-Ratelimit-Reset`, else 60s on a bare
-`429`. The `429` error carries the wait as `retry_after_s`.
+Reddit is the exception: the engine reads `Retry-After`, `X-Ratelimit-Reset` and
+`X-Ratelimit-Remaining` itself. On a `429`, or when `X-Ratelimit-Remaining` reaches
+`0`, it holds only the chain method that got the answer, never `www.reddit.com`,
+because a host hold would stall a working credential. The hold is `Retry-After`,
+else `X-Ratelimit-Reset`, else 60s on a bare `429` (see `OMNIFEED_REDDIT_METHODS`).
+The `429` error carries the wait as `retry_after_s`.
 Callers waiting on a held host time out normally at their own budget: the engine
 timeout, about 30s, or `MaxWait`, 15s, for a search.
 
