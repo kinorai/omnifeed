@@ -133,9 +133,12 @@ func TestEvalErrorClassification(t *testing.T) {
 		wantKind   domain.FailureKind
 	}{
 		// crawl4ai's anti-bot detector hard-errors a blocked nav as a 500; it must
-		// classify as bot_block (the OmnifeedRedditBlocked alert keys on it), not
+		// classify as bot_block (a wall that holds the browser method), not
 		// upstream_error.
 		{"5xx anti-bot", 500, []byte(`{"error":"Blocked by anti-bot protection"}`), "500", domain.KindBotBlock},
+		// The content gate carries the same phrase but is crawl4ai's verdict on
+		// a thin render, not Reddit's wall.
+		{"5xx content gate", 500, []byte(`{"error":"Blocked by anti-bot protection: Structural: minimal_text on small page"}`), "500", domain.KindUpstreamError},
 		// Any other 5xx is crawl4ai's own fault: it must not read as Reddit's
 		// verdict, which would hold the browser method for its cooldown.
 		{"5xx without a verdict", 503, []byte(`{"error":"Service Unavailable"}`), "503", domain.KindUpstreamError},

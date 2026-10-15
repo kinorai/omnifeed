@@ -129,8 +129,10 @@ func (s *session) Eval(ctx context.Context, js string) (string, error) {
 		// whose body names the verdict: a block. Anything else (crawl4ai
 		// unreachable or restarting, a scrubbed 500) is crawl4ai's own fault,
 		// not Reddit's verdict, and must not hold the browser method as one.
+		// crawl4ai's content gate ("Structural: minimal_text") carries the
+		// same block phrase but is its own verdict on a thin render, not a wall.
 		var se *httpx.StatusError
-		if errors.As(err, &se) && antibot.IsBlockResponse(se.Body) {
+		if errors.As(err, &se) && antibot.IsBlockResponse(se.Body) && !antibot.IsStructuralBlock(se.Body) {
 			return "", &domain.FetchError{Kind: domain.KindBotBlock, StatusCode: se.StatusCode, Err: err}
 		}
 		return "", httpx.ClassifyClientError(err, domain.KindUpstreamError)
