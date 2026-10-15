@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -170,12 +171,12 @@ func (c *directClient) get(ctx context.Context, rawURL string) (fetchEnvelope, e
 		resp, err = c.request(ctx, rawURL, true)
 	}
 	if err != nil {
-		return fetchEnvelope{}, err
+		return fetchEnvelope{}, transportError(ctx, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxDirectBody))
 	if err != nil {
-		return fetchEnvelope{}, err
+		return fetchEnvelope{}, transportError(ctx, err)
 	}
 	return fetchEnvelope{
 		S:  resp.StatusCode,
@@ -193,7 +194,7 @@ func (c *directClient) get(ctx context.Context, rawURL string) (fetchEnvelope, e
 func (c *directClient) location(ctx context.Context, shareURL string) (string, error) {
 	resp, err := c.request(ctx, shareURL, c.clientID == "")
 	if err != nil {
-		return "", err
+		return "", transportError(ctx, err)
 	}
 	_ = resp.Body.Close()
 	loc := resp.Header.Get("Location")
@@ -207,6 +208,36 @@ func (c *directClient) location(ctx context.Context, shareURL string) (string, e
 		return "", err
 	}
 	return resp.Request.URL.ResolveReference(u).String(), nil
+}
+
+// transportError classifies a request that got no answer from Reddit (DNS,
+// connection reset, the client's own timeout) as upstream_error, so the chain
+// tries the next method. The caller's own cancel or deadline stays as it is:
+// that call is over, on every method.
+func transportError(ctx context.Context, err error) error {
+	var fe *domain.FetchError
+	if ctx.Err() != nil || errors.As(err, &fe) {
+		return err
+	}
+	return &domain.FetchError{Kind: domain.KindUpstreamError, Err: fmt.Errorf("reddit request: %w", err)}
+}
+
+// refusalReason returns why Reddit refused a subreddit to everyone, read from
+// a 403 body such as {"reason": "private"}, or "" for any other 403. These
+// refusals are about the subreddit, not the credential: every method gets the
+// same answer.
+func refusalReason(body string) string {
+	var r struct {
+		Reason string `json:"reason"`
+	}
+	if json.Unmarshal([]byte(body), &r) != nil {
+		return ""
+	}
+	switch r.Reason {
+	case "private", "quarantined", "banned", "gold_only":
+		return r.Reason
+	}
+	return ""
 }
 
 // SessionExpiry reads the expiry from a reddit_session cookie. The cookie is a

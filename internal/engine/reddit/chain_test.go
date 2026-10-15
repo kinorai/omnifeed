@@ -42,7 +42,9 @@ func newChainFetcher(t *testing.T, fx *chainFixture, methods ...string) *Fetcher
 		ClientID: "app", SessionCookie: "sess", UserAgent: "omnifeed/test",
 		HTTP: &http.Client{Transport: rt}, Methods: methods, Cooldown: time.Hour,
 		OnOutcome: func(m, o string) { fx.outcomes = append(fx.outcomes, m+"="+o) },
-		OnState:   func(m string, up bool) { fx.states = append(fx.states, fmt.Sprintf("%s:%v", m, up)) },
+		OnState: func(m string, up bool, _ string, _ time.Duration) {
+			fx.states = append(fx.states, fmt.Sprintf("%s:%v", m, up))
+		},
 	})
 }
 
@@ -332,7 +334,7 @@ func TestChainSuccessKeepsConcurrentHold(t *testing.T) {
 	f.now = func() time.Time { return clk }
 	m := f.methods[0]
 	start := clk
-	f.holdMethod(context.Background(), m, time.Hour)
+	f.holdMethod(context.Background(), m, time.Hour, whyFailed)
 	f.markUp(context.Background(), m, start)
 	if !m.until().After(clk) {
 		t.Fatal("a success cleared a hold placed during its call")

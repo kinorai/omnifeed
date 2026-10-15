@@ -16,7 +16,8 @@ func TestClassify_EveryKindMapped(t *testing.T) {
 	kinds := []domain.FailureKind{
 		domain.KindCaptcha, domain.KindHTTP403, domain.KindHTTP429, domain.KindBotBlock,
 		domain.KindThinContent, domain.KindTimeout, domain.KindCanceled, domain.KindUpstreamError,
-		domain.KindUpstreamRejected, domain.KindQuotaExhausted, domain.KindBadResponse, domain.KindError,
+		domain.KindUpstreamRejected, domain.KindQuotaExhausted, domain.KindBadResponse, domain.KindLayout,
+		domain.KindError,
 	}
 	for _, k := range kinds {
 		if _, ok := codeFor[k]; !ok {

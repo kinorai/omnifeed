@@ -1,9 +1,12 @@
 package reddit
 
 import (
+	"cmp"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -23,6 +26,10 @@ const (
 	MethodSession  = "session"
 	MethodBrowser  = "browser"
 )
+
+// MethodChain is the method label OnOutcome gets for the chain as a whole:
+// outcome "all_held" when every method was on hold and nothing was sent.
+const MethodChain = "chain"
 
 // DefaultMethods is the chain order when none is configured.
 var DefaultMethods = []string{MethodClientID, MethodSession, MethodBrowser}
@@ -111,7 +118,9 @@ const sharedCooldown = 30 * time.Second
 // would fail the same on every method, so those return to the caller.
 func failover(err error) bool {
 	var fe *domain.FetchError
-	if !errors.As(err, &fe) {
+	if !errors.As(err, &fe) || domain.IsNoFallback(err) {
+		// NoFallback: a thread or subreddit that is gone, or that Reddit
+		// refuses to everyone (private, quarantined, banned).
 		return false
 	}
 	switch fe.Kind {
@@ -127,6 +136,42 @@ func failover(err error) bool {
 type Chain struct {
 	f    *Fetcher
 	legs map[string]*Session
+
+	// served is the method that answered the last successful call, and
+	// partial why the crawl's answers hold less than Reddit has ("" when
+	// complete). The engine reports both in the document's metadata.
+	served  string
+	partial string
+}
+
+// Served returns the method that answered the last successful call.
+func (c *Chain) Served() string { return c.served }
+
+// Partial returns why the crawl's answers were incomplete, or "".
+func (c *Chain) Partial() string { return c.partial }
+
+// The reasons a method is reported down, for OnState.
+const (
+	whyFailed  = "failed"  // a failure the next method can get around
+	whyBackoff = "backoff" // Reddit answered but asked for back-off
+	whyHeld    = "held"    // found on hold, by this pod or another replica
+)
+
+// outcomeOf names a non-failover error for OnOutcome: a missing thread, a
+// subreddit refused to everyone, an unreadable page, or anything else.
+func outcomeOf(err error) string {
+	var fe *domain.FetchError
+	if errors.As(err, &fe) {
+		switch {
+		case fe.Kind == domain.KindNotFound:
+			return "not_found"
+		case fe.Kind == domain.KindHTTP403 && domain.IsNoFallback(err):
+			return "forbidden"
+		case fe.Kind == domain.KindLayout:
+			return "layout"
+		}
+	}
+	return "error"
 }
 
 // OpenChain starts a crawl over the configured methods. Each method's
@@ -183,19 +228,24 @@ func (c *Chain) runOn(ctx context.Context, directOnly bool, fn func(*Session) er
 			candidates = append(candidates, m)
 			continue
 		}
-		f.setDown(m, true)
-		if wait := until.Sub(now); soonest == 0 || wait < soonest {
+		wait := until.Sub(now)
+		f.setDown(m, true, whyHeld, wait)
+		if soonest == 0 || wait < soonest {
 			soonest = wait
 		}
 	}
 	if len(candidates) == 0 {
+		// Nothing is sent: Reddit is out of reach until a hold ends. Counted
+		// apart from the methods, so it can be told from our own pacing.
+		f.outcome(MethodChain, "all_held")
 		return &domain.FetchError{Kind: domain.KindQuotaExhausted, RetryAfter: soonest,
 			Err: fmt.Errorf("every reddit method is cooling down after failures; retry in %ds", int(soonest.Seconds())+1)}
 	}
 	var last error
-	for _, m := range candidates {
+	for i, m := range candidates {
 		s, err := c.leg(ctx, m)
 		if err == nil {
+			s.cut, s.incomplete = "", ""
 			err = fn(s)
 		}
 		if err == nil {
@@ -206,20 +256,32 @@ func (c *Chain) runOn(ctx context.Context, directOnly bool, fn func(*Session) er
 			} else {
 				f.markUp(ctx, m, now)
 			}
-			f.outcome(m.name, "ok")
+			c.served = m.name
+			outcome := "ok"
+			if s.incomplete != "" {
+				outcome = "incomplete"
+			}
+			if why := cmp.Or(s.incomplete, s.cut); why != "" && c.partial == "" {
+				c.partial = why
+			}
+			f.outcome(m.name, outcome)
 			return nil
 		}
 		last = err
 		if !failover(err) {
-			f.outcome(m.name, "error")
+			f.outcome(m.name, outcomeOf(err))
 			return err
 		}
-		hold := f.cooldown
 		var fe *domain.FetchError
-		if errors.As(err, &fe) && fe.RetryAfter > hold {
-			hold = fe.RetryAfter
+		errors.As(err, &fe)
+		// An upstream fault (crawl4ai restarting, Reddit's 5xx, a dropped
+		// connection) is no verdict on the method. Holding the last method
+		// left would turn that blip into a cooldown-long outage, so only a
+		// method with another behind it is held for one.
+		if fe.Kind != domain.KindUpstreamError || i < len(candidates)-1 {
+			hold := max(f.cooldown, fe.RetryAfter)
+			f.holdMethod(ctx, m, hold, whyFailed)
 		}
-		f.holdMethod(ctx, m, hold)
 		f.outcome(m.name, string(fe.Kind))
 		if ctx.Err() != nil {
 			return err
@@ -233,6 +295,9 @@ func (c *Chain) FetchThread(ctx context.Context, permalink string, limit, depth 
 	var out []byte
 	err := c.run(ctx, func(s *Session) (err error) {
 		out, err = s.FetchThread(ctx, permalink, limit, depth, sort)
+		if err == nil && s.active != nil {
+			s.incomplete, err = checkBrowserThread(out, permalink)
+		}
 		return err
 	})
 	return out, err
@@ -243,9 +308,93 @@ func (c *Chain) FetchListing(ctx context.Context, sub, sort string, limit int, t
 	var out []byte
 	err := c.run(ctx, func(s *Session) (err error) {
 		out, err = s.FetchListing(ctx, sub, sort, limit, t)
+		if err == nil && s.active != nil {
+			s.incomplete, err = checkBrowserListing(out)
+		}
 		return err
 	})
 	return out, err
+}
+
+// The browser rebuilds Reddit's JSON from the rendered page, so a markup
+// change shows up as a well-formed answer with empty fields, not as an error.
+// These checks catch that before the answer reaches the caller, and the
+// cache. Direct methods return Reddit's own JSON and are not checked.
+
+// browserIncomplete is the partial_reason of a browser answer that holds less
+// than the page claims: comments the page counts but did not render.
+const browserIncomplete = "browser_incomplete"
+
+type thingData struct {
+	ID          string `json:"id"`
+	NumComments int    `json:"num_comments"`
+}
+
+type listingWire struct {
+	Data struct {
+		Children []struct {
+			Kind string    `json:"kind"`
+			Data thingData `json:"data"`
+		} `json:"children"`
+	} `json:"data"`
+}
+
+// checkBrowserThread returns a layout error when the rebuilt thread has no
+// post, or a post other than the one asked for, and browserIncomplete when the
+// post counts comments but none came back.
+func checkBrowserThread(raw []byte, permalink string) (string, error) {
+	var pair []listingWire
+	if err := json.Unmarshal(raw, &pair); err != nil || len(pair) != 2 || len(pair[0].Data.Children) != 1 {
+		return "", layoutError("the rebuilt thread is not a post and a comment listing")
+	}
+	post := pair[0].Data.Children[0].Data
+	if post.ID == "" {
+		return "", layoutError("the rendered thread has no post id")
+	}
+	if want := permalinkThreadID(permalink); want != "" && !strings.EqualFold(post.ID, want) {
+		return "", layoutError(fmt.Sprintf("the rendered thread is %s, not %s", post.ID, want))
+	}
+	if post.NumComments > 0 && len(pair[1].Data.Children) == 0 {
+		return browserIncomplete, nil
+	}
+	return "", nil
+}
+
+// checkBrowserListing returns a layout error when no rebuilt post has an id,
+// and browserIncomplete when only some lack one.
+func checkBrowserListing(raw []byte) (string, error) {
+	var l listingWire
+	if err := json.Unmarshal(raw, &l); err != nil {
+		return "", layoutError("the rebuilt listing is not a listing")
+	}
+	blank := 0
+	for _, ch := range l.Data.Children {
+		if ch.Data.ID == "" {
+			blank++
+		}
+	}
+	switch {
+	case len(l.Data.Children) == 0 || blank == len(l.Data.Children):
+		return "", layoutError("the rendered listing has no post ids")
+	case blank > 0:
+		return browserIncomplete, nil
+	}
+	return "", nil
+}
+
+func layoutError(msg string) error {
+	return &domain.FetchError{Kind: domain.KindLayout, Err: errors.New(msg + " (reddit markup changed?)")}
+}
+
+// permalinkThreadID is the thread id in /r/{sub}/comments/{id}/…, or "".
+func permalinkThreadID(permalink string) string {
+	parts := strings.Split(strings.Trim(permalink, "/"), "/")
+	for i, p := range parts {
+		if p == "comments" && i+1 < len(parts) {
+			return parts[i+1]
+		}
+	}
+	return ""
 }
 
 // FetchMoreChildren is Session.FetchMoreChildren over the direct methods

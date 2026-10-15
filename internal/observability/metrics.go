@@ -16,33 +16,34 @@ import (
 type Metrics struct {
 	registry *prometheus.Registry
 
-	RequestsTotal       *prometheus.CounterVec   // engine, tenant, status, reason, cache
-	RequestAttempts     *prometheus.CounterVec   // upstream, attempt (first|retry)
-	RequestSecs         *prometheus.HistogramVec // engine, status, reason
-	UpstreamSecs        *prometheus.HistogramVec // upstream, op, status
-	LimiterWaitSecs     *prometheus.HistogramVec // engine
-	RatelimitErrors     *prometheus.CounterVec   // op
-	RatelimitPenalties  *prometheus.CounterVec   // upstream
-	RatelimitDegraded   *prometheus.GaugeVec     // scope
-	ResponseChars       *prometheus.HistogramVec // engine
-	EngineFallbacks     *prometheus.CounterVec   // from_engine, reason
-	SearxngUnresponsive *prometheus.CounterVec   // engine, error
-	SearxngEngineHits   *prometheus.CounterVec   // engine
-	SearxngEmpty        *prometheus.CounterVec   // scoped
-	SearxngQueries      *prometheus.CounterVec   // scoped
-	SearxngEngineZero   *prometheus.CounterVec   // engine
-	RedditRounds        prometheus.Histogram
-	RedditMethodCalls   *prometheus.CounterVec // method, outcome
-	RedditMethodUp      *prometheus.GaugeVec   // method
-	RedditSessionExpiry prometheus.Gauge
-	SearchesTotal       *prometheus.CounterVec   // searcher, status, reason, scoped
-	SearchSecs          *prometheus.HistogramVec // searcher, status
-	SearchEnginePos     *prometheus.HistogramVec // engine
-	SearchEngineUnique  *prometheus.CounterVec   // engine
-	CacheRequests       *prometheus.CounterVec   // result
-	CacheBytes          prometheus.Gauge
-	CacheBackend        *prometheus.GaugeVec   // backend
-	CacheBackendErrors  *prometheus.CounterVec // op, kind
+	RequestsTotal           *prometheus.CounterVec   // engine, tenant, status, reason, cache
+	RequestAttempts         *prometheus.CounterVec   // upstream, attempt (first|retry)
+	RequestSecs             *prometheus.HistogramVec // engine, status, reason
+	UpstreamSecs            *prometheus.HistogramVec // upstream, op, status
+	LimiterWaitSecs         *prometheus.HistogramVec // engine
+	RatelimitErrors         *prometheus.CounterVec   // op
+	RatelimitPenalties      *prometheus.CounterVec   // upstream
+	RatelimitDegraded       *prometheus.GaugeVec     // scope
+	ResponseChars           *prometheus.HistogramVec // engine
+	EngineFallbacks         *prometheus.CounterVec   // from_engine, reason
+	SearxngUnresponsive     *prometheus.CounterVec   // engine, error
+	SearxngEngineHits       *prometheus.CounterVec   // engine
+	SearxngEmpty            *prometheus.CounterVec   // scoped
+	SearxngQueries          *prometheus.CounterVec   // scoped
+	SearxngEngineZero       *prometheus.CounterVec   // engine
+	RedditRounds            prometheus.Histogram
+	RedditMethodCalls       *prometheus.CounterVec // method, outcome
+	RedditMethodUp          *prometheus.GaugeVec   // method
+	RedditMethodLastSuccess *prometheus.GaugeVec   // method
+	RedditSessionExpiry     prometheus.Gauge
+	SearchesTotal           *prometheus.CounterVec   // searcher, status, reason, scoped
+	SearchSecs              *prometheus.HistogramVec // searcher, status
+	SearchEnginePos         *prometheus.HistogramVec // engine
+	SearchEngineUnique      *prometheus.CounterVec   // engine
+	CacheRequests           *prometheus.CounterVec   // result
+	CacheBytes              prometheus.Gauge
+	CacheBackend            *prometheus.GaugeVec   // backend
+	CacheBackendErrors      *prometheus.CounterVec // op, kind
 
 	HTTPRequests *prometheus.CounterVec   // server, route, code
 	HTTPSecs     *prometheus.HistogramVec // server, route
@@ -153,6 +154,10 @@ func NewMetrics() *Metrics {
 			Name: "omnifeed_reddit_method_up",
 			Help: "1 when a configured Reddit method is in use, 0 while it is skipped after a failure. Only configured methods appear.",
 		}, []string{"method"}),
+		RedditMethodLastSuccess: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "omnifeed_reddit_method_last_success_timestamp_seconds",
+			Help: "Unix time of the last call a Reddit method answered (outcome ok or incomplete); 0 until it has. Only configured methods appear.",
+		}, []string{"method"}),
 		RedditSessionExpiry: prometheus.NewGauge(prometheus.GaugeOpts{
 			Name: "omnifeed_reddit_session_expiry_timestamp_seconds",
 			Help: "Unix time the configured reddit_session cookie expires; a human must log in again before it. 0 when no cookie is set or its expiry is unreadable.",
@@ -238,7 +243,7 @@ func NewMetrics() *Metrics {
 		m.LimiterWaitSecs, m.RatelimitErrors, m.RatelimitPenalties, m.RatelimitDegraded,
 		m.ResponseChars, m.EngineFallbacks, m.SearxngUnresponsive,
 		m.SearxngEngineHits, m.SearxngEmpty, m.SearxngQueries, m.SearxngEngineZero,
-		m.RedditRounds, m.RedditMethodCalls, m.RedditMethodUp, m.RedditSessionExpiry, m.SearchesTotal, m.SearchSecs,
+		m.RedditRounds, m.RedditMethodCalls, m.RedditMethodUp, m.RedditMethodLastSuccess, m.RedditSessionExpiry, m.SearchesTotal, m.SearchSecs,
 		m.SearchEnginePos, m.SearchEngineUnique, m.CacheRequests, m.CacheBytes,
 		m.CacheBackend, m.CacheBackendErrors)
 	reg.MustRegister(
