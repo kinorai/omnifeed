@@ -14,8 +14,12 @@ import (
 // ParseSubredditListing then read unchanged.
 
 // maxExpandRequests caps the "more replies" POSTs one thread fetch sends. Each
-// is one request to Reddit, the same one a reader triggers with a click.
-const maxExpandRequests = 40
+// is one request to Reddit, the same one a reader triggers with a click, but
+// OMNIFEED_REDDIT_QUOTA admits the page load only: the requests run inside the
+// page, out of the limiter's reach. So one browser thread can cost Reddit up
+// to 1+10 requests against one quota slot. At 40, Reddit answered 429 after
+// about 2 large threads (2026-10-15).
+const maxExpandRequests = 10
 
 // expandDelayMS spaces those POSTs, so the expansion reads like a person
 // clicking through the thread rather than a burst.
@@ -39,7 +43,14 @@ const post = p => ({kind: "t3", data: {
   num_comments: num(A(p, "comment-count")), created_utc: ts(A(p, "created-timestamp")),
   url: A(p, "content-href") || "", permalink: A(p, "permalink") || "",
   selftext: txt(p.querySelector('[slot="text-body"]'))}});
-const notFound = () => JSON.stringify({s: 200, b: document.body ? document.body.innerText.slice(0, 500) : ""});
+// The page has no post: a thread or subreddit that is gone or refused, a wall,
+// or markup this snippet no longer reads. The navigation's own status and the
+// page text go back, so Go can tell which (fetchEnvelope.missing).
+const missing = () => {
+  const nav = performance.getEntriesByType("navigation")[0];
+  return JSON.stringify({s: (nav && nav.responseStatus) || 200, nf: 1,
+    b: document.body ? document.body.innerText.slice(0, 500) : ""});
+};
 `
 
 // threadHTMLJS returns the snippet that turns the rendered thread page into
@@ -52,7 +63,7 @@ func threadHTMLJS(limit int) string {
 	return htmlCommon + fmt.Sprintf(`
 const LIMIT = %d, MAX_REQ = %d, DELAY = %d;
 const p = document.querySelector("shreddit-post");
-if (!p) return notFound();
+if (!p) return missing();
 const postID = A(p, "id");
 const seen = new Set(), things = [];
 const take = root => root.querySelectorAll("shreddit-comment").forEach(c => {
@@ -81,28 +92,36 @@ for (let next = pending(); !limited && next.length && sent < MAX_REQ && things.l
     done.add(part);
     if (sent > 0) await new Promise(r => setTimeout(r, DELAY));
     sent++;
-    let r;
-    if (part.tagName === "A") {
-      r = await fetch(A(part, "href"));
-    } else {
-      const form = new URLSearchParams();
-      part.querySelectorAll("input[name]").forEach(i => form.set(i.name, i.value));
-      if (csrf) form.set("csrf_token", csrf);
-      r = await fetch(A(part, "src"), {method: "POST", body: form,
-        headers: {"Content-Type": "application/x-www-form-urlencoded"}});
+    let r, html;
+    try {
+      if (part.tagName === "A") {
+        r = await fetch(A(part, "href"));
+      } else {
+        const form = new URLSearchParams();
+        part.querySelectorAll("input[name]").forEach(i => form.set(i.name, i.value));
+        if (csrf) form.set("csrf_token", csrf);
+        r = await fetch(A(part, "src"), {method: "POST", body: form,
+          headers: {"Content-Type": "application/x-www-form-urlencoded"}});
+      }
+      if (r.status === 200) html = await r.text();
+    } catch (e) {
+      // A dropped request must not throw away the thread already read.
+      limited = {xs: -1};
+      break;
     }
     // A refused expansion keeps what the page already gave: stop expanding,
-    // report the rest as gaps, and pass Reddit's back-off on to the limiter.
+    // report the rest as gaps, and say why (xs, the refused status) along
+    // with Reddit's back-off, which holds the method.
     if (r.status !== 200) {
       limited = {ra: r.headers.get("retry-after"), rs: r.headers.get("x-ratelimit-reset"),
-        rm: r.status === 429 ? "0" : r.headers.get("x-ratelimit-remaining")};
+        rm: r.headers.get("x-ratelimit-remaining"), xs: r.status};
       break;
     }
     // Rendered off-screen inside the live page, so innerText keeps the
     // paragraph breaks a detached DOMParser document would lose.
     const box = document.createElement("div");
     box.style.cssText = "position:absolute;left:-99999px;top:0;width:800px";
-    box.innerHTML = await r.text();
+    box.innerHTML = html;
     document.body.appendChild(box);
     take(box);
   }
@@ -135,7 +154,7 @@ return JSON.stringify({s: 200, ...limited, b: JSON.stringify([
 func listingHTMLJS(limit int) string {
 	return htmlCommon + fmt.Sprintf(`
 const ps = [...document.querySelectorAll("shreddit-post")].slice(0, %d);
-if (!ps.length) return notFound();
+if (!ps.length) return missing();
 return JSON.stringify({s: 200, b: JSON.stringify({kind: "Listing", data: {children: ps.map(post)}})});
 `, limit)
 }

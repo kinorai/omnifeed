@@ -184,7 +184,7 @@ func TestFetchListingTimeWindow(t *testing.T) {
 // A whole crawl runs on ONE browser session: re-opening per fetch would leak a
 // session per fetch.
 func TestCrawlOpensOneSession(t *testing.T) {
-	b := &fakeBrowser{name: "crawl4ai", session: alwaysBody(validListing)}
+	b := &fakeBrowser{name: "crawl4ai", session: browserPages()}
 	c, err := NewFetcher(FetcherConfig{Browser: b}).OpenChain(context.Background())
 	if err != nil {
 		t.Fatal(err)

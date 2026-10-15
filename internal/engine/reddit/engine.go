@@ -1,11 +1,13 @@
 package reddit
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/url"
+	"slices"
 	"strconv"
 	"time"
 
@@ -168,6 +170,9 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, eo domain.EngineOptio
 	if e.metrics != nil {
 		e.metrics.RedditRounds.Observe(float64(rounds))
 	}
+	// The browser's own in-page expansion, refused part way, or a page that
+	// rendered fewer comments than it counts (see Chain.Partial).
+	partialReason = cmp.Or(partialReason, sess.Partial())
 	// A round that failed mid-crawl (block, rate limit, timeout) leaves gaps
 	// the caller asked us to fill. The crawl still succeeds with what it has,
 	// but says so — in _meta for clients and in the body for agents that only
@@ -175,7 +180,13 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, eo domain.EngineOptio
 	missing := 0
 	if partialReason != "" {
 		missing = missingReplies(thread.Gaps)
-		thread.Note = fmt.Sprintf("%d more replies could not be loaded (%s)", missing, partialReason)
+		if missing > 0 {
+			thread.Note = fmt.Sprintf("%d more replies could not be loaded (%s)", missing, partialReason)
+		} else {
+			// The browser's gaps carry no counts: say what is known.
+			thread.Note = fmt.Sprintf("only %d of %d comments could be loaded (%s)",
+				len(thread.Comments), thread.Post.NumComments, partialReason)
+		}
 	}
 
 	// Post-fetch size caps: applied after expansion so they bound the final
@@ -209,6 +220,7 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, eo domain.EngineOptio
 		"comments", len(thread.Comments),
 		"gaps_left", len(thread.Gaps),
 		"partial_reason", partialReason,
+		"method", sess.Served(),
 		"format", opts.Format,
 		"bytes", len(encoded),
 	)
@@ -221,6 +233,7 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, eo domain.EngineOptio
 		"comments":            strconv.Itoa(len(thread.Comments)),
 		"gaps":                strconv.Itoa(len(thread.Gaps)),
 		"total_comments":      strconv.Itoa(thread.Post.NumComments),
+		RedditMethodKey:       sess.Served(),
 	}
 	if partialReason != "" {
 		meta[domain.PartialKey] = "true"
@@ -384,6 +397,10 @@ func (e *Engine) crawlListing(ctx context.Context, rawURL string, req ListingReq
 	if err != nil {
 		return domain.Document{}, fmt.Errorf("parse listing: %w", err)
 	}
+	// A browser listing can hold posts whose id did not render: without one
+	// there is no thread to open, so they are dropped and the listing is
+	// reported partial (see checkBrowserListing).
+	posts = slices.DeleteFunc(posts, func(p Post) bool { return p.ID == "" })
 
 	listing := SubredditListing{Subreddit: req.Sub, Sort: req.Sort, T: req.T, Posts: posts}
 	encoded, err := encode(&listing, opts.Format)
@@ -396,18 +413,27 @@ func (e *Engine) crawlListing(ctx context.Context, rawURL string, req ListingReq
 		"sort", req.Sort,
 		"t", req.T,
 		"posts", len(posts),
+		"partial_reason", sess.Partial(),
+		"method", sess.Served(),
 		"format", opts.Format,
 		"bytes", len(encoded),
 	)
 
-	return domain.Document{
-		PageContent: string(encoded),
-		Metadata: map[string]string{
-			"source":              rawURL, // echo the caller's URL, not a fabricated /sort/ path
-			"status_code":         "200",
-			"format":              opts.Format,
-			domain.ContentTypeKey: opts.Format,
-			"posts":               strconv.Itoa(len(posts)),
-		},
-	}, nil
+	meta := map[string]string{
+		"source":              rawURL, // echo the caller's URL, not a fabricated /sort/ path
+		"status_code":         "200",
+		"format":              opts.Format,
+		domain.ContentTypeKey: opts.Format,
+		"posts":               strconv.Itoa(len(posts)),
+		RedditMethodKey:       sess.Served(),
+	}
+	if reason := sess.Partial(); reason != "" {
+		meta[domain.PartialKey] = "true"
+		meta[domain.PartialReasonKey] = reason
+	}
+	return domain.Document{PageContent: string(encoded), Metadata: meta}, nil
 }
+
+// RedditMethodKey is the metadata key (fetch_url _meta) naming the chain
+// method that served a Reddit document: client_id, session or browser.
+const RedditMethodKey = "reddit_method"

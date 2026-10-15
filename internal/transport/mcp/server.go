@@ -534,7 +534,7 @@ func (s *Server) handleToolsCall(ctx context.Context, req rpcRequest, probe para
 	for k, v := range res.Log {
 		attrs = append(attrs, k, v)
 	}
-	for _, k := range []string{"cache", "fallback_from", "partial", "truncated", "query_id"} {
+	for _, k := range []string{"cache", "fallback_from", "partial", "partial_reason", "reddit_method", "truncated", "query_id"} {
 		if v := res.Meta[k]; v != "" {
 			attrs = append(attrs, k, v)
 		}

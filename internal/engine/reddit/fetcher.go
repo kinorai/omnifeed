@@ -43,7 +43,7 @@ type Fetcher struct {
 	methods   []*method
 	cooldown  time.Duration
 	onOutcome func(method, outcome string)
-	onState   func(method string, up bool)
+	onState   func(method string, up bool, why string, hold time.Duration)
 
 	// The holds shared with other replicas, when configured. After a failure
 	// the chain uses only its own memory until sharedDownUntil.
@@ -84,11 +84,17 @@ type FetcherConfig struct {
 	// the next one can get around is skipped; 0 means DefaultMethodCooldown.
 	Methods  []string
 	Cooldown time.Duration
-	// OnOutcome is told each call's result per method ("ok", "error", or the
-	// failure kind that moved the call on); OnState is told when a method
-	// starts or stops being skipped. Both are for metrics and can be nil.
+	// OnOutcome is told each call's result per method: "ok", "incomplete"
+	// (a browser answer holding less than the page claims), "not_found",
+	// "forbidden" (a subreddit refused to everyone), "layout" (an unreadable
+	// page), "error", or the failure kind that moved the call on. Method
+	// MethodChain with "all_held" is a call that found every method on hold.
+	// OnState is told when a method starts or stops being skipped: why is
+	// "failed", "backoff" (Reddit answered but asked for one) or "held"
+	// (found on hold, maybe by another replica), and hold how long for; both
+	// are empty when up. Both hooks are for metrics and logs and can be nil.
 	OnOutcome func(method, outcome string)
-	OnState   func(method string, up bool)
+	OnState   func(method string, up bool, why string, hold time.Duration)
 
 	// Shared, when non-nil, shares the methods' holds between replicas
 	// (main.go sets it when OMNIFEED_REDIS_URL is set). It fails open: on an
@@ -164,15 +170,15 @@ func (f *Fetcher) browserMethod() *method {
 func (f *Fetcher) penalizeMethod(m *method, s *Session) func(string, time.Duration) {
 	return func(_ string, d time.Duration) {
 		s.held = true
-		f.holdMethod(context.Background(), m, d)
+		f.holdMethod(context.Background(), m, d, whyBackoff)
 	}
 }
 
 // holdMethod skips m for at least d, on this pod and, when shared, on every
 // replica.
-func (f *Fetcher) holdMethod(ctx context.Context, m *method, d time.Duration) {
+func (f *Fetcher) holdMethod(ctx context.Context, m *method, d time.Duration, why string) {
 	m.hold(f.clock(), d)
-	f.setDown(m, true)
+	f.setDown(m, true, why, d)
 	if f.sharedReady() {
 		f.sharedDone("hold", f.shared.Hold(context.WithoutCancel(ctx), m.name, d))
 	}
@@ -184,19 +190,33 @@ func (f *Fetcher) markUp(ctx context.Context, m *method, start time.Time) {
 	if !m.clear(start) {
 		return
 	}
-	if f.setDown(m, false) && f.sharedReady() {
+	if f.setDown(m, false, "", 0) && f.sharedReady() {
 		f.sharedDone("clear", f.shared.Clear(context.WithoutCancel(ctx), m.name))
 	}
 }
 
 // setDown reports m's state through OnState when it changes, and reports
-// whether it changed.
-func (f *Fetcher) setDown(m *method, down bool) bool {
+// whether it changed. why and hold say what put it down (see OnState).
+func (f *Fetcher) setDown(m *method, down bool, why string, hold time.Duration) bool {
 	if !m.report(down) {
 		return false
 	}
-	f.state(m.name, !down)
+	f.state(m.name, !down, why, hold)
 	return true
+}
+
+// LoadSharedHolds reads the holds other replicas recorded and reports the
+// held methods down, so a pod that starts during a hold does not report every
+// method up until its first call. A no-op without shared state.
+func (f *Fetcher) LoadSharedHolds(ctx context.Context) {
+	holds := f.sharedHolds(ctx)
+	now := f.clock()
+	for _, m := range f.methods {
+		if left, ok := holds[m.name]; ok && left > 0 {
+			m.hold(now, left)
+			f.setDown(m, true, whyHeld, left)
+		}
+	}
 }
 
 // sharedHolds reads the holds other replicas recorded. It returns nil when
@@ -266,9 +286,9 @@ func (f *Fetcher) outcome(method, outcome string) {
 	}
 }
 
-func (f *Fetcher) state(method string, up bool) {
+func (f *Fetcher) state(method string, up bool, why string, hold time.Duration) {
 	if f.onState != nil {
-		f.onState(method, up)
+		f.onState(method, up, why, hold)
 	}
 }
 
@@ -283,11 +303,17 @@ func (f *Fetcher) openBrowser(ctx context.Context) (*Session, error) {
 // Session is one chain method's connection for one crawl: a browser session,
 // or a direct client. Not safe for concurrent use.
 type Session struct {
-	active   browser.Session
-	direct   *directClient // set for a direct method; active is nil then
-	held     bool          // Reddit asked for back-off on the last answer
-	quota    httpx.Limiter
-	penalize func(rawURL string, d time.Duration) // holds this session's method
+	active browser.Session
+	direct *directClient // set for a direct method; active is nil then
+	held   bool          // Reddit asked for back-off on the last answer
+	// cut is why the browser's in-page expansion stopped early on the last
+	// answer ("" when it did not), and incomplete why that answer holds less
+	// than the page claims. The chain reads both into the crawl's
+	// partial_reason (see Chain.Partial).
+	cut        string
+	incomplete string
+	quota      httpx.Limiter
+	penalize   func(rawURL string, d time.Duration) // holds this session's method
 }
 
 // admit takes one slot of the Reddit request quota and returns its release.
@@ -330,7 +356,12 @@ func (s *Session) fetchViaBrowser(ctx context.Context, navURL, js string) ([]byt
 	if err != nil {
 		return nil, err
 	}
-	return s.unwrap(unwrapEnvelope(envStr))
+	var env fetchEnvelope
+	if err := json.Unmarshal([]byte(envStr), &env); err != nil {
+		return nil, &domain.FetchError{Kind: domain.KindBadResponse, Err: fmt.Errorf("decode fetch envelope: %w", err)}
+	}
+	s.cut = env.cut()
+	return s.unwrap(env.unwrap())
 }
 
 // fetchDirect GETs a Reddit JSON endpoint with the logged-in session and
@@ -343,6 +374,12 @@ func (s *Session) fetchDirect(ctx context.Context, rawURL string) ([]byte, error
 	defer release()
 	env, err := s.direct.get(ctx, rawURL)
 	if err == nil && env.S == http.StatusForbidden {
+		if reason := refusalReason(env.B); reason != "" {
+			// A private, quarantined or banned subreddit: every method gets
+			// this answer, so neither the retry nor the next method can help.
+			return nil, domain.NoFallback(&domain.FetchError{Kind: domain.KindHTTP403, StatusCode: env.S,
+				Err: fmt.Errorf("reddit refuses this subreddit to everyone: it is %s", reason)})
+		}
 		// Reddit's edge refuses a valid session now and then: in a 14-thread
 		// run one 403 came between successes and the same URL answered 200
 		// seconds later. One spaced retry absorbs that; an expired session
@@ -404,6 +441,9 @@ func unwrapEnvelope(envStr string) (body string, wait time.Duration, err error) 
 // unwrap yields the Reddit body of a decoded envelope, as unwrapEnvelope does.
 func (env fetchEnvelope) unwrap() (body string, wait time.Duration, err error) {
 	wait = env.backoff()
+	if env.NF != 0 {
+		return "", wait, env.missing()
+	}
 	if env.S == http.StatusTooManyRequests {
 		return "", wait, &domain.FetchError{
 			Kind:       domain.KindHTTP429,
@@ -523,6 +563,65 @@ type fetchEnvelope struct {
 	RA string `json:"ra,omitempty"` // Retry-After (seconds)
 	RS string `json:"rs,omitempty"` // X-Ratelimit-Reset (seconds until the window resets)
 	RM string `json:"rm,omitempty"` // X-Ratelimit-Remaining (requests left; Reddit sends a float, "0.0")
+	// The browser snippets only. NF is set when the rendered page holds no
+	// post (S is then the navigation's own status, B the page text). XS is the
+	// status of the in-page expansion request Reddit refused, -1 when it never
+	// answered, 0 when none was refused.
+	NF int `json:"nf,omitempty"`
+	XS int `json:"xs,omitempty"`
+}
+
+// Page texts Reddit renders, logged out, instead of a thread or a listing.
+var (
+	gonePhrases = []string{"page not found", "community not found", "there's nothing here",
+		"nobody on reddit goes by that name", "this community doesn't exist"}
+	refusedPhrases = map[string]string{"is a private community": "private",
+		"private community": "private", "quarantined": "quarantined", "has been banned": "banned",
+		"was banned": "banned"}
+)
+
+// missing classifies a rendered page that holds no post (see html.go). A wall
+// moves the chain on, like any block. A thread or subreddit that is gone, or
+// that Reddit refuses to everyone, fails the same on every method, so it is
+// final. Anything else is a page the snippet can no longer read: a layout
+// error, which no other method's hold would fix either.
+func (env fetchEnvelope) missing() error {
+	if marker, blocked := antibot.Detect(env.B); blocked {
+		return &domain.FetchError{Kind: domain.KindCaptcha, StatusCode: env.S, Marker: marker}
+	}
+	text := strings.NewReplacer("\u2019", "'").Replace(strings.ToLower(env.B))
+	for phrase, why := range refusedPhrases {
+		if strings.Contains(text, phrase) {
+			return domain.NoFallback(&domain.FetchError{Kind: domain.KindHTTP403, StatusCode: http.StatusForbidden,
+				Err: fmt.Errorf("reddit refuses this subreddit to everyone: it is %s", why)})
+		}
+	}
+	gone := env.S == http.StatusNotFound || env.S == http.StatusGone
+	for _, phrase := range gonePhrases {
+		gone = gone || strings.Contains(text, phrase)
+	}
+	if gone {
+		return domain.NoFallback(&domain.FetchError{Kind: domain.KindNotFound, StatusCode: http.StatusNotFound,
+			Err: fmt.Errorf("reddit has no such thread or subreddit: %s", truncate(env.B, 200))})
+	}
+	if env.S == http.StatusForbidden {
+		return &domain.FetchError{Kind: domain.KindHTTP403, StatusCode: env.S,
+			Err: fmt.Errorf("reddit returned 403 via browser: %s", truncate(env.B, 200))}
+	}
+	return &domain.FetchError{Kind: domain.KindLayout, StatusCode: env.S,
+		Err: fmt.Errorf("the rendered reddit page has no post to read (markup changed?): %s", truncate(env.B, 200))}
+}
+
+// cut is why the in-page expansion stopped early, as a partial_reason, or ""
+// when it was not refused.
+func (env fetchEnvelope) cut() string {
+	switch {
+	case env.XS == 0:
+		return ""
+	case env.XS < 0:
+		return "expansion_failed"
+	}
+	return string(domain.KindForStatus(env.XS))
 }
 
 // backoff returns how long Reddit asked us to stay away, or 0 when it did not.
@@ -530,7 +629,8 @@ type fetchEnvelope struct {
 // is below 1. The hold is Retry-After when present, else X-Ratelimit-Reset,
 // else — for a 429 that names nothing — defaultRateLimitBackoff.
 func (e fetchEnvelope) backoff() time.Duration {
-	limited := e.S == http.StatusTooManyRequests
+	rateLimited := e.S == http.StatusTooManyRequests || e.XS == http.StatusTooManyRequests
+	limited := rateLimited
 	if rm, ok := headerNumber(e.RM); ok && rm < 1 {
 		limited = true
 	}
@@ -543,7 +643,7 @@ func (e fetchEnvelope) backoff() time.Duration {
 	if rs, ok := headerNumber(e.RS); ok && rs > 0 {
 		return seconds(rs)
 	}
-	if e.S == http.StatusTooManyRequests {
+	if rateLimited {
 		return defaultRateLimitBackoff
 	}
 	return 0
