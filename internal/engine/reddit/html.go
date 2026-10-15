@@ -2,6 +2,7 @@ package reddit
 
 import (
 	"fmt"
+	"net/url"
 	"strings"
 )
 
@@ -142,5 +143,5 @@ return JSON.stringify({s: 200, b: JSON.stringify({kind: "Listing", data: {childr
 // threadPageURL is the thread page, sorted the way the caller asked. The page
 // takes the same sort names as the .json endpoint (top, new, confidence, …).
 func threadPageURL(permalink, sort string) string {
-	return redditOrigin + strings.TrimSuffix(permalink, "/") + "/?sort=" + sort
+	return redditOrigin + strings.TrimSuffix(permalink, "/") + "/?sort=" + url.QueryEscape(sort)
 }

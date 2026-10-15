@@ -322,3 +322,52 @@ func TestChainSharedStateFailsOpen(t *testing.T) {
 		t.Errorf("degraded = %v, want one change each way", degraded)
 	}
 }
+
+// A success never clears a hold that a concurrent call placed while it ran,
+// but it clears a hold that ran out before it started.
+func TestChainSuccessKeepsConcurrentHold(t *testing.T) {
+	fx := &chainFixture{status: map[string]int{}, hits: map[string]int{}}
+	f := newChainFetcher(t, fx, MethodClientID)
+	clk := time.Now()
+	f.now = func() time.Time { return clk }
+	m := f.methods[0]
+	start := clk
+	f.holdMethod(context.Background(), m, time.Hour)
+	f.markUp(context.Background(), m, start)
+	if !m.until().After(clk) {
+		t.Fatal("a success cleared a hold placed during its call")
+	}
+	clk = clk.Add(2 * time.Hour)
+	f.markUp(context.Background(), m, clk)
+	if !m.until().IsZero() {
+		t.Fatal("a success kept a hold that ran out before it started")
+	}
+}
+
+// An expansion never falls back to the browser: its logged-out POST would get
+// a 403 and hold the browser method, the one path left that reads threads.
+func TestChainMoreChildrenSkipsBrowser(t *testing.T) {
+	directRetryDelay = time.Millisecond
+	sess := alwaysBody(validListing)
+	f := NewFetcher(FetcherConfig{
+		SessionCookie: "sess", UserAgent: "omnifeed/test", Cooldown: time.Hour,
+		Browser: &fakeBrowser{name: "fake", session: sess},
+		HTTP: &http.Client{Transport: roundTrip(func(r *http.Request) *http.Response {
+			return reply(r, 429, "Too Many Requests", nil)
+		})},
+	})
+	c, err := f.OpenChain(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = c.Close(context.Background()) }()
+	if _, err := c.FetchMoreChildren(context.Background(), "t3_abc123", []string{"c1"}, "top"); err == nil {
+		t.Fatal("the only direct method refused: the expansion must fail")
+	}
+	if len(sess.evals) != 0 {
+		t.Errorf("browser ran %d snippets, want 0", len(sess.evals))
+	}
+	if browser := f.methods[1]; !browser.until().IsZero() {
+		t.Errorf("browser held until %v, want it untouched", browser.until())
+	}
+}

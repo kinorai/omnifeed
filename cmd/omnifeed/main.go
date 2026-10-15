@@ -149,11 +149,8 @@ func run(cfg config.Config, logger *slog.Logger) error {
 	// The Reddit engine tries a chain of methods: a credential over plain HTTP
 	// first, the browser last — see reddit.Fetcher and docs/adr/0001.
 	crawl4aiBrowser := browsercrawl4ai.New(httpClient, cfg.Crawl4AIURL, cfg.Crawl4AIToken)
-	// Reddit's 429 never reaches the retry client (the fetch runs inside the
-	// browser, and crawl4ai answers 200), so the engine reports Reddit's own
-	// back-off and it is fed to the crawl limiter here, through the same hook
-	// and cap as any other upstream's Retry-After.
-	redditPenalty := retryAfterHook(limiter, metrics)
+	// Reddit's back-off holds only the method that got it (see reddit.Chain),
+	// never the crawl limiter: a hold there would stall a working credential.
 	redditFetcher := reddit.NewFetcher(reddit.FetcherConfig{
 		Browser:       crawl4aiBrowser,
 		ClientID:      cfg.RedditClientID,
@@ -183,9 +180,6 @@ func run(cfg config.Config, logger *slog.Logger) error {
 			}
 		},
 		Quota: traceLimiter(tracing, "reddit", redditQuota(cfg, rdb, metrics, logger)),
-		Penalize: func(rawURL string, d time.Duration) {
-			redditPenalty("reddit", rawURL, d)
-		},
 		Shared: redditShared(rdb, cfg.RedisKeyPrefix),
 		// Same metrics and log lines as the rate limiters' Redis backend,
 		// under their own op and scope labels.
@@ -202,6 +196,9 @@ func run(cfg config.Config, logger *slog.Logger) error {
 			logger.Info("reddit method state shared again (redis reachable)")
 		},
 	})
+	if len(redditFetcher.Methods()) == 0 {
+		return fmt.Errorf("OMNIFEED_REDDIT_METHODS %q leaves no usable Reddit method: client_id needs OMNIFEED_REDDIT_CLIENT_ID, session needs OMNIFEED_REDDIT_SESSION", strings.Join(cfg.RedditMethods, ","))
+	}
 	if rdb != nil {
 		metrics.SetRatelimitDegraded("reddit_methods", false)
 	}
@@ -645,16 +642,6 @@ func retryAfterHook(p pacer, metrics *observability.Metrics) func(upstream, rawU
 	}
 }
 
-// redditQuota builds the per-request Reddit quota limiter, or returns nil when
-// OMNIFEED_REDDIT_QUOTA is 0 — opt-in, so an unconfigured deployment behaves
-// exactly as before. It is its own "reddit" scope rather than a setting on the
-// crawl limiter: that one admits a whole crawl (up to 40 morechildren rounds)
-// as one request, while Reddit counts every request. No delay and no cluster
-// concurrency of its own — the crawl limiter already shapes the gaps and the
-// concurrency; this only bounds the count per window.
-//
-// The returned value is a nil interface, never a typed nil pointer, when off:
-// the fetcher checks Quota == nil.
 // redditShared shares the Reddit method chain's holds between replicas when
 // Redis is configured. It returns a nil interface otherwise, so the chain
 // keeps its holds in memory.
@@ -665,6 +652,16 @@ func redditShared(rdb redis.UniversalClient, prefix string) reddit.SharedState {
 	return redisstate.New(rdb, prefix)
 }
 
+// redditQuota builds the per-request Reddit quota limiter, or returns nil when
+// OMNIFEED_REDDIT_QUOTA is 0 — opt-in, so an unconfigured deployment behaves
+// exactly as before. It is its own "reddit" scope rather than a setting on the
+// crawl limiter: that one admits a whole crawl (up to 40 morechildren rounds)
+// as one request, while Reddit counts every request. No delay and no cluster
+// concurrency of its own — the crawl limiter already shapes the gaps and the
+// concurrency; this only bounds the count per window.
+//
+// The returned value is a nil interface, never a typed nil pointer, when off:
+// the fetcher checks Quota == nil.
 func redditQuota(cfg config.Config, rdb redis.UniversalClient, metrics *observability.Metrics, logger *slog.Logger) httpx.Limiter {
 	if cfg.RedditQuota <= 0 {
 		return nil

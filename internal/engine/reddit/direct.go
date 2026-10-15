@@ -52,6 +52,9 @@ const (
 	// tokenEarlyRefresh renews a token this long before Reddit expires it,
 	// so a crawl never starts on a token about to lapse.
 	tokenEarlyRefresh = 5 * time.Minute
+	// tokenDefaultLife is the token life assumed when Reddit sends no
+	// expires_in: Reddit's documented app-only token life.
+	tokenDefaultLife = time.Hour
 )
 
 func newCookieClient(h *http.Client, userAgent, cookie string) *directClient {
@@ -76,7 +79,9 @@ func randomDeviceID() string {
 const maxDirectBody = 32 << 20
 
 // accessToken returns a valid app-only token, fetching a new one when the
-// cached one is missing or close to expiry.
+// cached one is missing or close to expiry. The lock is held during the token
+// request on purpose: concurrent calls wait for one token instead of each
+// sending its own request. That wait happens once per token life.
 func (c *directClient) accessToken(ctx context.Context) (string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -108,8 +113,19 @@ func (c *directClient) accessToken(ctx context.Context) (string, error) {
 			Err: fmt.Errorf("reddit refused the installed-client token for OMNIFEED_REDDIT_CLIENT_ID (status %d, error %q)", resp.StatusCode, tok.Error)}
 	}
 	c.token = tok.AccessToken
-	c.expires = time.Now().Add(time.Duration(tok.ExpiresIn)*time.Second - tokenEarlyRefresh)
+	c.expires = time.Now().Add(tokenLife(tok.ExpiresIn))
 	return c.token, nil
+}
+
+// tokenLife is how long a token is used, from Reddit's expires_in in
+// seconds. It renews early, but never earlier than half the token's life, so
+// a short or missing expires_in cannot cause a token request on every call.
+func tokenLife(expiresIn int) time.Duration {
+	life := time.Duration(expiresIn) * time.Second
+	if life <= 0 {
+		life = tokenDefaultLife
+	}
+	return life - min(tokenEarlyRefresh, life/2)
 }
 
 // dropToken forgets the cached token after Reddit rejected it, so the next
@@ -180,7 +196,9 @@ func (c *directClient) location(ctx context.Context, shareURL string) (string, e
 	_ = resp.Body.Close()
 	loc := resp.Header.Get("Location")
 	if loc == "" {
-		return "", fmt.Errorf("share link answered %d with no redirect", resp.StatusCode)
+		// Classified, so a refused credential (403) moves the chain on.
+		return "", &domain.FetchError{Kind: domain.KindForStatus(resp.StatusCode), StatusCode: resp.StatusCode,
+			Err: fmt.Errorf("share link answered %d with no redirect", resp.StatusCode)}
 	}
 	u, err := url.Parse(loc)
 	if err != nil {

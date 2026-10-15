@@ -2,7 +2,7 @@ package reddit
 
 import (
 	"context"
-	"errors"
+	"net/http"
 	"regexp"
 	"strings"
 	"testing"
@@ -16,22 +16,21 @@ import (
 // The pre-v2 "[#N]" length marker is gone (encoders MUST NOT emit it).
 var tabularHeaderRE = regexp.MustCompile(`(?m)^\s*[a-z_]+\[\d+\]\{[a-z_,]+\}:$`)
 
-// crawlWithBody runs a full Engine.Crawl against a fake browser that serves
+// crawlWithBody runs a full Engine.Crawl against a fake Reddit that serves
 // threadJSON for the thread fetch and morechildren for /api/morechildren
 // (morechildren == "" fails the expansion round, leaving the gaps in place).
 func crawlWithBody(t *testing.T, threadJSON, morechildren string, eo domain.EngineOptions) domain.Document {
 	t.Helper()
-	sess := &fakeSession{evalFn: func(js string) (string, error) {
-		if strings.Contains(js, "morechildren") {
-			if morechildren == "" {
-				return "", errors.New("expansion disabled in this test")
-			}
-			return envStr(200, morechildren), nil
-		}
-		return envStr(200, threadJSON), nil
-	}}
 	e := New(Config{
-		Fetcher: NewFetcher(FetcherConfig{Browser: &fakeBrowser{name: "fake", session: sess}}),
+		Fetcher: cookieFetcher(func(r *http.Request) *http.Response {
+			if strings.Contains(r.URL.Path, "/api/morechildren") {
+				if morechildren == "" {
+					return reply(r, 404, `{"message":"expansion disabled in this test"}`, nil)
+				}
+				return reply(r, 200, morechildren, nil)
+			}
+			return reply(r, 200, threadJSON, nil)
+		}),
 		Limiter: httpx.NewDomainLimiter(1, 0),
 	})
 	doc, err := e.Crawl(context.Background(), "https://www.reddit.com/r/golang/comments/p1/t/", eo)

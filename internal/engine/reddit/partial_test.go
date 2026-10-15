@@ -3,6 +3,7 @@ package reddit
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -10,19 +11,19 @@ import (
 	"github.com/kinorai/omnifeed/internal/httpx"
 )
 
-// partialEngine wires a Reddit engine to a fake browser that serves the
+// partialEngine wires a Reddit engine to a fake Reddit that serves the
 // reddit_old.json thread and answers every /api/morechildren round with more.
-func partialEngine(t *testing.T, more func() string) *Engine {
+// The fetcher is a direct one: only a direct method expands a thread.
+func partialEngine(t *testing.T, more func(r *http.Request) *http.Response) *Engine {
 	t.Helper()
 	thread := string(mustReadFixture(t, "reddit_old.json"))
-	sess := &fakeSession{evalFn: func(js string) (string, error) {
-		if strings.Contains(js, "/api/morechildren") {
-			return more(), nil
-		}
-		return envStr(200, thread), nil
-	}}
 	return New(Config{
-		Fetcher: NewFetcher(FetcherConfig{Browser: &fakeBrowser{name: "fake", session: sess}}),
+		Fetcher: cookieFetcher(func(r *http.Request) *http.Response {
+			if strings.Contains(r.URL.Path, "/api/morechildren") {
+				return more(r)
+			}
+			return reply(r, 200, thread, nil)
+		}),
 		Limiter: httpx.NewDomainLimiter(2, 0),
 		DefaultOpts: Options{
 			Format:    "toon",
@@ -39,7 +40,7 @@ const partialURL = "https://www.reddit.com/r/news/comments/1t056xf/oxycontin_mak
 func TestCrawl_BlockedMoreChildrenMarksPartial(t *testing.T) {
 	for _, format := range []string{"toon", "json"} {
 		t.Run(format, func(t *testing.T) {
-			e := partialEngine(t, func() string { return envStr(429, "Too Many Requests") })
+			e := partialEngine(t, func(r *http.Request) *http.Response { return reply(r, 429, "Too Many Requests", nil) })
 			doc, err := e.Crawl(context.Background(), partialURL, domain.EngineOptions{RedditFormat: format})
 			if err != nil {
 				t.Fatalf("Crawl: %v (a blocked expansion round must not fail the crawl)", err)
@@ -77,7 +78,7 @@ func TestCrawl_BlockedMoreChildrenMarksPartial(t *testing.T) {
 // no note.
 func TestCrawl_CompleteExpansionIsNotPartial(t *testing.T) {
 	more := string(mustReadFixture(t, "morechildren.json"))
-	e := partialEngine(t, func() string { return envStr(200, more) })
+	e := partialEngine(t, func(r *http.Request) *http.Response { return reply(r, 200, more, nil) })
 	doc, err := e.Crawl(context.Background(), partialURL, domain.EngineOptions{})
 	if err != nil {
 		t.Fatalf("Crawl: %v", err)

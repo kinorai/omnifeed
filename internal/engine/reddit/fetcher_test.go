@@ -66,14 +66,19 @@ func alwaysBody(body string) *fakeSession {
 
 const validListing = `[{"kind":"Listing","data":{"children":[]}},{"kind":"Listing","data":{"children":[]}}]`
 
-func openSession(t *testing.T, b browser.Browser) *Session {
+// openFirst opens the session of the fetcher's first chain method.
+func openFirst(t *testing.T, f *Fetcher) *Session {
 	t.Helper()
-	f := NewFetcher(FetcherConfig{Browser: b})
-	s, err := f.Open(context.Background())
+	s, err := f.methods[0].open(context.Background())
 	if err != nil {
-		t.Fatalf("Open: %v", err)
+		t.Fatalf("open %s: %v", f.methods[0].name, err)
 	}
 	return s
+}
+
+func openSession(t *testing.T, b browser.Browser) *Session {
+	t.Helper()
+	return openFirst(t, NewFetcher(FetcherConfig{Browser: b}))
 }
 
 // --- envelope classification ---
@@ -176,35 +181,19 @@ func TestFetchListingTimeWindow(t *testing.T) {
 	}
 }
 
-// FetchMoreChildren must reuse the exact thread page FetchThread navigated to,
-// so the expansion POST runs from the page that cleared the bot wall.
-func TestSessionReusesThreadPage(t *testing.T) {
-	sess := alwaysBody(validListing)
-	s := openSession(t, &fakeBrowser{name: "primary", session: sess})
-
-	if _, err := s.FetchThread(context.Background(), "/r/news/comments/abc123/some_title/", 500, 20, "top"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.FetchMoreChildren(context.Background(), "t3_abc123", []string{"x1", "x2"}, "top"); err != nil {
-		t.Fatal(err)
-	}
-	if len(sess.navs) != 2 || sess.navs[0] != sess.navs[1] {
-		t.Fatalf("morechildren must re-navigate the same thread page; navs = %v", sess.navs)
-	}
-	if !strings.Contains(sess.evals[1], "morechildren") {
-		t.Errorf("morechildren JS must POST /api/morechildren; js = %s", sess.evals[1])
-	}
-}
-
 // A whole crawl runs on ONE browser session: re-opening per fetch would leak a
-// session per fetch and lose the recorded thread page.
+// session per fetch.
 func TestCrawlOpensOneSession(t *testing.T) {
 	b := &fakeBrowser{name: "crawl4ai", session: alwaysBody(validListing)}
-	s := openSession(t, b)
-	if _, err := s.FetchThread(context.Background(), "/r/news/comments/abc123/t/", 500, 20, "top"); err != nil {
+	c, err := NewFetcher(FetcherConfig{Browser: b}).OpenChain(context.Background())
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.FetchMoreChildren(context.Background(), "t3_abc123", []string{"x1"}, "top"); err != nil {
+	defer func() { _ = c.Close(context.Background()) }()
+	if _, err := c.FetchThread(context.Background(), "/r/news/comments/abc123/t/", 500, 20, "top"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.FetchListing(context.Background(), "news", "hot", 25, ""); err != nil {
 		t.Fatal(err)
 	}
 	if b.opened != 1 {
@@ -230,55 +219,16 @@ func TestResolveShareURL(t *testing.T) {
 	}
 }
 
-// FetchMoreChildren without a prior FetchThread has no thread page to run the
-// same-origin POST from — it must fail loudly, not fabricate a URL.
-func TestFetchMoreChildrenRequiresFetchThread(t *testing.T) {
-	s := openSession(t, &fakeBrowser{name: "primary", session: alwaysBody(validListing)})
+// A browser session refuses an expansion: Reddit refuses the logged-out call,
+// so it must fail without sending anything.
+func TestBrowserFetchMoreChildrenRefused(t *testing.T) {
+	sess := alwaysBody(validListing)
+	s := openSession(t, &fakeBrowser{name: "primary", session: sess})
 	if _, err := s.FetchMoreChildren(context.Background(), "t3_abc", []string{"c1"}, "top"); err == nil {
-		t.Fatal("expected error when FetchMoreChildren precedes FetchThread")
+		t.Fatal("expected an error from a browser expansion")
 	}
-}
-
-// --- pure snippet helpers ---
-
-func TestJSLit(t *testing.T) {
-	for _, in := range []string{
-		`https://www.reddit.com/r/x/comments/abc/t.json?a=1`,
-		`evil"; fetch("http://attacker"); //`,
-		`back\slash`,
-		"tab\tand\nnewline",
-		`</script><b>`,
-	} {
-		out := jsLit(in)
-		var back string
-		if err := json.Unmarshal([]byte(out), &back); err != nil || back != in {
-			t.Errorf("jsLit(%q)=%q is not a round-tripping literal (err=%v back=%q)", in, out, err, back)
-		}
-	}
-}
-
-func TestGetPostJS(t *testing.T) {
-	u := "https://www.reddit.com/r/x/comments/abc/t.json?raw_json=1"
-	g := getJS(u)
-	if !strings.Contains(g, "fetch("+jsLit(u)) {
-		t.Errorf("getJS missing escaped url: %s", g)
-	}
-	if !strings.Contains(g, "JSON.stringify({s: r.status, b: await r.text(), ") {
-		t.Errorf("getJS missing envelope return: %s", g)
-	}
-	for _, h := range []string{`"retry-after"`, `"x-ratelimit-reset"`, `"x-ratelimit-remaining"`} {
-		if !strings.Contains(g, "r.headers.get("+h+")") {
-			t.Errorf("getJS does not capture the %s header: %s", h, g)
-		}
-	}
-
-	body := "api_type=json&children=a%2Cb&link_id=t3_abc"
-	p := postJS("https://www.reddit.com/api/morechildren", body)
-	if !strings.Contains(p, `"POST"`) {
-		t.Errorf("postJS not a POST: %s", p)
-	}
-	if !strings.Contains(p, "body: "+jsLit(body)) {
-		t.Errorf("postJS missing escaped form body: %s", p)
+	if len(sess.evals) != 0 {
+		t.Errorf("browser ran %d snippets, want 0", len(sess.evals))
 	}
 }
 

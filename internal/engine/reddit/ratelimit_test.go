@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"testing"
 	"time"
 
@@ -62,30 +63,19 @@ func TestUnwrapEnvelope_RateLimitHeaders(t *testing.T) {
 
 // On a 429 the method that got it is held for Reddit's Retry-After (or the
 // chain cooldown, when longer). With no other method configured, the next
-// crawl is refused up front instead of walking into the same wall. The shared
-// crawl limiter is not penalized: in a chain it would stall every method.
-func TestFetch_RateLimitPenalizesDomain(t *testing.T) {
+// crawl is refused up front instead of walking into the same wall.
+func TestFetch_RateLimitHoldsMethod(t *testing.T) {
 	limiter := httpx.NewDomainLimiter(2, 0)
-	var penalized []string
 	sess := &fakeSession{evalFn: func(string) (string, error) {
 		return rlEnv(429, "Too Many Requests", "120", "", "0"), nil
 	}}
-	f := NewFetcher(FetcherConfig{
-		Browser: &fakeBrowser{name: "crawl4ai", session: sess},
-		Penalize: func(rawURL string, d time.Duration) {
-			penalized = append(penalized, rawURL)
-			limiter.Penalize(rawURL, d)
-		},
-	})
+	f := NewFetcher(FetcherConfig{Browser: &fakeBrowser{name: "crawl4ai", session: sess}})
 	e := New(Config{Fetcher: f, Limiter: limiter})
 
 	_, err := e.Crawl(context.Background(), "https://www.reddit.com/r/news/comments/abc123/t/", domain.EngineOptions{})
 	var fe *domain.FetchError
 	if !errors.As(err, &fe) || fe.Kind != domain.KindHTTP429 || fe.RetryAfter != 120*time.Second {
 		t.Fatalf("first crawl err = %v, want http_429 with RetryAfter 120s", err)
-	}
-	if len(penalized) != 0 {
-		t.Fatalf("Penalize calls = %v, want none: the hold is on the method", penalized)
 	}
 
 	// The next crawl, with a budget shorter than the hold, is refused before it
@@ -103,41 +93,37 @@ func TestFetch_RateLimitPenalizesDomain(t *testing.T) {
 }
 
 // A success that spends the last of the budget (X-Ratelimit-Remaining 0) is
-// returned, and still penalizes so the next request waits for the reset.
-func TestFetch_RemainingZeroPenalizesButSucceeds(t *testing.T) {
-	var got time.Duration
+// returned, and still holds the method so the next request waits for the
+// reset.
+func TestFetch_RemainingZeroHoldsButSucceeds(t *testing.T) {
 	sess := &fakeSession{evalFn: func(string) (string, error) {
 		return rlEnv(200, validListing, "", "37", "0.0"), nil
 	}}
-	f := NewFetcher(FetcherConfig{
-		Browser:  &fakeBrowser{name: "crawl4ai", session: sess},
-		Penalize: func(_ string, d time.Duration) { got = d },
-	})
-	s, err := f.Open(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
+	f := NewFetcher(FetcherConfig{Browser: &fakeBrowser{name: "crawl4ai", session: sess}})
+	s := openFirst(t, f)
+	before := time.Now()
 	if _, err := s.FetchThread(context.Background(), "/r/news/comments/abc123/t/", 500, 20, "top"); err != nil {
 		t.Fatalf("FetchThread = %v, want success", err)
 	}
-	if got != 37*time.Second {
-		t.Fatalf("Penalize got %s, want 37s", got)
+	if left := f.methods[0].until().Sub(before); left < 36*time.Second || left > 38*time.Second {
+		t.Fatalf("method held %s, want 37s", left)
 	}
 }
 
 // The Reddit quota counts every request that reaches Reddit — morechildren
 // rounds included — not every crawl. With a quota of 2, the third request is
-// refused (quota_exhausted, with a retry-after) without reaching the browser.
+// refused (quota_exhausted, with a retry-after) without reaching Reddit.
 func TestFetch_QuotaCountsEveryRequest(t *testing.T) {
-	sess := alwaysBody(validListing)
+	sent := 0
 	f := NewFetcher(FetcherConfig{
-		Browser: &fakeBrowser{name: "crawl4ai", session: sess},
-		Quota:   httpx.NewDomainQuotaLimiter(2, 0, 2, time.Minute),
+		SessionCookie: "sess", UserAgent: "omnifeed/test",
+		HTTP: &http.Client{Transport: roundTrip(func(r *http.Request) *http.Response {
+			sent++
+			return reply(r, 200, validListing, nil)
+		})},
+		Quota: httpx.NewDomainQuotaLimiter(2, 0, 2, time.Minute),
 	})
-	s, err := f.Open(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
+	s := openFirst(t, f)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
@@ -147,13 +133,13 @@ func TestFetch_QuotaCountsEveryRequest(t *testing.T) {
 	if _, err := s.FetchMoreChildren(ctx, "t3_abc123", []string{"c1"}, "top"); err != nil {
 		t.Fatalf("morechildren 1: %v", err)
 	}
-	_, err = s.FetchMoreChildren(ctx, "t3_abc123", []string{"c2"}, "top")
+	_, err := s.FetchMoreChildren(ctx, "t3_abc123", []string{"c2"}, "top")
 	var fe *domain.FetchError
 	if !errors.As(err, &fe) || fe.Kind != domain.KindQuotaExhausted || fe.RetryAfter <= 0 {
 		t.Fatalf("third request err = %v, want quota_exhausted with a RetryAfter", err)
 	}
-	if len(sess.evals) != 2 {
-		t.Fatalf("browser saw %d requests, want 2 (the third must be refused before sending)", len(sess.evals))
+	if sent != 2 {
+		t.Fatalf("Reddit saw %d requests, want 2 (the third must be refused before sending)", sent)
 	}
 }
 

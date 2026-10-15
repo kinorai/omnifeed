@@ -3,6 +3,7 @@ package reddit
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -34,10 +35,8 @@ const redditOrigin = "https://www.reddit.com"
 // OpenChain tries them in the configured order (see Chain). Open uses one
 // backend only: the first credential, else the browser.
 type Fetcher struct {
-	browser  browser.Browser
-	direct   *directClient
-	quota    httpx.Limiter
-	penalize func(rawURL string, d time.Duration)
+	browser browser.Browser
+	quota   httpx.Limiter
 
 	// The chain (see Chain): configured methods in order, how long a failed
 	// one is skipped, and the hooks that report outcomes and state changes.
@@ -68,20 +67,12 @@ type FetcherConfig struct {
 	// (OMNIFEED_REDDIT_QUOTA=0, the default).
 	Quota httpx.Limiter
 
-	// Penalize, when non-nil, is told how long Reddit asked us to stay away
-	// (Retry-After / X-Ratelimit-Reset on a 429, or when X-Ratelimit-Remaining
-	// hits 0), keyed on the Reddit origin. main.go points it at the per-domain
-	// limiter, so the next crawl waits out the block instead of extending it.
-	Penalize func(rawURL string, d time.Duration)
-
-	// ClientID or SessionCookie, when set, switch the fetcher to direct mode:
-	// Reddit still serves its .json endpoints to authenticated clients, plain
-	// HTTP ones included, so the fetcher calls them directly and never opens
-	// the browser (see directClient). ClientID, an OAuth app's client ID used
-	// with the installed-client grant, wins when both are set: it needs no
-	// account and has ten times the budget. HTTP is the client for direct
-	// mode; it must not follow redirects (share links resolve from the
-	// Location header).
+	// ClientID and SessionCookie, when set, enable the client_id and session
+	// methods: Reddit still serves its .json endpoints to authenticated
+	// clients, plain HTTP ones included (see directClient). ClientID is an
+	// OAuth app's client ID, used with the installed-client grant. HTTP is
+	// the client for both; it must not follow redirects (share links resolve
+	// from the Location header).
 	ClientID      string
 	SessionCookie string
 	UserAgent     string
@@ -95,7 +86,7 @@ type FetcherConfig struct {
 	Cooldown time.Duration
 	// OnOutcome is told each call's result per method ("ok", "error", or the
 	// failure kind that moved the call on); OnState is told when a method
-	// starts or stops being skipped. Both are for metrics and may be nil.
+	// starts or stops being skipped. Both are for metrics and can be nil.
 	OnOutcome func(method, outcome string)
 	OnState   func(method string, up bool)
 
@@ -103,7 +94,7 @@ type FetcherConfig struct {
 	// (main.go sets it when OMNIFEED_REDIS_URL is set). It fails open: on an
 	// error the chain uses only this pod's memory for 30s. OnSharedError is
 	// told each failed operation, and OnSharedDown each change between shared
-	// and per-pod state. Both may be nil.
+	// and per-pod state. Both can be nil.
 	Shared        SharedState
 	OnSharedError func(op string, err error)
 	OnSharedDown  func(down bool)
@@ -111,7 +102,7 @@ type FetcherConfig struct {
 
 // NewFetcher constructs a Fetcher from cfg.
 func NewFetcher(cfg FetcherConfig) *Fetcher {
-	f := &Fetcher{browser: cfg.Browser, quota: cfg.Quota, penalize: cfg.Penalize,
+	f := &Fetcher{browser: cfg.Browser, quota: cfg.Quota,
 		cooldown: cfg.Cooldown, onOutcome: cfg.OnOutcome, onState: cfg.OnState,
 		shared: cfg.Shared, onSharedError: cfg.OnSharedError, onSharedDown: cfg.OnSharedDown}
 	if f.cooldown <= 0 {
@@ -123,12 +114,6 @@ func NewFetcher(cfg FetcherConfig) *Fetcher {
 	}
 	if cfg.SessionCookie != "" {
 		cookie = newCookieClient(cfg.HTTP, cfg.UserAgent, cfg.SessionCookie)
-	}
-	// Open (one backend, no chain) uses the first credential there is.
-	if token != nil {
-		f.direct = token
-	} else {
-		f.direct = cookie
 	}
 	order := cfg.Methods
 	if len(order) == 0 {
@@ -193,10 +178,12 @@ func (f *Fetcher) holdMethod(ctx context.Context, m *method, d time.Duration) {
 	}
 }
 
-// markUp records a success through m. If m was down, it ends the hold on
-// every replica too.
-func (f *Fetcher) markUp(ctx context.Context, m *method) {
-	m.clear()
+// markUp records a success through m, for a call that started at start. If
+// m was down, it ends the hold on every replica too.
+func (f *Fetcher) markUp(ctx context.Context, m *method, start time.Time) {
+	if !m.clear(start) {
+		return
+	}
 	if f.setDown(m, false) && f.sharedReady() {
 		f.sharedDone("clear", f.shared.Clear(context.WithoutCancel(ctx), m.name))
 	}
@@ -285,36 +272,22 @@ func (f *Fetcher) state(method string, up bool) {
 	}
 }
 
-// Direct reports whether the fetcher calls Reddit's JSON endpoints with a
-// credential instead of reading pages through the browser.
-func (f *Fetcher) Direct() bool { return f.direct != nil }
-
-// Open starts a crawl session. The caller owns it and must Close it.
-func (f *Fetcher) Open(ctx context.Context) (*Session, error) {
-	if f.direct != nil {
-		return &Session{direct: f.direct, quota: f.quota, penalize: f.penalize}, nil
-	}
-	return f.openBrowser(ctx)
-}
-
 func (f *Fetcher) openBrowser(ctx context.Context) (*Session, error) {
 	bs, err := f.browser.Open(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("open %s browser: %w", f.browser.Name(), err)
 	}
-	return &Session{active: bs, quota: f.quota, penalize: f.penalize}, nil
+	return &Session{active: bs, quota: f.quota}, nil
 }
 
-// Session is one crawl's browser session. All fetches in a crawl share one
-// Session so state like the recorded thread page carries across them. Not safe
-// for concurrent use.
+// Session is one chain method's connection for one crawl: a browser session,
+// or a direct client. Not safe for concurrent use.
 type Session struct {
-	active     browser.Session
-	direct     *directClient // set in direct mode; active is nil then
-	held       bool          // Reddit asked for back-off on the last answer (chain use)
-	threadPage string        // the thread page FetchThread navigated to, reused by morechildren
-	quota      httpx.Limiter
-	penalize   func(rawURL string, d time.Duration)
+	active   browser.Session
+	direct   *directClient // set for a direct method; active is nil then
+	held     bool          // Reddit asked for back-off on the last answer
+	quota    httpx.Limiter
+	penalize func(rawURL string, d time.Duration) // holds this session's method
 }
 
 // admit takes one slot of the Reddit request quota and returns its release.
@@ -357,7 +330,7 @@ func (s *Session) fetchViaBrowser(ctx context.Context, navURL, js string) ([]byt
 	if err != nil {
 		return nil, err
 	}
-	return s.unwrap(envStr)
+	return s.unwrap(unwrapEnvelope(envStr))
 }
 
 // fetchDirect GETs a Reddit JSON endpoint with the logged-in session and
@@ -384,8 +357,7 @@ func (s *Session) fetchDirect(ctx context.Context, rawURL string) ([]byte, error
 	if err != nil {
 		return nil, err
 	}
-	envStr, _ := json.Marshal(env)
-	out, err := s.unwrap(string(envStr))
+	out, err := s.unwrap(env.unwrap())
 	if err != nil && env.S == http.StatusForbidden {
 		return nil, fmt.Errorf("reddit refused this request twice with the configured credential (if every Reddit fetch fails this way, check OMNIFEED_REDDIT_CLIENT_ID, or refresh OMNIFEED_REDDIT_SESSION): %w", err)
 	}
@@ -395,12 +367,11 @@ func (s *Session) fetchDirect(ctx context.Context, rawURL string) ([]byte, error
 // directRetryDelay spaces the one retry after a 403 in logged-in mode.
 var directRetryDelay = 2 * time.Second
 
-// unwrap decodes an envelope and hands Reddit's back-off to the limiter.
-func (s *Session) unwrap(envStr string) ([]byte, error) {
-	out, wait, err := unwrapEnvelope(envStr)
-	// Reddit's own back-off answer outlives this request: hand it to the
-	// limiter so the NEXT crawl waits it out, instead of walking into the same
-	// wall and extending the block. Applied on success too — a 200 with
+// unwrap hands Reddit's back-off from an unwrapped envelope to the method.
+func (s *Session) unwrap(out string, wait time.Duration, err error) ([]byte, error) {
+	// Reddit's own back-off answer outlives this request: hold the method so
+	// the NEXT crawl skips it, instead of walking into the same wall and
+	// extending the block. Applied on success too — a 200 with
 	// X-Ratelimit-Remaining 0 means the next request will be refused.
 	if wait > 0 && s.penalize != nil {
 		s.penalize(redditOrigin+"/", wait)
@@ -427,6 +398,11 @@ func unwrapEnvelope(envStr string) (body string, wait time.Duration, err error) 
 	if err := json.Unmarshal([]byte(envStr), &env); err != nil {
 		return "", 0, &domain.FetchError{Kind: domain.KindBadResponse, Err: fmt.Errorf("decode fetch envelope: %w", err)}
 	}
+	return env.unwrap()
+}
+
+// unwrap yields the Reddit body of a decoded envelope, as unwrapEnvelope does.
+func (env fetchEnvelope) unwrap() (body string, wait time.Duration, err error) {
 	wait = env.backoff()
 	if env.S == http.StatusTooManyRequests {
 		return "", wait, &domain.FetchError{
@@ -465,12 +441,7 @@ func (s *Session) FetchThread(ctx context.Context, permalink string, limit, dept
 		return s.fetchDirect(ctx, fmt.Sprintf("%s%s.json?limit=%d&depth=%d&sort=%s&raw_json=1",
 			s.direct.origin, strings.TrimSuffix(permalink, "/"), limit, depth, url.QueryEscape(sort)))
 	}
-	page := threadPageURL(permalink, url.QueryEscape(sort))
-	// Record the thread page so morechildren re-navigates to the exact same URL —
-	// on the live-page backend that makes its Navigate a no-op and the page is
-	// reused across all expansion rounds.
-	s.threadPage = page
-	return s.fetchViaBrowser(ctx, page, threadHTMLJS(limit))
+	return s.fetchViaBrowser(ctx, threadPageURL(permalink, sort), threadHTMLJS(limit))
 }
 
 // FetchListing retrieves a subreddit listing (hot/new/top/…) from its rendered
@@ -495,9 +466,9 @@ func (s *Session) FetchListing(ctx context.Context, sub, sort string, limit int,
 }
 
 // FetchMoreChildren expands collapsed reply branches via /api/morechildren.
-// linkID must include the t3_ prefix; childIDs are bare IDs (no prefix). It
-// re-navigates the thread page FetchThread recorded and runs the same-origin
-// POST from it.
+// linkID must include the t3_ prefix; childIDs are bare IDs (no prefix). Only
+// a direct method can: Reddit refuses the logged-out call with 403, so the
+// browser session has no path to it (the chain never asks it).
 func (s *Session) FetchMoreChildren(ctx context.Context, linkID string, childIDs []string, sort string) ([]byte, error) {
 	form := url.Values{}
 	form.Set("api_type", "json")
@@ -506,17 +477,10 @@ func (s *Session) FetchMoreChildren(ctx context.Context, linkID string, childIDs
 	form.Set("limit_children", "false")
 	form.Set("sort", sort)
 	form.Set("raw_json", "1")
-	if s.direct != nil {
-		return s.fetchDirect(ctx, s.direct.origin+"/api/morechildren.json?"+form.Encode())
+	if s.direct == nil {
+		return nil, errors.New("morechildren needs a direct method: Reddit refuses it logged out")
 	}
-	page := s.threadPage
-	if page == "" {
-		// Deriving a page from the link id here would navigate a URL that never
-		// matches the one FetchThread recorded, silently defeating the live-page
-		// no-op — fail loudly instead.
-		return nil, fmt.Errorf("FetchMoreChildren before FetchThread: no thread page recorded")
-	}
-	return s.fetchViaBrowser(ctx, page, postJS(redditOrigin+"/api/morechildren", form.Encode()))
+	return s.fetchDirect(ctx, s.direct.origin+"/api/morechildren.json?"+form.Encode())
 }
 
 // ResolveShareURL resolves a Reddit share link (/r/{sub}/s/{code}) to its
@@ -547,38 +511,7 @@ func (s *Session) ResolveShareURL(ctx context.Context, shareURL string) (string,
 	return resolved, nil
 }
 
-// --- in-page fetch snippets ---
-
-// jsLit encodes s as a JS string literal (a JSON string is a valid JS string).
-// This is the injection guard: any quote/backslash smuggled through a permalink
-// or child ID is escaped, so it can't break out of the literal in the JS we send.
-func jsLit(s string) string {
-	b, _ := json.Marshal(s)
-	return string(b)
-}
-
-// envelopeReturn is the tail every in-page snippet ends with: the status, the
-// body, and the rate-limit headers Reddit sends. The fetch is same-origin, so
-// every response header is readable (CORS exposure rules only bind
-// cross-origin reads); a missing header comes back as null.
-const envelopeReturn = `return JSON.stringify({s: r.status, b: await r.text(), ` +
-	`ra: r.headers.get("retry-after"), rs: r.headers.get("x-ratelimit-reset"), ` +
-	`rm: r.headers.get("x-ratelimit-remaining")});`
-
-// getJS returns an async snippet that GETs u and returns the envelope.
-func getJS(u string) string {
-	return `const r = await fetch(` + jsLit(u) + `, {headers: {"Accept": "application/json"}}); ` +
-		envelopeReturn
-}
-
-// postJS returns an async snippet that form-POSTs body to u and returns the
-// envelope.
-func postJS(u, body string) string {
-	return `const r = await fetch(` + jsLit(u) + `, {method: "POST", ` +
-		`headers: {"Accept": "application/json", "Content-Type": "application/x-www-form-urlencoded"}, ` +
-		`body: ` + jsLit(body) + `}); ` +
-		envelopeReturn
-}
+// --- fetch envelope ---
 
 // fetchEnvelope is what the in-page snippet returns: the HTTP status of the
 // Reddit fetch and its raw body — so we can tell a Reddit-side block (403)
