@@ -44,7 +44,8 @@ type directClient struct {
 }
 
 const (
-	oauthOrigin   = "https://oauth.reddit.com"
+	oauthOrigin = "https://oauth.reddit.com"
+	// #nosec G101 -- a public endpoint URL, not a credential
 	tokenEndpoint = "https://www.reddit.com/api/v1/access_token"
 	// installedClientGrant is Reddit's grant for apps that cannot keep a
 	// secret: the client ID alone gets an app-only token.
@@ -151,6 +152,7 @@ func (c *directClient) request(ctx context.Context, rawURL string, authenticate 
 			}
 			req.Header.Set("Authorization", "Bearer "+tok)
 		} else {
+			// #nosec G124 -- a request cookie: Secure, HttpOnly and SameSite apply to Set-Cookie only
 			req.AddCookie(&http.Cookie{Name: "reddit_session", Value: c.cookie})
 		}
 	}
