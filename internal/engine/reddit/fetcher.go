@@ -608,6 +608,16 @@ func (env fetchEnvelope) missing() error {
 		return &domain.FetchError{Kind: domain.KindHTTP403, StatusCode: env.S,
 			Err: fmt.Errorf("reddit returned 403 via browser: %s", truncate(env.B, 200))}
 	}
+	// A rate-limit or server-error page is Reddit's state, not a markup
+	// change: it must not read as layout (and fire OmnifeedRedditLayoutChanged).
+	if env.S == http.StatusTooManyRequests {
+		return &domain.FetchError{Kind: domain.KindHTTP429, StatusCode: env.S, RetryAfter: env.backoff(),
+			Err: fmt.Errorf("reddit returned 429 via browser: %s", truncate(env.B, 200))}
+	}
+	if env.S >= 500 {
+		return &domain.FetchError{Kind: domain.KindUpstreamError, StatusCode: env.S,
+			Err: fmt.Errorf("reddit returned %d via browser: %s", env.S, truncate(env.B, 200))}
+	}
 	return &domain.FetchError{Kind: domain.KindLayout, StatusCode: env.S,
 		Err: fmt.Errorf("the rendered reddit page has no post to read (markup changed?): %s", truncate(env.B, 200))}
 }
