@@ -276,7 +276,12 @@ const (
     // working as configured, and the caller should retry later.
     KindQuotaExhausted FailureKind = "quota_exhausted"
     KindBadResponse    FailureKind = "bad_response" // unparseable or empty upstream response
-    KindError          FailureKind = "error"        // anything else
+    // KindLayout is a page that rendered but that the engine could not read:
+    // the markup it extracts from is gone or changed (a site redesign), or an
+    // interstitial it does not know. Not a block and not the content's fault,
+    // so it is not retried elsewhere: the engine's extraction needs updating.
+    KindLayout FailureKind = "layout"
+    KindError  FailureKind = "error" // anything else
 )
 ```
 
