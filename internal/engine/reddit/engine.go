@@ -272,12 +272,16 @@ func (e *Engine) resolveOptions(eo domain.EngineOptions) Options {
 	if eo.RedditKeepCreated {
 		opts.KeepCreated = true
 	}
-	if eo.RedditMaxRounds > 0 {
-		opts.MaxRounds = min(eo.RedditMaxRounds, MaxExpansionRounds)
-	}
 	if opts.MaxRounds == 0 {
 		opts.MaxRounds = 3
 	}
+	// An explicit 0 turns expansion off: a caller that asks for none must
+	// not pay for the default rounds.
+	if eo.RedditMaxRounds != nil && *eo.RedditMaxRounds >= 0 {
+		opts.MaxRounds = *eo.RedditMaxRounds
+	}
+	// The hard cap holds for the configured default too.
+	opts.MaxRounds = min(opts.MaxRounds, MaxExpansionRounds)
 	if opts.Format == "" {
 		opts.Format = "toon"
 	}

@@ -100,6 +100,8 @@ Where the skip state lives:
 
 - **`omnifeed_reddit_method_up{method}`:** `1` while a method is in use, `0` while
   it is skipped. It returns to `1` only after a call through the method succeeds.
+- **`omnifeed_reddit_ratelimit_remaining{method}`:** the requests left in Reddit's
+  window, from each direct answer.
 - **`omnifeed_ratelimit_degraded{scope="reddit_methods"}`:** `1` while Redis is
   unreachable and each pod keeps its own holds. It exists only with Redis.
 - **`omnifeed_reddit_method_calls_total{method,outcome}`:** `outcome` is `ok`,

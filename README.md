@@ -162,9 +162,9 @@ flowchart TB
   class e1,e2,e3,e4,e5,e6,e7,e8,e9,e10,e11,e12,e13,e14,e15,e16,e17 animate;
 ```
 
-### <img src="https://raw.githubusercontent.com/Tarikul-Islam-Anik/Animated-Fluent-Emojis/master/Emojis/Objects/Shield.png" width="22" height="22" /> Reddit anti-bot handling
+### <img src="https://raw.githubusercontent.com/Tarikul-Islam-Anik/Animated-Fluent-Emojis/master/Emojis/Objects/Shield.png" width="22" height="22" /> Reddit access
 
-Reddit 403-blocks non-browser HTTP clients. The Reddit engine drives a **real headless browser** to a `www.reddit.com` page and fetches Reddit's JSON from inside it, with no auth, cookies or API key. Sustained scraping can still raise your IP's risk score, so slow down if fetches return the block page. [Details and tuning](docs/configuration.md#reddit-anti-bot-handling).
+Reddit closed its JSON to logged-out clients in 2026. The Reddit engine reads it with an OAuth client ID or a logged-in session cookie, and falls back to a **real headless browser** that reads the rendered page. Sustained scraping can still raise your IP's risk score, so slow down if fetches return the block page. [Details and tuning](docs/configuration.md#reddit-access).
 
 ### <img src="https://raw.githubusercontent.com/Tarikul-Islam-Anik/Animated-Fluent-Emojis/master/Emojis/Activities/Puzzle%20Piece.png" width="22" height="22" /> Extending it
 
