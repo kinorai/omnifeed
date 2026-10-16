@@ -178,8 +178,15 @@ None of the Reddit MCP servers or skills surveyed uses a session cookie over pla
   - The fetches run as that account, so use a secondary account.
 - **`browser` is a degraded fallback:**
   - It is slow, and it hits rate limits quickly.
-  - A listing returns only the first page of posts, about 25, even when the caller
-    asks for 100.
+  - A listing is read from the rendered page. The default card view rendered 3
+    posts for r/kubernetes top-of-week on 2026-10-16. The compact view
+    (`feedViewType=compactView`), which omnifeed uses, renders 34, and each
+    scroll to the bottom loads 25 more. When the caller asks for more than the
+    page holds, omnifeed scrolls: 100 posts took about 11s per listing
+    (2026-10-16), against about 4s for the default 25, which needs no scroll.
+    Each batch is one more request to Reddit that the quota does not count,
+    so 100 posts cost 1+4 requests. A batch Reddit refuses, or the 15s cap,
+    marks the listing partial (timings: `listingHTMLJS` in `html.go`).
   - It handles comment replies below depth 4 by following their permalink pages,
     inside the same request cap.
 - **The output format is unchanged:** every method produces omnifeed's existing

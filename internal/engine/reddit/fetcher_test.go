@@ -153,13 +153,13 @@ func TestFetchListingShape(t *testing.T) {
 		t.Fatal(err)
 	}
 	// An empty time window must not leak a bare `?t=` into the page URL.
-	if len(sess.navs) != 1 || sess.navs[0] != "https://www.reddit.com/r/golang/hot/" {
+	if len(sess.navs) != 1 || sess.navs[0] != "https://www.reddit.com/r/golang/hot/?feedViewType=compactView" {
 		t.Errorf("navs = %v", sess.navs)
 	}
 	if strings.Contains(sess.evals[0], ".json") {
 		t.Errorf("listing fetch must not request .json; js = %s", sess.evals[0])
 	}
-	if !strings.Contains(sess.evals[0], ".slice(0, 25)") {
+	if !strings.Contains(sess.evals[0], "const LIMIT = 25;") {
 		t.Errorf("listing JS missing the 25-post cap; js = %s", sess.evals[0])
 	}
 }
@@ -173,10 +173,10 @@ func TestFetchListingTimeWindow(t *testing.T) {
 	if _, err := s.FetchListing(context.Background(), "selfhosted", "top", 50, "week"); err != nil {
 		t.Fatal(err)
 	}
-	if len(sess.navs) != 1 || sess.navs[0] != "https://www.reddit.com/r/selfhosted/top/?t=week" {
+	if len(sess.navs) != 1 || sess.navs[0] != "https://www.reddit.com/r/selfhosted/top/?feedViewType=compactView&t=week" {
 		t.Errorf("navs = %v", sess.navs)
 	}
-	if !strings.Contains(sess.evals[0], ".slice(0, 50)") {
+	if !strings.Contains(sess.evals[0], "const LIMIT = 50;") {
 		t.Errorf("listing JS missing the 50-post cap; js = %s", sess.evals[0])
 	}
 }
