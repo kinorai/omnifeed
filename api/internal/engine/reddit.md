@@ -23,7 +23,9 @@ Package reddit implements the Reddit\-specific engine: fetches threads via the p
   - [func \(c \*Chain\) FetchListing\(ctx context.Context, sub, sort string, limit int, t string\) \(\[\]byte, error\)](<#Chain.FetchListing>)
   - [func \(c \*Chain\) FetchMoreChildren\(ctx context.Context, linkID string, childIDs \[\]string, sort string\) \(\[\]byte, error\)](<#Chain.FetchMoreChildren>)
   - [func \(c \*Chain\) FetchThread\(ctx context.Context, permalink string, limit, depth int, sort string\) \(\[\]byte, error\)](<#Chain.FetchThread>)
+  - [func \(c \*Chain\) Partial\(\) string](<#Chain.Partial>)
   - [func \(c \*Chain\) ResolveShareURL\(ctx context.Context, shareURL string\) \(string, error\)](<#Chain.ResolveShareURL>)
+  - [func \(c \*Chain\) Served\(\) string](<#Chain.Served>)
 - [type Comment](<#Comment>)
 - [type Config](<#Config>)
 - [type Engine](<#Engine>)
@@ -34,6 +36,7 @@ Package reddit implements the Reddit\-specific engine: fetches threads via the p
   - [func \(\*Engine\) SameHostAsPage\(\) bool](<#Engine.SameHostAsPage>)
 - [type Fetcher](<#Fetcher>)
   - [func NewFetcher\(cfg FetcherConfig\) \*Fetcher](<#NewFetcher>)
+  - [func \(f \*Fetcher\) LoadSharedHolds\(ctx context.Context\)](<#Fetcher.LoadSharedHolds>)
   - [func \(f \*Fetcher\) Methods\(\) \[\]string](<#Fetcher.Methods>)
   - [func \(f \*Fetcher\) OpenChain\(context.Context\) \(\*Chain, error\)](<#Fetcher.OpenChain>)
 - [type FetcherConfig](<#FetcherConfig>)
@@ -81,6 +84,18 @@ const DefaultMethodCooldown = 10 * time.Minute
 
 ```go
 const MaxExpansionRounds = 40
+```
+
+<a name="MethodChain"></a>MethodChain is the method label OnOutcome gets for the chain as a whole: outcome "all\_held" when every method was on hold and nothing was sent.
+
+```go
+const MethodChain = "chain"
+```
+
+<a name="RedditMethodKey"></a>RedditMethodKey is the metadata key \(fetch\_url \_meta\) naming the chain method that served a Reddit document: client\_id, session or browser.
+
+```go
+const RedditMethodKey = "reddit_method"
 ```
 
 ## Variables
@@ -192,6 +207,15 @@ func (c *Chain) FetchThread(ctx context.Context, permalink string, limit, depth 
 
 FetchThread is Session.FetchThread over the chain.
 
+<a name="Chain.Partial"></a>
+### func \(\*Chain\) Partial
+
+```go
+func (c *Chain) Partial() string
+```
+
+Partial returns why the crawl's answers were incomplete, or "".
+
 <a name="Chain.ResolveShareURL"></a>
 ### func \(\*Chain\) ResolveShareURL
 
@@ -200,6 +224,15 @@ func (c *Chain) ResolveShareURL(ctx context.Context, shareURL string) (string, e
 ```
 
 ResolveShareURL is Session.ResolveShareURL over the chain.
+
+<a name="Chain.Served"></a>
+### func \(\*Chain\) Served
+
+```go
+func (c *Chain) Served() string
+```
+
+Served returns the method that answered the last successful call.
 
 <a name="Comment"></a>
 ## type Comment
@@ -315,6 +348,15 @@ func NewFetcher(cfg FetcherConfig) *Fetcher
 
 NewFetcher constructs a Fetcher from cfg.
 
+<a name="Fetcher.LoadSharedHolds"></a>
+### func \(\*Fetcher\) LoadSharedHolds
+
+```go
+func (f *Fetcher) LoadSharedHolds(ctx context.Context)
+```
+
+LoadSharedHolds reads the holds other replicas recorded and reports the held methods down, so a pod that starts during a hold does not report every method up until its first call. A no\-op without shared state.
+
 <a name="Fetcher.Methods"></a>
 ### func \(\*Fetcher\) Methods
 
@@ -366,11 +408,17 @@ type FetcherConfig struct {
     // the next one can get around is skipped; 0 means DefaultMethodCooldown.
     Methods  []string
     Cooldown time.Duration
-    // OnOutcome is told each call's result per method ("ok", "error", or the
-    // failure kind that moved the call on); OnState is told when a method
-    // starts or stops being skipped. Both are for metrics and can be nil.
+    // OnOutcome is told each call's result per method: "ok", "incomplete"
+    // (a browser answer holding less than the page claims), "not_found",
+    // "forbidden" (a subreddit refused to everyone), "layout" (an unreadable
+    // page), "error", or the failure kind that moved the call on. Method
+    // MethodChain with "all_held" is a call that found every method on hold.
+    // OnState is told when a method starts or stops being skipped: why is
+    // "failed", "backoff" (Reddit answered but asked for one) or "held"
+    // (found on hold, maybe by another replica), and hold how long for; both
+    // are empty when up. Both hooks are for metrics and logs and can be nil.
     OnOutcome func(method, outcome string)
-    OnState   func(method string, up bool)
+    OnState   func(method string, up bool, why string, hold time.Duration)
 
     // Shared, when non-nil, shares the methods' holds between replicas
     // (main.go sets it when OMNIFEED_REDIS_URL is set). It fails open: on an

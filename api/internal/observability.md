@@ -545,33 +545,34 @@ Metrics holds Prometheus collectors emitted by the proxy.
 
 ```go
 type Metrics struct {
-    RequestsTotal       *prometheus.CounterVec   // engine, tenant, status, reason, cache
-    RequestAttempts     *prometheus.CounterVec   // upstream, attempt (first|retry)
-    RequestSecs         *prometheus.HistogramVec // engine, status, reason
-    UpstreamSecs        *prometheus.HistogramVec // upstream, op, status
-    LimiterWaitSecs     *prometheus.HistogramVec // engine
-    RatelimitErrors     *prometheus.CounterVec   // op
-    RatelimitPenalties  *prometheus.CounterVec   // upstream
-    RatelimitDegraded   *prometheus.GaugeVec     // scope
-    ResponseChars       *prometheus.HistogramVec // engine
-    EngineFallbacks     *prometheus.CounterVec   // from_engine, reason
-    SearxngUnresponsive *prometheus.CounterVec   // engine, error
-    SearxngEngineHits   *prometheus.CounterVec   // engine
-    SearxngEmpty        *prometheus.CounterVec   // scoped
-    SearxngQueries      *prometheus.CounterVec   // scoped
-    SearxngEngineZero   *prometheus.CounterVec   // engine
-    RedditRounds        prometheus.Histogram
-    RedditMethodCalls   *prometheus.CounterVec // method, outcome
-    RedditMethodUp      *prometheus.GaugeVec   // method
-    RedditSessionExpiry prometheus.Gauge
-    SearchesTotal       *prometheus.CounterVec   // searcher, status, reason, scoped
-    SearchSecs          *prometheus.HistogramVec // searcher, status
-    SearchEnginePos     *prometheus.HistogramVec // engine
-    SearchEngineUnique  *prometheus.CounterVec   // engine
-    CacheRequests       *prometheus.CounterVec   // result
-    CacheBytes          prometheus.Gauge
-    CacheBackend        *prometheus.GaugeVec   // backend
-    CacheBackendErrors  *prometheus.CounterVec // op, kind
+    RequestsTotal           *prometheus.CounterVec   // engine, tenant, status, reason, cache
+    RequestAttempts         *prometheus.CounterVec   // upstream, attempt (first|retry)
+    RequestSecs             *prometheus.HistogramVec // engine, status, reason
+    UpstreamSecs            *prometheus.HistogramVec // upstream, op, status
+    LimiterWaitSecs         *prometheus.HistogramVec // engine
+    RatelimitErrors         *prometheus.CounterVec   // op
+    RatelimitPenalties      *prometheus.CounterVec   // upstream
+    RatelimitDegraded       *prometheus.GaugeVec     // scope
+    ResponseChars           *prometheus.HistogramVec // engine
+    EngineFallbacks         *prometheus.CounterVec   // from_engine, reason
+    SearxngUnresponsive     *prometheus.CounterVec   // engine, error
+    SearxngEngineHits       *prometheus.CounterVec   // engine
+    SearxngEmpty            *prometheus.CounterVec   // scoped
+    SearxngQueries          *prometheus.CounterVec   // scoped
+    SearxngEngineZero       *prometheus.CounterVec   // engine
+    RedditRounds            prometheus.Histogram
+    RedditMethodCalls       *prometheus.CounterVec // method, outcome
+    RedditMethodUp          *prometheus.GaugeVec   // method
+    RedditMethodLastSuccess *prometheus.GaugeVec   // method
+    RedditSessionExpiry     prometheus.Gauge
+    SearchesTotal           *prometheus.CounterVec   // searcher, status, reason, scoped
+    SearchSecs              *prometheus.HistogramVec // searcher, status
+    SearchEnginePos         *prometheus.HistogramVec // engine
+    SearchEngineUnique      *prometheus.CounterVec   // engine
+    CacheRequests           *prometheus.CounterVec   // result
+    CacheBytes              prometheus.Gauge
+    CacheBackend            *prometheus.GaugeVec   // backend
+    CacheBackendErrors      *prometheus.CounterVec // op, kind
 
     HTTPRequests *prometheus.CounterVec   // server, route, code
     HTTPSecs     *prometheus.HistogramVec // server, route

@@ -37,6 +37,7 @@ finer-grained than the codes. Each reason maps to exactly one code:
 | `upstream_error` | `upstream_error` | yes |
 | `upstream_rejected` | `upstream_error` | no (already retried once; usually a per-page verdict) |
 | `bad_response` | `upstream_error` | yes |
+| `layout` | `upstream_error` | no (the page rendered but its markup could not be read: the engine's extraction needs updating) |
 | `error` | `upstream_error` | no |
 | `quota_exhausted` | `quota_exhausted` | yes |
 | (URL rejected before any fetch) | `invalid_request` | no |
