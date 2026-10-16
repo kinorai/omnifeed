@@ -564,6 +564,7 @@ type Metrics struct {
     RedditMethodCalls       *prometheus.CounterVec // method, outcome
     RedditMethodUp          *prometheus.GaugeVec   // method
     RedditMethodLastSuccess *prometheus.GaugeVec   // method
+    RedditRemaining         *prometheus.GaugeVec   // method
     RedditSessionExpiry     prometheus.Gauge
     SearchesTotal           *prometheus.CounterVec   // searcher, status, reason, scoped
     SearchSecs              *prometheus.HistogramVec // searcher, status

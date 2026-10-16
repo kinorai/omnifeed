@@ -419,6 +419,9 @@ type FetcherConfig struct {
     // are empty when up. Both hooks are for metrics and logs and can be nil.
     OnOutcome func(method, outcome string)
     OnState   func(method string, up bool, why string, hold time.Duration)
+    // OnBudget is told the X-Ratelimit-Remaining of each direct answer that
+    // carries it: the requests left in Reddit's window. It can be nil.
+    OnBudget func(method string, remaining float64)
 
     // Shared, when non-nil, shares the methods' holds between replicas
     // (main.go sets it when OMNIFEED_REDIS_URL is set). It fails open: on an
