@@ -169,11 +169,23 @@ return JSON.stringify({s: 200, ...limited, b: JSON.stringify([
 }
 
 // listingHTMLJS returns the snippet that turns a rendered subreddit page into
-// the Listing a .json listing fetch returned. It reads only the posts the
-// first page renders (about 25): more would need the feed's scroll loader.
+// the Listing a .json listing fetch returned. The feed keeps filling in after
+// the page reports loaded, so it waits until the page holds limit posts, or
+// stops growing for 1s, for at most 5s. With the compact view (FetchListing)
+// that read 34 posts of r/kubernetes top-of-week, against 3 read at once from
+// the default view (2026-10-16). More would need the feed's scroll loader.
 func listingHTMLJS(limit int) string {
 	return htmlCommon + fmt.Sprintf(`
-const ps = [...document.querySelectorAll("shreddit-post")].slice(0, %d);
+const LIMIT = %d;
+const count = () => document.querySelectorAll("shreddit-post").length;
+for (let waited = 0, last = -1, still = 0; waited < 5000 && count() < LIMIT; waited += 250) {
+  const n = count();
+  still = n === last ? still + 250 : 0;
+  if (n > 0 && still >= 1000) break;
+  last = n;
+  await new Promise(r => setTimeout(r, 250));
+}
+const ps = [...document.querySelectorAll("shreddit-post")].slice(0, LIMIT);
 if (!ps.length) return missing();
 return JSON.stringify({s: 200, b: JSON.stringify({kind: "Listing", data: {children: ps.map(post)}})});
 `, limit)
