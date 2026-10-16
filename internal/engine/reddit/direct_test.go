@@ -56,7 +56,7 @@ func TestDirectFetchThread(t *testing.T) {
 		got = r
 		return reply(r, 200, validListing, nil)
 	}, nil)
-	body, err := s.FetchThread(context.Background(), "/r/news/comments/abc123/some_title/", 500, 20, "top")
+	body, err := s.FetchThread(context.Background(), "/r/news/comments/abc123/some_title/", 500, 20, "top", 3)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +81,7 @@ func TestDirectForbiddenNamesTheSession(t *testing.T) {
 	s := directSession(t, func(r *http.Request) *http.Response {
 		return reply(r, 403, "<html>blocked by network security</html>", nil)
 	}, nil)
-	_, err := s.FetchThread(context.Background(), "/r/news/comments/abc123/t/", 500, 20, "top")
+	_, err := s.FetchThread(context.Background(), "/r/news/comments/abc123/t/", 500, 20, "top", 3)
 	if err == nil || !strings.Contains(err.Error(), "OMNIFEED_REDDIT_SESSION") {
 		t.Fatalf("err = %v, want a hint to refresh OMNIFEED_REDDIT_SESSION", err)
 	}
@@ -98,7 +98,7 @@ func TestDirectRetriesOneForbidden(t *testing.T) {
 		}
 		return reply(r, 200, validListing, nil)
 	}, nil)
-	if _, err := s.FetchThread(context.Background(), "/r/news/comments/abc123/t/", 500, 20, "top"); err != nil {
+	if _, err := s.FetchThread(context.Background(), "/r/news/comments/abc123/t/", 500, 20, "top", 3); err != nil {
 		t.Fatalf("a single 403 must be retried: %v", err)
 	}
 	if calls != 2 {
@@ -113,7 +113,7 @@ func TestDirectRateLimitPenalizes(t *testing.T) {
 	s := directSession(t, func(r *http.Request) *http.Response {
 		return reply(r, 200, validListing, map[string]string{"X-Ratelimit-Remaining": "0.0", "X-Ratelimit-Reset": "42"})
 	}, func(_ string, d time.Duration) { held = d })
-	if _, err := s.FetchThread(context.Background(), "/r/news/comments/abc123/t/", 500, 20, "top"); err != nil {
+	if _, err := s.FetchThread(context.Background(), "/r/news/comments/abc123/t/", 500, 20, "top", 3); err != nil {
 		t.Fatal(err)
 	}
 	if held != 42*time.Second {
@@ -175,7 +175,7 @@ func TestDirectTokenMode(t *testing.T) {
 		HTTP: &http.Client{Transport: rt}})
 	s := openFirst(t, f)
 	for range 2 {
-		if _, err := s.FetchThread(context.Background(), "/r/news/comments/abc123/t/", 500, 20, "top"); err != nil {
+		if _, err := s.FetchThread(context.Background(), "/r/news/comments/abc123/t/", 500, 20, "top", 3); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -236,7 +236,7 @@ func TestDirectReportsBudget(t *testing.T) {
 		})},
 		OnBudget: func(m string, left float64) { got = append(got, fmt.Sprintf("%s:%g", m, left)) },
 	})
-	if _, err := openFirst(t, f).FetchThread(context.Background(), "/r/news/comments/abc123/t/", 500, 20, "top"); err != nil {
+	if _, err := openFirst(t, f).FetchThread(context.Background(), "/r/news/comments/abc123/t/", 500, 20, "top", 3); err != nil {
 		t.Fatal(err)
 	}
 	if fmt.Sprint(got) != "[session:57]" {

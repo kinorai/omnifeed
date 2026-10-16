@@ -167,6 +167,9 @@ func run(cfg config.Config, logger *slog.Logger) error {
 		OnBudget: func(method string, remaining float64) {
 			metrics.RedditRemaining.WithLabelValues(method).Set(remaining)
 		},
+		OnInPage: func(kind string, n int) {
+			metrics.RedditInPageRequests.WithLabelValues(kind).Add(float64(n))
+		},
 		OnOutcome: func(method, outcome string) {
 			metrics.RedditMethodCalls.WithLabelValues(method, outcome).Inc()
 			if outcome == "ok" || outcome == "incomplete" {
@@ -216,6 +219,10 @@ func run(cfg config.Config, logger *slog.Logger) error {
 	for _, m := range redditFetcher.Methods() {
 		metrics.RedditMethodUp.WithLabelValues(m).Set(1)
 		metrics.RedditMethodLastSuccess.WithLabelValues(m)
+	}
+	// At 0 from the start, so increase() sees the first page's requests.
+	for _, kind := range []string{"listing", "thread"} {
+		metrics.RedditInPageRequests.WithLabelValues(kind)
 	}
 	// A hold another replica recorded still applies to this pod: report it
 	// now rather than at the first call.

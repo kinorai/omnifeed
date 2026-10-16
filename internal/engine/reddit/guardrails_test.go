@@ -63,7 +63,7 @@ func chainThread(t *testing.T, f *Fetcher) (*Chain, error) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = c.Close(context.Background()) })
-	_, err = c.FetchThread(context.Background(), "/r/news/comments/abc123/t/", 500, 20, "top")
+	_, err = c.FetchThread(context.Background(), "/r/news/comments/abc123/t/", 500, 20, "top", 3)
 	return c, err
 }
 

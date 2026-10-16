@@ -37,6 +37,7 @@ type Metrics struct {
 	RedditMethodLastSuccess *prometheus.GaugeVec   // method
 	RedditRemaining         *prometheus.GaugeVec   // method
 	RedditSessionExpiry     prometheus.Gauge
+	RedditInPageRequests    *prometheus.CounterVec   // kind
 	SearchesTotal           *prometheus.CounterVec   // searcher, status, reason, scoped
 	SearchSecs              *prometheus.HistogramVec // searcher, status
 	SearchEnginePos         *prometheus.HistogramVec // engine
@@ -163,6 +164,10 @@ func NewMetrics() *Metrics {
 			Name: "omnifeed_reddit_ratelimit_remaining",
 			Help: "X-Ratelimit-Remaining of the last answer Reddit sent to a direct method (client_id, session): requests left in the current window.",
 		}, []string{"method"}),
+		RedditInPageRequests: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "omnifeed_reddit_inpage_requests_total",
+			Help: `Requests a browser page sent to Reddit itself, on top of its page load, by kind: kind="listing" (scroll batches), kind="thread" ("more replies"). Charged to OMNIFEED_REDDIT_QUOTA once the page answers. Page loads plus these are what Reddit counts against the IP.`,
+		}, []string{"kind"}),
 		RedditSessionExpiry: prometheus.NewGauge(prometheus.GaugeOpts{
 			Name: "omnifeed_reddit_session_expiry_timestamp_seconds",
 			Help: "Unix time the configured reddit_session cookie expires; a human must log in again before it. 0 when no cookie is set or its expiry is unreadable.",
@@ -248,7 +253,7 @@ func NewMetrics() *Metrics {
 		m.LimiterWaitSecs, m.RatelimitErrors, m.RatelimitPenalties, m.RatelimitDegraded,
 		m.ResponseChars, m.EngineFallbacks, m.SearxngUnresponsive,
 		m.SearxngEngineHits, m.SearxngEmpty, m.SearxngQueries, m.SearxngEngineZero,
-		m.RedditRounds, m.RedditMethodCalls, m.RedditMethodUp, m.RedditMethodLastSuccess, m.RedditRemaining, m.RedditSessionExpiry, m.SearchesTotal, m.SearchSecs,
+		m.RedditRounds, m.RedditMethodCalls, m.RedditMethodUp, m.RedditMethodLastSuccess, m.RedditRemaining, m.RedditSessionExpiry, m.RedditInPageRequests, m.SearchesTotal, m.SearchSecs,
 		m.SearchEnginePos, m.SearchEngineUnique, m.CacheRequests, m.CacheBytes,
 		m.CacheBackend, m.CacheBackendErrors)
 	reg.MustRegister(

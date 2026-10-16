@@ -295,10 +295,10 @@ func (c *Chain) runOn(ctx context.Context, directOnly bool, fn func(*Session) er
 }
 
 // FetchThread is Session.FetchThread over the chain.
-func (c *Chain) FetchThread(ctx context.Context, permalink string, limit, depth int, sort string) ([]byte, error) {
+func (c *Chain) FetchThread(ctx context.Context, permalink string, limit, depth int, sort string, expand int) ([]byte, error) {
 	var out []byte
 	err := c.run(ctx, func(s *Session) (err error) {
-		out, err = s.FetchThread(ctx, permalink, limit, depth, sort)
+		out, err = s.FetchThread(ctx, permalink, limit, depth, sort, expand)
 		if err == nil && s.active != nil {
 			s.incomplete, err = checkBrowserThread(out, permalink)
 		}

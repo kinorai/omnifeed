@@ -13,12 +13,12 @@ import (
 // rebuild the .json wire shape from it, which ParseThread and
 // ParseSubredditListing then read unchanged.
 
-// maxExpandRequests caps the "more replies" POSTs one thread fetch sends. Each
-// is one request to Reddit, the same one a reader triggers with a click, but
-// OMNIFEED_REDDIT_QUOTA admits the page load only: the requests run inside the
-// page, out of the limiter's reach. So one browser thread can cost Reddit up
-// to 1+10 requests against one quota slot. At 40, Reddit answered 429 after
-// about 2 large threads (2026-10-15).
+// maxExpandRequests caps the "more replies" requests one thread fetch sends,
+// whatever expand asks for. Each is one request to Reddit, the same one a
+// reader triggers with a click. The page sends them itself, so the quota sees
+// them only afterwards: the envelope reports how many went out and the session
+// charges them (Session.charge). At 40, Reddit answered 429 after about 2
+// large threads (2026-10-15).
 const maxExpandRequests = 10
 
 // expandDelayMS spaces those POSTs, so the expansion reads like a person
@@ -56,10 +56,11 @@ const missing = () => {
 // threadHTMLJS returns the snippet that turns the rendered thread page into
 // the [postListing, commentListing] pair a .json thread fetch returned. It
 // expands collapsed branches by POSTing the page's own more-comments forms,
-// until the page holds limit comments, the request cap is spent, or no branch
+// until the page holds limit comments, maxReq requests are spent, or no branch
 // is left. Branches it did not open come back as "more" gaps with no child IDs,
-// so the engine reports them without trying /api/morechildren.
-func threadHTMLJS(limit int) string {
+// so the engine reports them without trying /api/morechildren. The envelope's
+// n is the requests sent.
+func threadHTMLJS(limit, maxReq int) string {
 	return htmlCommon + fmt.Sprintf(`
 const LIMIT = %d, MAX_REQ = %d, DELAY = %d;
 const p = document.querySelector("shreddit-post");
@@ -162,10 +163,10 @@ const gaps = pending().map(e => {
     depth: parent ? (depthOf.get(A(parent, "thingid").replace(/^t1_/, "")) ?? 0) + 1 : 0,
     children: []}};
 });
-return JSON.stringify({s: 200, ...limited, b: JSON.stringify([
+return JSON.stringify({s: 200, ...limited, n: sent, b: JSON.stringify([
   {kind: "Listing", data: {children: [post(p)]}},
   {kind: "Listing", data: {children: things.concat(gaps)}}])});
-`, limit, maxExpandRequests, expandDelayMS)
+`, limit, maxReq, expandDelayMS)
 }
 
 // The listing snippet's timings, in ms. It checks the feed every listingPollMS,
@@ -186,8 +187,9 @@ const (
 // holds about 9 posts when the page reports loaded and 34 within 3s; each
 // scroll to the bottom then loads 25 more. Every batch, the first one
 // included, is a fetch of /svc/shreddit/community-more-posts/: one request to
-// Reddit that, like the thread snippet's expansions, OMNIFEED_REDDIT_QUOTA
-// does not count. 100 posts cost 1+4 requests; the default 25 needs no scroll.
+// Reddit that the page sends itself, like the thread snippet's expansions: the
+// envelope's n reports them so the session charges them to the quota. 100
+// posts cost 1+4 requests; the default 25 needs no scroll.
 // The page drops the posts scrolled past, so each post is read as soon as it
 // shows up. A batch Reddit refused, or the listingMaxMS cap, comes back as the
 // envelope's xs (status, or -1), so the listing is reported partial. Measured
@@ -211,11 +213,16 @@ const grab = () => {
   }
   return got.length;
 };
+// The browser keeps 250 resource entries by default and drops the rest, and a
+// scrolled feed loads an image or more per post: raise the cap so the batches
+// past it are still counted (the envelope's n) and their refusals seen.
+performance.setResourceTimingBufferSize(10000);
+const batches = () => performance.getEntriesByType("resource").filter(e =>
+  e.name.includes("/svc/shreddit/community-more-posts/"));
 // The status of the first feed batch Reddit refused, 0 while none was. An entry
 // is recorded once its response is in; 0 there is unknown, not a refusal.
 const refused = () => {
-  const e = performance.getEntriesByType("resource").find(e =>
-    e.name.includes("/svc/shreddit/community-more-posts/") && e.responseStatus > 0 && e.responseStatus !== 200);
+  const e = batches().find(e => e.responseStatus > 0 && e.responseStatus !== 200);
   return e ? e.responseStatus : 0;
 };
 let xs = 0;
@@ -233,7 +240,7 @@ for (let waited = 0, last = grab(), still = 0; last < LIMIT; ) {
 }
 const ps = got.slice(0, LIMIT);
 if (!ps.length) return missing();
-return JSON.stringify({s: 200, xs, b: JSON.stringify({kind: "Listing", data: {children: ps}})});
+return JSON.stringify({s: 200, xs, n: batches().length, b: JSON.stringify({kind: "Listing", data: {children: ps}})});
 `, limit, listingPollMS, listingScrollAfterMS, listingStallMS, listingMaxMS, listingNoFeedMS)
 }
 
