@@ -156,7 +156,7 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, eo domain.EngineOptio
 		return domain.Document{}, fmt.Errorf("normalize url: %w", err)
 	}
 
-	threadJSON, err := sess.FetchThread(ctx, permalink, opts.FetchLimit, opts.Depth, opts.Sort)
+	threadJSON, err := sess.FetchThread(ctx, permalink, opts.FetchLimit, opts.Depth, opts.Sort, opts.MaxRounds)
 	if err != nil {
 		return domain.Document{}, fmt.Errorf("fetch thread: %w", err)
 	}

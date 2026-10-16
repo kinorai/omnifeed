@@ -102,7 +102,7 @@ func TestFetch_RemainingZeroHoldsButSucceeds(t *testing.T) {
 	f := NewFetcher(FetcherConfig{Browser: &fakeBrowser{name: "crawl4ai", session: sess}})
 	s := openFirst(t, f)
 	before := time.Now()
-	if _, err := s.FetchThread(context.Background(), "/r/news/comments/abc123/t/", 500, 20, "top"); err != nil {
+	if _, err := s.FetchThread(context.Background(), "/r/news/comments/abc123/t/", 500, 20, "top", 3); err != nil {
 		t.Fatalf("FetchThread = %v, want success", err)
 	}
 	if left := f.methods[0].until().Sub(before); left < 36*time.Second || left > 38*time.Second {
@@ -127,7 +127,7 @@ func TestFetch_QuotaCountsEveryRequest(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	if _, err := s.FetchThread(ctx, "/r/news/comments/abc123/t/", 500, 20, "top"); err != nil {
+	if _, err := s.FetchThread(ctx, "/r/news/comments/abc123/t/", 500, 20, "top", 3); err != nil {
 		t.Fatalf("thread: %v", err)
 	}
 	if _, err := s.FetchMoreChildren(ctx, "t3_abc123", []string{"c1"}, "top"); err != nil {

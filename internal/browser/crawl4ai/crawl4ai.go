@@ -119,11 +119,13 @@ func (s *session) Eval(ctx context.Context, js string) (string, error) {
 	if s.b.token != "" {
 		headers["Authorization"] = "Bearer " + s.b.token
 	}
-	// MaxAttempts 2 (matching the generic engine): 0.9.2+ scrubs 500 bodies, so
-	// one retry covers transient faults while a deterministic block costs at
-	// most 2× one navigation.
+	// MaxAttempts 2 (matching the generic engine) retries a transient fault,
+	// but not a scrubbed 500: 0.9.2+ hides the verdict behind a generic body,
+	// and on Reddit the usual one is a 429 on the navigation. Retried a second
+	// later, it walked into the same wall and filled Reddit's window further
+	// (2026-10-16: every refused navigation was sent twice).
 	resp, err := s.b.client.DoRetry(ctx, http.MethodPost, s.b.execJSURL, reqBody, headers,
-		httpx.RetryConfig{MaxAttempts: 2, RetryableStatus: antibot.RetryableStatus})
+		httpx.RetryConfig{MaxAttempts: 2, RetryableStatus: retryableStatus})
 	if err != nil {
 		// A nav that trips crawl4ai's anti-bot detector surfaces here as a 5xx
 		// whose body names the verdict: a block. Anything else (crawl4ai
@@ -169,6 +171,12 @@ func (s *session) Eval(ctx context.Context, js string) (string, error) {
 		return "", &domain.FetchError{Kind: domain.KindBadResponse, Err: fmt.Errorf("unwrap js result: %w", err)}
 	}
 	return out, nil
+}
+
+// retryableStatus is antibot.RetryableStatus minus a scrubbed 500, whose
+// cause crawl4ai keeps to its own log (see Eval).
+func retryableStatus(status int, body string) bool {
+	return antibot.RetryableStatus(status, body) && !antibot.IsScrubbedServerError(body)
 }
 
 // --- crawl4ai /execute_js wire types ---

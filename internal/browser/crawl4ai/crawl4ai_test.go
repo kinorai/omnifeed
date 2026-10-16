@@ -175,6 +175,39 @@ func TestEvalErrorClassification(t *testing.T) {
 	}
 }
 
+// A scrubbed 500 hides Reddit's usual verdict, a 429 on the navigation, so it
+// is sent once: a retry a second later only meets the same wall. A 5xx that
+// names no verdict and is not scrubbed is still retried.
+func TestEvalRetries(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status int
+		body   string
+		calls  int
+	}{
+		{"scrubbed 500", 500, `{"error":"Internal server error","correlation_id":"7efd9b9dc621"}`, 1},
+		{"transient 503", 503, `{"error":"Service Unavailable"}`, 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := 0
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				calls++
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer srv.Close()
+
+			s := openOn(t, srv.URL, "", "https://www.reddit.com/r/x/")
+			if _, err := s.Eval(context.Background(), `return 1;`); err == nil {
+				t.Fatal("Eval succeeded, want the 5xx")
+			}
+			if calls != tc.calls {
+				t.Fatalf("crawl4ai called %d times, want %d", calls, tc.calls)
+			}
+		})
+	}
+}
+
 // Eval before Navigate is a programming error, not a crawl outcome — it must
 // fail fast rather than POST an empty url.
 func TestEvalBeforeNavigate(t *testing.T) {
