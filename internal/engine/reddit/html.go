@@ -169,25 +169,43 @@ return JSON.stringify({s: 200, ...limited, b: JSON.stringify([
 }
 
 // listingHTMLJS returns the snippet that turns a rendered subreddit page into
-// the Listing a .json listing fetch returned. The feed keeps filling in after
-// the page reports loaded, so it waits until the page holds limit posts, or
-// stops growing for 1s, for at most 5s. With the compact view (FetchListing)
-// that read 34 posts of r/kubernetes top-of-week, against 3 read at once from
-// the default view (2026-10-16). More would need the feed's scroll loader.
+// the Listing a .json listing fetch returned. The compact view (FetchListing)
+// holds about 9 posts when the page reports loaded and 34 within 3s, then
+// stops; each scroll to the bottom loads 25 more. The page drops the posts
+// scrolled past, so each post is read as soon as it shows up. It reads until
+// it holds limit posts, scrolling once the feed is still for 1s, and stops when
+// the feed stays still for 3s (the sub has no more) or after 15s. Measured
+// 2026-10-16 on four subs, top-of-week: 84 posts after ~6s, so 100 in ~8s; a
+// sub with fewer posts that week returned all of them. A limit the first 34
+// cover (the default 25) returns before the first scroll.
 func listingHTMLJS(limit int) string {
 	return htmlCommon + fmt.Sprintf(`
 const LIMIT = %d;
-const count = () => document.querySelectorAll("shreddit-post").length;
-for (let waited = 0, last = -1, still = 0; waited < 5000 && count() < LIMIT; waited += 250) {
-  const n = count();
-  still = n === last ? still + 250 : 0;
-  if (n > 0 && still >= 1000) break;
-  last = n;
+const read = new WeakSet(), ids = new Set(), got = [];
+const grab = () => {
+  for (const p of document.querySelectorAll("shreddit-post")) {
+    if (read.has(p)) continue;
+    read.add(p);
+    const t = post(p);
+    // A post with no id is kept (Go reports the listing partial, or a layout
+    // change when none has one); one already read is not.
+    if (t.data.id && ids.has(t.data.id)) continue;
+    if (t.data.id) ids.add(t.data.id);
+    got.push(t);
+  }
+  return got.length;
+};
+for (let waited = 0, last = grab(), still = 0; waited < 15000 && last < LIMIT; waited += 250) {
   await new Promise(r => setTimeout(r, 250));
+  const n = grab();
+  still = n === last ? still + 250 : 0;
+  if (still >= 3000) break;
+  if (n > 0 && still >= 1000) window.scrollTo(0, document.body.scrollHeight);
+  last = n;
 }
-const ps = [...document.querySelectorAll("shreddit-post")].slice(0, LIMIT);
+const ps = got.slice(0, LIMIT);
 if (!ps.length) return missing();
-return JSON.stringify({s: 200, b: JSON.stringify({kind: "Listing", data: {children: ps.map(post)}})});
+return JSON.stringify({s: 200, b: JSON.stringify({kind: "Listing", data: {children: ps}})});
 `, limit)
 }
 
