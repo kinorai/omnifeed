@@ -168,15 +168,73 @@ return JSON.stringify({s: 200, ...limited, b: JSON.stringify([
 `, limit, maxExpandRequests, expandDelayMS)
 }
 
+// The listing snippet's timings, in ms. It checks the feed every listingPollMS,
+// scrolls to the bottom after listingScrollAfterMS and again after twice that
+// with no new post, and stops after listingStallMS with none (the sub has no
+// more), or after listingMaxMS in all. A page with no feed element after
+// listingNoFeedMS (a wall, a gone or refused sub) is read as is.
+const (
+	listingPollMS        = 250
+	listingScrollAfterMS = 1000
+	listingStallMS       = 3000
+	listingMaxMS         = 15000
+	listingNoFeedMS      = 1000
+)
+
 // listingHTMLJS returns the snippet that turns a rendered subreddit page into
-// the Listing a .json listing fetch returned. It reads only the posts the
-// first page renders (about 25): more would need the feed's scroll loader.
+// the Listing a .json listing fetch returned. The compact view (FetchListing)
+// holds about 9 posts when the page reports loaded and 34 within 3s; each
+// scroll to the bottom then loads 25 more. Every batch, the first one
+// included, is a fetch of /svc/shreddit/community-more-posts/: one request to
+// Reddit that, like the thread snippet's expansions, OMNIFEED_REDDIT_QUOTA
+// does not count. 100 posts cost 1+4 requests; the default 25 needs no scroll.
+// The page drops the posts scrolled past, so each post is read as soon as it
+// shows up. A batch Reddit refused, or the listingMaxMS cap, comes back as the
+// envelope's xs (status, or -1), so the listing is reported partial. Measured
+// 2026-10-16, top-of-week: 100 posts in about 11s per call, a sub's whole
+// 42-post week in 8s, 25 posts in 4s.
 func listingHTMLJS(limit int) string {
 	return htmlCommon + fmt.Sprintf(`
-const ps = [...document.querySelectorAll("shreddit-post")].slice(0, %d);
+const LIMIT = %d;
+const POLL = %d, SCROLL_AFTER = %d, STALL = %d, MAX = %d, NO_FEED = %d;
+const read = new WeakSet(), ids = new Set(), got = [];
+const grab = () => {
+  for (const p of document.querySelectorAll("shreddit-post")) {
+    if (read.has(p)) continue;
+    read.add(p);
+    const t = post(p);
+    // A post with no id is kept (Go reports the listing partial, or a layout
+    // change when none has one); one already read is not.
+    if (t.data.id && ids.has(t.data.id)) continue;
+    if (t.data.id) ids.add(t.data.id);
+    got.push(t);
+  }
+  return got.length;
+};
+// The status of the first feed batch Reddit refused, 0 while none was. An entry
+// is recorded once its response is in; 0 there is unknown, not a refusal.
+const refused = () => {
+  const e = performance.getEntriesByType("resource").find(e =>
+    e.name.includes("/svc/shreddit/community-more-posts/") && e.responseStatus > 0 && e.responseStatus !== 200);
+  return e ? e.responseStatus : 0;
+};
+let xs = 0;
+for (let waited = 0, last = grab(), still = 0; last < LIMIT; ) {
+  if (waited >= MAX) { xs = -1; break; }
+  await new Promise(r => setTimeout(r, POLL));
+  waited += POLL;
+  const n = grab();
+  still = n === last ? still + POLL : 0;
+  last = n;
+  if ((xs = refused())) break;
+  if (!n && waited >= NO_FEED && !document.querySelector("shreddit-feed")) break;
+  if (still >= STALL) break;
+  if (n && still > 0 && still %% SCROLL_AFTER === 0) window.scrollTo(0, document.body.scrollHeight);
+}
+const ps = got.slice(0, LIMIT);
 if (!ps.length) return missing();
-return JSON.stringify({s: 200, b: JSON.stringify({kind: "Listing", data: {children: ps.map(post)}})});
-`, limit)
+return JSON.stringify({s: 200, xs, b: JSON.stringify({kind: "Listing", data: {children: ps}})});
+`, limit, listingPollMS, listingScrollAfterMS, listingStallMS, listingMaxMS, listingNoFeedMS)
 }
 
 // threadPageURL is the thread page, sorted the way the caller asked. The page
