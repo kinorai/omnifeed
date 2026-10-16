@@ -55,7 +55,7 @@ func fetchThread(t *testing.T, f *Fetcher) error {
 		t.Fatal(err)
 	}
 	defer func() { _ = c.Close(context.Background()) }()
-	_, err = c.FetchThread(context.Background(), "/r/news/comments/abc123/t/", 500, 20, "top")
+	_, err = c.FetchThread(context.Background(), "/r/news/comments/abc123/t/", 500, 20, "top", 3)
 	return err
 }
 

@@ -45,6 +45,7 @@ type Fetcher struct {
 	onOutcome func(method, outcome string)
 	onState   func(method string, up bool, why string, hold time.Duration)
 	onBudget  func(method string, remaining float64)
+	onInPage  func(kind string, n int)
 
 	// The holds shared with other replicas, when configured. After a failure
 	// the chain uses only its own memory until sharedDownUntil.
@@ -64,8 +65,9 @@ type FetcherConfig struct {
 	// Quota, when non-nil, admits every request that reaches Reddit — the
 	// thread fetch, each /api/morechildren round, a listing, a share-link
 	// resolve — not the crawl as a whole. Reddit counts requests, and one
-	// expand=full crawl can be 40 of them. Nil disables it
-	// (OMNIFEED_REDDIT_QUOTA=0, the default).
+	// expand=full crawl can be 40 of them. The requests a browser page sends
+	// itself (scroll batches, "more replies") are charged once the page
+	// answers. Nil disables it (OMNIFEED_REDDIT_QUOTA=0, the default).
 	Quota httpx.Limiter
 
 	// ClientID and SessionCookie, when set, enable the client_id and session
@@ -99,6 +101,10 @@ type FetcherConfig struct {
 	// OnBudget is told the X-Ratelimit-Remaining of each direct answer that
 	// carries it: the requests left in Reddit's window. It can be nil.
 	OnBudget func(method string, remaining float64)
+	// OnInPage is told how many requests a browser page sent itself, by kind
+	// ("listing" or "thread"): the scroll batches and "more replies" that come
+	// on top of the page load. It can be nil.
+	OnInPage func(kind string, n int)
 
 	// Shared, when non-nil, shares the methods' holds between replicas
 	// (main.go sets it when OMNIFEED_REDIS_URL is set). It fails open: on an
@@ -113,7 +119,7 @@ type FetcherConfig struct {
 // NewFetcher constructs a Fetcher from cfg.
 func NewFetcher(cfg FetcherConfig) *Fetcher {
 	f := &Fetcher{browser: cfg.Browser, quota: cfg.Quota,
-		cooldown: cfg.Cooldown, onOutcome: cfg.OnOutcome, onState: cfg.OnState, onBudget: cfg.OnBudget,
+		cooldown: cfg.Cooldown, onOutcome: cfg.OnOutcome, onState: cfg.OnState, onBudget: cfg.OnBudget, onInPage: cfg.OnInPage,
 		shared: cfg.Shared, onSharedError: cfg.OnSharedError, onSharedDown: cfg.OnSharedDown}
 	if f.cooldown <= 0 {
 		f.cooldown = DefaultMethodCooldown
@@ -306,7 +312,7 @@ func (f *Fetcher) openBrowser(ctx context.Context) (*Session, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open %s browser: %w", f.browser.Name(), err)
 	}
-	return &Session{active: bs, quota: f.quota}, nil
+	return &Session{active: bs, quota: f.quota, onInPage: f.onInPage}, nil
 }
 
 // Session is one chain method's connection for one crawl: a browser session,
@@ -323,6 +329,7 @@ type Session struct {
 	incomplete string
 	quota      httpx.Limiter
 	penalize   func(rawURL string, d time.Duration) // holds this session's method
+	onInPage   func(kind string, n int)             // reports a page's own requests
 	budget     func(remaining float64)              // reports a direct answer's X-Ratelimit-Remaining
 }
 
@@ -352,26 +359,81 @@ func (s *Session) Close(ctx context.Context) error {
 }
 
 // fetchViaBrowser navigates navURL, runs the in-page fetch snippet js, and
-// unwraps the {s,b} envelope into the Reddit body.
-func (s *Session) fetchViaBrowser(ctx context.Context, navURL, js string) ([]byte, error) {
+// unwraps the {s,b} envelope into the Reddit body. kind ("listing" or
+// "thread") labels the requests the page sent itself, which are charged to the
+// quota once it answers.
+func (s *Session) fetchViaBrowser(ctx context.Context, kind, navURL, js string) ([]byte, error) {
 	release, err := s.admit(ctx)
 	if err != nil {
 		return nil, err
 	}
-	defer release()
 	if err := s.active.Navigate(ctx, navURL); err != nil {
+		release()
 		return nil, err
 	}
 	envStr, err := s.active.Eval(ctx, js)
+	release()
 	if err != nil {
+		s.holdAfterFailedPage(err)
 		return nil, err
 	}
 	var env fetchEnvelope
 	if err := json.Unmarshal([]byte(envStr), &env); err != nil {
 		return nil, &domain.FetchError{Kind: domain.KindBadResponse, Err: fmt.Errorf("decode fetch envelope: %w", err)}
 	}
+	if env.N > 0 {
+		if s.onInPage != nil {
+			s.onInPage(kind, env.N)
+		}
+		s.charge(env.N)
+	}
 	s.cut = env.cut()
 	return s.unwrap(env.unwrap())
+}
+
+// chargeTimeout bounds how long Session.charge waits for quota slots. It only
+// has to outlast a full window or two; a charge still waiting past it was for
+// a quota far smaller than the page's requests.
+var chargeTimeout = 10 * time.Minute
+
+// charge books n requests in the quota: the ones a page sent itself (scroll
+// batches, "more replies"), which the limiter could not admit beforehand. It
+// runs after the answer is back, so this crawl doesn't wait for it; the next
+// one waits as it would behind any n requests. Each slot is released at once:
+// these requests are done, they only have to count in the window.
+func (s *Session) charge(n int) {
+	if s.quota == nil || n <= 0 {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), chargeTimeout)
+		defer cancel()
+		for range n {
+			release, err := s.quota.Acquire(ctx, "reddit", redditOrigin+"/")
+			if err != nil {
+				return
+			}
+			release()
+		}
+	}()
+}
+
+// holdAfterFailedPage holds every Reddit request for defaultRateLimitBackoff
+// after a page load crawl4ai answered with a server error. crawl4ai (0.9.2+)
+// hides why behind a generic 500, and its log shows the usual cause: Reddit
+// refused the navigation with a 429. Without the hold, the next fetch walks
+// straight into the same wall and keeps the window full; with it, a crash
+// costs one minute. A 504 is crawl4ai's own time limit, not a refusal.
+func (s *Session) holdAfterFailedPage(err error) {
+	var fe *domain.FetchError
+	if !errors.As(err, &fe) || fe.StatusCode < http.StatusInternalServerError || fe.StatusCode == http.StatusGatewayTimeout {
+		return
+	}
+	if p, ok := s.quota.(interface {
+		Penalize(rawURL string, d time.Duration)
+	}); ok {
+		p.Penalize(redditOrigin+"/", defaultRateLimitBackoff)
+	}
 }
 
 // fetchDirect GETs a Reddit JSON endpoint with the logged-in session and
@@ -487,14 +549,18 @@ func (env fetchEnvelope) unwrap() (body string, wait time.Duration, err error) {
 // a real browser on the reddit.com origin (see html.go for why not .json). It
 // returns the [post, comments] listing pair the .json endpoint used to, so
 // ParseThread reads it unchanged. limit is the comment count at which the
-// in-page expansion stops. depth is not applied: the page renders its own
-// nesting.
-func (s *Session) FetchThread(ctx context.Context, permalink string, limit, depth int, sort string) ([]byte, error) {
+// in-page expansion stops, and expand the most "more replies" requests it may
+// send (capped at maxExpandRequests): the browser's counterpart of the
+// /api/morechildren rounds a direct method makes. depth is not applied: the
+// page renders its own nesting. A direct method ignores expand; the engine
+// expands its gaps afterwards.
+func (s *Session) FetchThread(ctx context.Context, permalink string, limit, depth int, sort string, expand int) ([]byte, error) {
 	if s.direct != nil {
 		return s.fetchDirect(ctx, fmt.Sprintf("%s%s.json?limit=%d&depth=%d&sort=%s&raw_json=1",
 			s.direct.origin, strings.TrimSuffix(permalink, "/"), limit, depth, url.QueryEscape(sort)))
 	}
-	return s.fetchViaBrowser(ctx, threadPageURL(permalink, sort), threadHTMLJS(limit))
+	return s.fetchViaBrowser(ctx, "thread", threadPageURL(permalink, sort),
+		threadHTMLJS(limit, min(max(expand, 0), maxExpandRequests)))
 }
 
 // FetchListing retrieves a subreddit listing (hot/new/top/…) from its rendered
@@ -519,7 +585,7 @@ func (s *Session) FetchListing(ctx context.Context, sub, sort string, limit int,
 		q.Set("t", t)
 	}
 	page := fmt.Sprintf("%s/r/%s/%s/?%s", redditOrigin, sub, sort, q.Encode())
-	return s.fetchViaBrowser(ctx, page, listingHTMLJS(limit))
+	return s.fetchViaBrowser(ctx, "listing", page, listingHTMLJS(limit))
 }
 
 // FetchMoreChildren expands collapsed reply branches via /api/morechildren.
@@ -586,6 +652,9 @@ type fetchEnvelope struct {
 	// answered, 0 when none was refused.
 	NF int `json:"nf,omitempty"`
 	XS int `json:"xs,omitempty"`
+	// N is how many requests the page sent itself: scroll batches for a
+	// listing, "more replies" for a thread.
+	N int `json:"n,omitempty"`
 }
 
 // Page texts Reddit renders, logged out, instead of a thread or a listing.

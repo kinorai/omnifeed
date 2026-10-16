@@ -184,11 +184,21 @@ None of the Reddit MCP servers or skills surveyed uses a session cookie over pla
     scroll to the bottom loads 25 more. When the caller asks for more than the
     page holds, omnifeed scrolls: 100 posts took about 11s per listing
     (2026-10-16), against about 4s for the default 25, which needs no scroll.
-    Each batch is one more request to Reddit that the quota does not count,
-    so 100 posts cost 1+4 requests. A batch Reddit refuses, or the 15s cap,
-    marks the listing partial (timings: `listingHTMLJS` in `html.go`).
-  - It handles comment replies below depth 4 by following their permalink pages,
-    inside the same request cap.
+    Each batch is one more request to Reddit, so 100 posts cost 1+4 requests.
+    A batch Reddit refuses, or the 15s cap, marks the listing partial
+    (timings: `listingHTMLJS` in `html.go`).
+  - A thread's "more replies" are requests too. The page sends at most the
+    caller's `expand` of them (the browser's counterpart of `/api/morechildren`
+    rounds), never more than 10, and `expand: 0` sends none. It handles replies
+    below depth 4 by following their permalink pages, inside the same cap.
+  - The quota counts what the page sent itself. omnifeed cannot admit those
+    requests beforehand, so the page reports how many went out and omnifeed
+    charges them once it answers: the next request waits behind them. Counting
+    only the page load let a 10-thread brief send about 90 requests to Reddit
+    in 5 minutes against a quota of 30, and Reddit answered `429` (2026-10-16).
+  - crawl4ai hides why a page load failed behind a generic `500`, and on Reddit
+    the usual reason is a `429`. So omnifeed does not retry that `500`, and holds
+    every Reddit request for a minute after it.
 - **The output format is unchanged:** every method produces omnifeed's existing
   Reddit schema, so clients do not change.
 - **Reddit can change the rules:** it said logged-in access "won't be impacted", but

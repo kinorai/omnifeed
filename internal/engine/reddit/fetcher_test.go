@@ -126,7 +126,7 @@ func TestFetchThreadShape(t *testing.T) {
 	sess := alwaysBody(validListing)
 	s := openSession(t, &fakeBrowser{name: "primary", session: sess})
 
-	got, err := s.FetchThread(context.Background(), "/r/news/comments/abc123/some_title/", 123, 4, "new")
+	got, err := s.FetchThread(context.Background(), "/r/news/comments/abc123/some_title/", 123, 4, "new", 3)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,7 +190,7 @@ func TestCrawlOpensOneSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = c.Close(context.Background()) }()
-	if _, err := c.FetchThread(context.Background(), "/r/news/comments/abc123/t/", 500, 20, "top"); err != nil {
+	if _, err := c.FetchThread(context.Background(), "/r/news/comments/abc123/t/", 500, 20, "top", 3); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := c.FetchListing(context.Background(), "news", "hot", 25, ""); err != nil {

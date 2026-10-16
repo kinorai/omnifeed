@@ -151,8 +151,9 @@ All fetches together peaked at **72 a minute, 530 an hour, 1,035 in 24 hours**
 (948 on 2026-10-08) with no pace-caused block.
 
 Reddit is the exception that proves the rule. One `fetch_url` call can make up
-to 41 Reddit requests (thread, `morechildren` rounds, share-link resolve), and
-Reddit counts requests, not calls. Six of its 8 blocks came in July at one
+to 41 Reddit requests (thread, `morechildren` rounds, share-link resolve), or
+up to 11 through the browser (the page and its "more replies"), and Reddit
+counts requests, not calls. Six of its 8 blocks came in July at one
 fetch an hour or less, which points at IP reputation, not rate. The other two
 came in August after a burst of 3–4 fetches in one minute, on days with about
 90 Reddit fetches. Keep
