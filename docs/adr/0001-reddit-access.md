@@ -197,8 +197,8 @@ None of the Reddit MCP servers or skills surveyed uses a session cookie over pla
     only the page load let a 10-thread brief send about 90 requests to Reddit
     in 5 minutes against a quota of 30, and Reddit answered `429` (2026-10-16).
   - crawl4ai hides why a page load failed behind a generic `500`, and on Reddit
-    the usual reason is a `429`. So omnifeed does not retry that `500`, and holds
-    every Reddit request for a minute after it.
+    the usual reason is a `429`. So omnifeed does not retry that `500`, and, with
+    `OMNIFEED_REDDIT_QUOTA` set, holds every Reddit request for a minute after it.
 - **The output format is unchanged:** every method produces omnifeed's existing
   Reddit schema, so clients do not change.
 - **Reddit can change the rules:** it said logged-in access "won't be impacted", but

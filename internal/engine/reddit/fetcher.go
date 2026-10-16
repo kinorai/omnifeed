@@ -418,15 +418,17 @@ func (s *Session) charge(n int) {
 	}()
 }
 
-// holdAfterFailedPage holds every Reddit request for defaultRateLimitBackoff
-// after a page load crawl4ai answered with a server error. crawl4ai (0.9.2+)
-// hides why behind a generic 500, and its log shows the usual cause: Reddit
-// refused the navigation with a 429. Without the hold, the next fetch walks
-// straight into the same wall and keeps the window full; with it, a crash
-// costs one minute. A 504 is crawl4ai's own time limit, not a refusal.
+// holdAfterFailedPage holds every Reddit request in the quota for
+// defaultRateLimitBackoff after a page load crawl4ai answered with its scrubbed
+// 500. crawl4ai (0.9.2+) hides why behind a generic body, and its log shows the
+// usual cause: Reddit refused the navigation with a 429. Without the hold, the
+// next fetch walks straight into the same wall and keeps the window full; with
+// it, a crash costs one minute. A 500 that names its verdict (the content gate,
+// a block page) and any other status are not this, and nothing is held. With
+// no quota (OMNIFEED_REDDIT_QUOTA=0) there is nothing to hold.
 func (s *Session) holdAfterFailedPage(err error) {
-	var fe *domain.FetchError
-	if !errors.As(err, &fe) || fe.StatusCode < http.StatusInternalServerError || fe.StatusCode == http.StatusGatewayTimeout {
+	var se *httpx.StatusError
+	if !errors.As(err, &se) || se.StatusCode != http.StatusInternalServerError || !antibot.IsScrubbedServerError(se.Body) {
 		return
 	}
 	if p, ok := s.quota.(interface {

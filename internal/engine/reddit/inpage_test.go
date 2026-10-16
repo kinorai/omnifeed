@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/kinorai/omnifeed/internal/domain"
+	"github.com/kinorai/omnifeed/internal/httpx"
 )
 
 // countingQuota admits everything and records what it was asked: each Acquire,
@@ -116,20 +117,24 @@ func TestFetchThread_ExpandCapsInPageRequests(t *testing.T) {
 	}
 }
 
-// A page load crawl4ai answered with a server error holds every Reddit
+// A page load crawl4ai answered with its scrubbed 500 holds every Reddit
 // request for a minute: crawl4ai hides the cause, and it is usually Reddit's
-// 429. Its own time limit (504) and a page that answered do not.
+// 429. A 500 that names its verdict, any other status, and a page that
+// answered do not.
 func TestFetch_FailedPageHoldsTheQuota(t *testing.T) {
+	c4 := func(status int, body string) error {
+		return httpx.ClassifyClientError(&httpx.StatusError{StatusCode: status, Body: body}, domain.KindUpstreamError)
+	}
 	for _, tc := range []struct {
 		name string
 		err  error
 		want []time.Duration
 	}{
-		{"scrubbed 500", &domain.FetchError{Kind: domain.KindUpstreamError, StatusCode: 500, Err: errors.New("crawl4ai 500")},
+		{"scrubbed 500", c4(500, `{"error":"Internal server error","correlation_id":"7efd9b9dc621"}`),
 			[]time.Duration{defaultRateLimitBackoff}},
-		{"bot block 503", &domain.FetchError{Kind: domain.KindBotBlock, StatusCode: 503, Err: errors.New("blocked")},
-			[]time.Duration{defaultRateLimitBackoff}},
-		{"crawl4ai time limit", &domain.FetchError{Kind: domain.KindTimeout, StatusCode: 504, Err: errors.New("504")}, nil},
+		{"content gate 500", c4(500, `{"error":"Blocked by anti-bot protection: Structural: minimal_text"}`), nil},
+		{"crawl4ai restarting 503", c4(503, `{"error":"Service Unavailable"}`), nil},
+		{"crawl4ai time limit 504", c4(504, ""), nil},
 		{"no status", errors.New("connection refused"), nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

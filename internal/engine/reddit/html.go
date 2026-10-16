@@ -213,10 +213,14 @@ const grab = () => {
   }
   return got.length;
 };
-// The status of the first feed batch Reddit refused, 0 while none was. An entry
-// is recorded once its response is in; 0 there is unknown, not a refusal.
+// The browser keeps 250 resource entries by default and drops the rest, and a
+// scrolled feed loads an image or more per post: raise the cap so the batches
+// past it are still counted (the envelope's n) and their refusals seen.
+performance.setResourceTimingBufferSize(10000);
 const batches = () => performance.getEntriesByType("resource").filter(e =>
   e.name.includes("/svc/shreddit/community-more-posts/"));
+// The status of the first feed batch Reddit refused, 0 while none was. An entry
+// is recorded once its response is in; 0 there is unknown, not a refusal.
 const refused = () => {
   const e = batches().find(e => e.responseStatus > 0 && e.responseStatus !== 200);
   return e ? e.responseStatus : 0;
