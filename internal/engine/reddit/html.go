@@ -78,18 +78,36 @@ const take = root => root.querySelectorAll("shreddit-comment").forEach(c => {
 });
 take(document);
 const csrf = (document.cookie.match(/(?:^|; )csrf_token=([^;]+)/) || [])[1] || "";
-const done = new Set();
 // Two kinds of collapsed branch: a more-comments form (POSTed for the next
 // replies), and, below depth 4, a "more replies" link to the branch's own
-// permalink page (fetched like a reader following it).
-const pending = () => [...document.querySelectorAll(
-  'faceplate-partial[src*="/more-comments/"], a[slot="more-comments-permalink"]')]
-  .filter(e => !done.has(e));
+// permalink page (fetched like a reader following it). Each fetched fragment
+// or page brings new copies of branches already seen, so a branch is known by
+// what it loads: the comment a link opens, or a form's URL and cursor. Keyed by
+// element instead, one branch was fetched again and again until Reddit refused.
+const keyOf = e => {
+  if (e.tagName === "A") {
+    const m = (A(e, "href") || "").match(/\/comment\/([a-z0-9]+)/i);
+    return "c:" + (m ? m[1] : A(e, "href"));
+  }
+  return "f:" + A(e, "src") + "|" + [...e.querySelectorAll("input[name]")].map(i => i.name + "=" + i.value).join("&");
+};
+const done = new Set();
+const pending = () => {
+  const keys = new Set();
+  return [...document.querySelectorAll(
+    'faceplate-partial[src*="/more-comments/"], a[slot="more-comments-permalink"]')]
+    .filter(e => {
+      const k = keyOf(e);
+      if (done.has(k) || keys.has(k)) return false;
+      keys.add(k);
+      return true;
+    });
+};
 let sent = 0, limited = null;
 for (let next = pending(); !limited && next.length && sent < MAX_REQ && things.length < LIMIT; next = pending()) {
   for (const part of next) {
     if (sent >= MAX_REQ || things.length >= LIMIT) break;
-    done.add(part);
+    done.add(keyOf(part));
     if (sent > 0) await new Promise(r => setTimeout(r, DELAY));
     sent++;
     let r, html;
@@ -109,6 +127,8 @@ for (let next = pending(); !limited && next.length && sent < MAX_REQ && things.l
       limited = {xs: -1};
       break;
     }
+    // A branch that is gone (404) is skipped: it is not a refusal.
+    if (r.status === 404) continue;
     // A refused expansion keeps what the page already gave: stop expanding,
     // report the rest as gaps, and say why (xs, the refused status) along
     // with Reddit's back-off, which holds the method.

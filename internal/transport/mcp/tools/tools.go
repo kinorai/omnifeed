@@ -78,7 +78,7 @@ func FetchURL(reg engine.Dispatcher, defaults reddit.Options, metrics *observabi
 				},
 				"expand": map[string]any{
 					"type":        "integer",
-					"description": "Reddit only (ignored elsewhere): number of /api/morechildren expansion rounds (0-40).",
+					"description": "Reddit only (ignored elsewhere): number of /api/morechildren expansion rounds (0-40). 0 turns expansion off.",
 				},
 				"limit": map[string]any{
 					"type": "integer",
@@ -160,7 +160,6 @@ func crawlHandler(reg engine.Dispatcher, defaults reddit.Options, metrics *obser
 			RedditFormat:      defaults.Format,
 			RedditKeepDepth:   defaults.KeepDepth,
 			RedditKeepCreated: defaults.KeepCreated,
-			RedditMaxRounds:   defaults.MaxRounds,
 			RedditFetchLimit:  defaults.FetchLimit,
 			RedditDepth:       defaults.Depth,
 			RedditSort:        defaults.Sort,
@@ -172,7 +171,8 @@ func crawlHandler(reg engine.Dispatcher, defaults reddit.Options, metrics *obser
 			opts.FormatExplicit = true
 		}
 		if ex, isNumber := args["expand"].(float64); isNumber && ex >= 0 {
-			opts.RedditMaxRounds = int(ex)
+			rounds := int(ex)
+			opts.RedditMaxRounds = &rounds
 		}
 		if l, isNumber := args["limit"].(float64); isNumber && l >= 1 {
 			opts.RedditFetchLimit = int(l)

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -130,12 +131,13 @@ func TestCrawl_EngineErrorBecomesErrorDoc(t *testing.T) {
 	}
 }
 
-// buildEngineOptions parses the query knobs. The expand cases pin parseIntDefault
-// (item 8): valid int, full/all/max alias, and garbage/negative -> fall back to
-// the default. strconv.Atoi must reproduce all of these.
+// buildEngineOptions parses the query knobs. The expand cases: valid int,
+// explicit 0 (no expansion), full/all/max alias, and garbage/negative -> unset,
+// so the engine uses its default.
 func TestBuildEngineOptions(t *testing.T) {
 	srv := newTestServer(fakeEngine{}, auth.AlwaysAllow{}, 30)
-	base := domain.EngineOptions{RedditFormat: "toon", RedditKeepCreated: true, RedditMaxRounds: 3}
+	base := domain.EngineOptions{RedditFormat: "toon", RedditKeepCreated: true}
+	rounds := func(n int) *int { return &n }
 
 	cases := []struct {
 		name  string
@@ -143,23 +145,24 @@ func TestBuildEngineOptions(t *testing.T) {
 		want  domain.EngineOptions
 	}{
 		{"defaults", "", base},
-		{"expand_int", "expand=5", domain.EngineOptions{RedditFormat: "toon", RedditKeepCreated: true, RedditMaxRounds: 5}},
-		{"expand_full", "expand=full", domain.EngineOptions{RedditFormat: "toon", RedditKeepCreated: true, RedditMaxRounds: reddit.MaxExpansionRounds}},
-		{"expand_all", "expand=all", domain.EngineOptions{RedditFormat: "toon", RedditKeepCreated: true, RedditMaxRounds: reddit.MaxExpansionRounds}},
-		{"expand_max", "expand=max", domain.EngineOptions{RedditFormat: "toon", RedditKeepCreated: true, RedditMaxRounds: reddit.MaxExpansionRounds}},
+		{"expand_int", "expand=5", domain.EngineOptions{RedditFormat: "toon", RedditKeepCreated: true, RedditMaxRounds: rounds(5)}},
+		{"expand_zero", "expand=0", domain.EngineOptions{RedditFormat: "toon", RedditKeepCreated: true, RedditMaxRounds: rounds(0)}},
+		{"expand_full", "expand=full", domain.EngineOptions{RedditFormat: "toon", RedditKeepCreated: true, RedditMaxRounds: rounds(reddit.MaxExpansionRounds)}},
+		{"expand_all", "expand=all", domain.EngineOptions{RedditFormat: "toon", RedditKeepCreated: true, RedditMaxRounds: rounds(reddit.MaxExpansionRounds)}},
+		{"expand_max", "expand=max", domain.EngineOptions{RedditFormat: "toon", RedditKeepCreated: true, RedditMaxRounds: rounds(reddit.MaxExpansionRounds)}},
 		{"expand_garbage_falls_back", "expand=abc", base},
 		{"expand_negative_falls_back", "expand=-2", base},
 		// An explicit format marks the caller as a parser: no markdown fallback.
-		{"format_json", "format=json", domain.EngineOptions{RedditFormat: "json", FormatExplicit: true, RedditKeepCreated: true, RedditMaxRounds: 3}},
-		{"format_toon_explicit", "format=toon", domain.EngineOptions{RedditFormat: "toon", FormatExplicit: true, RedditKeepCreated: true, RedditMaxRounds: 3}},
+		{"format_json", "format=json", domain.EngineOptions{RedditFormat: "json", FormatExplicit: true, RedditKeepCreated: true}},
+		{"format_toon_explicit", "format=toon", domain.EngineOptions{RedditFormat: "toon", FormatExplicit: true, RedditKeepCreated: true}},
 		{"format_invalid_keeps_default", "format=bogus", base},
-		{"depth_on", "depth=1", domain.EngineOptions{RedditFormat: "toon", RedditKeepDepth: true, RedditKeepCreated: true, RedditMaxRounds: 3}},
-		{"nocreated_off", "nocreated=1", domain.EngineOptions{RedditFormat: "toon", RedditKeepCreated: false, RedditMaxRounds: 3}},
+		{"depth_on", "depth=1", domain.EngineOptions{RedditFormat: "toon", RedditKeepDepth: true, RedditKeepCreated: true}},
+		{"nocreated_off", "nocreated=1", domain.EngineOptions{RedditFormat: "toon", RedditKeepCreated: false}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, "/crawl?"+c.query, nil)
-			if got := srv.buildEngineOptions(req); got != c.want {
+			if got := srv.buildEngineOptions(req); !reflect.DeepEqual(got, c.want) {
 				t.Fatalf("query %q: got %+v, want %+v", c.query, got, c.want)
 			}
 		})
