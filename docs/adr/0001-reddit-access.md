@@ -178,8 +178,10 @@ None of the Reddit MCP servers or skills surveyed uses a session cookie over pla
   - The fetches run as that account, so use a secondary account.
 - **`browser` is a degraded fallback:**
   - It is slow, and it hits rate limits quickly.
-  - A listing returns only the first page of posts, about 25, even when the caller
-    asks for 100.
+  - A listing returns only the posts the page renders, even when the caller asks
+    for 100. The default card view rendered 3 for r/kubernetes top-of-week on
+    2026-10-16; the compact view (`feedViewType=compactView`), read once the
+    feed stops growing, rendered 34. omnifeed uses the compact view.
   - It handles comment replies below depth 4 by following their permalink pages,
     inside the same request cap.
 - **The output format is unchanged:** every method produces omnifeed's existing

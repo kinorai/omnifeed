@@ -511,10 +511,14 @@ func (s *Session) FetchListing(ctx context.Context, sub, sort string, limit int,
 		}
 		return s.fetchDirect(ctx, u)
 	}
-	page := fmt.Sprintf("%s/r/%s/%s/", redditOrigin, sub, sort)
+	// The compact view renders the feed's posts as one dense list: far more
+	// of them reach the page than in the default card view (see
+	// listingHTMLJS).
+	q := url.Values{"feedViewType": {"compactView"}}
 	if t != "" {
-		page += "?t=" + url.QueryEscape(t)
+		q.Set("t", t)
 	}
+	page := fmt.Sprintf("%s/r/%s/%s/?%s", redditOrigin, sub, sort, q.Encode())
 	return s.fetchViaBrowser(ctx, page, listingHTMLJS(limit))
 }
 
