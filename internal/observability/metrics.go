@@ -35,6 +35,7 @@ type Metrics struct {
 	RedditMethodCalls       *prometheus.CounterVec // method, outcome
 	RedditMethodUp          *prometheus.GaugeVec   // method
 	RedditMethodLastSuccess *prometheus.GaugeVec   // method
+	RedditRemaining         *prometheus.GaugeVec   // method
 	RedditSessionExpiry     prometheus.Gauge
 	SearchesTotal           *prometheus.CounterVec   // searcher, status, reason, scoped
 	SearchSecs              *prometheus.HistogramVec // searcher, status
@@ -158,6 +159,10 @@ func NewMetrics() *Metrics {
 			Name: "omnifeed_reddit_method_last_success_timestamp_seconds",
 			Help: "Unix time of the last call a Reddit method answered (outcome ok or incomplete); 0 until it has. Only configured methods appear.",
 		}, []string{"method"}),
+		RedditRemaining: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "omnifeed_reddit_ratelimit_remaining",
+			Help: "X-Ratelimit-Remaining of the last answer Reddit sent to a direct method (client_id, session): requests left in the current window.",
+		}, []string{"method"}),
 		RedditSessionExpiry: prometheus.NewGauge(prometheus.GaugeOpts{
 			Name: "omnifeed_reddit_session_expiry_timestamp_seconds",
 			Help: "Unix time the configured reddit_session cookie expires; a human must log in again before it. 0 when no cookie is set or its expiry is unreadable.",
@@ -243,7 +248,7 @@ func NewMetrics() *Metrics {
 		m.LimiterWaitSecs, m.RatelimitErrors, m.RatelimitPenalties, m.RatelimitDegraded,
 		m.ResponseChars, m.EngineFallbacks, m.SearxngUnresponsive,
 		m.SearxngEngineHits, m.SearxngEmpty, m.SearxngQueries, m.SearxngEngineZero,
-		m.RedditRounds, m.RedditMethodCalls, m.RedditMethodUp, m.RedditMethodLastSuccess, m.RedditSessionExpiry, m.SearchesTotal, m.SearchSecs,
+		m.RedditRounds, m.RedditMethodCalls, m.RedditMethodUp, m.RedditMethodLastSuccess, m.RedditRemaining, m.RedditSessionExpiry, m.SearchesTotal, m.SearchSecs,
 		m.SearchEnginePos, m.SearchEngineUnique, m.CacheRequests, m.CacheBytes,
 		m.CacheBackend, m.CacheBackendErrors)
 	reg.MustRegister(

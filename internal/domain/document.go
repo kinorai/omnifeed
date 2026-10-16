@@ -29,7 +29,7 @@ type EngineOptions struct {
 	// Reddit-specific.
 	RedditKeepDepth   bool   // include depth field on comments
 	RedditKeepCreated bool   // include created field on comments
-	RedditMaxRounds   int    // /api/morechildren expansion budget
+	RedditMaxRounds   *int   // /api/morechildren expansion rounds (nil = engine default, 0 = none)
 	RedditFormat      string // "toon" | "json"
 	RedditFetchLimit  int    // Reddit `limit`: max comments in initial fetch (0 = engine default)
 	RedditDepth       int    // Reddit `depth`: max nesting depth (0 = engine default)

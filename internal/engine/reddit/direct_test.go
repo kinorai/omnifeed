@@ -225,3 +225,21 @@ func TestTokenLife(t *testing.T) {
 		}
 	}
 }
+
+// Each direct answer reports Reddit's remaining budget for its method, so an
+// operator sees a shared account's budget run down before a 429.
+func TestDirectReportsBudget(t *testing.T) {
+	var got []string
+	f := NewFetcher(FetcherConfig{SessionCookie: "sess-123", UserAgent: "omnifeed/test",
+		HTTP: &http.Client{Transport: roundTrip(func(r *http.Request) *http.Response {
+			return reply(r, 200, validListing, map[string]string{"X-Ratelimit-Remaining": "57.0"})
+		})},
+		OnBudget: func(m string, left float64) { got = append(got, fmt.Sprintf("%s:%g", m, left)) },
+	})
+	if _, err := openFirst(t, f).FetchThread(context.Background(), "/r/news/comments/abc123/t/", 500, 20, "top"); err != nil {
+		t.Fatal(err)
+	}
+	if fmt.Sprint(got) != "[session:57]" {
+		t.Errorf("budget = %v, want [session:57]", got)
+	}
+}

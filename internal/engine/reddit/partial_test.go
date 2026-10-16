@@ -90,3 +90,37 @@ func TestCrawl_CompleteExpansionIsNotPartial(t *testing.T) {
 		t.Errorf("clean crawl body starts with a note: %.80q", doc.PageContent)
 	}
 }
+
+// expand 0 turns expansion off: no /api/morechildren round is sent. Without
+// expand the engine's default rounds run.
+func TestCrawl_ExpandZeroSendsNoRound(t *testing.T) {
+	more := string(mustReadFixture(t, "morechildren.json"))
+	for _, tc := range []struct {
+		name   string
+		rounds *int
+		want   bool
+	}{{"zero", new(int), false}, {"default", nil, true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			sent := 0
+			e := partialEngine(t, func(r *http.Request) *http.Response {
+				sent++
+				return reply(r, 200, more, nil)
+			})
+			if _, err := e.Crawl(context.Background(), partialURL, domain.EngineOptions{RedditMaxRounds: tc.rounds}); err != nil {
+				t.Fatalf("Crawl: %v", err)
+			}
+			if (sent > 0) != tc.want {
+				t.Errorf("morechildren rounds sent = %d, want any: %v", sent, tc.want)
+			}
+		})
+	}
+}
+
+// The 40-round hard cap holds for the configured default, not only for a
+// per-request expand.
+func TestResolveOptions_CapsDefaultRounds(t *testing.T) {
+	e := New(Config{DefaultOpts: Options{MaxRounds: 200}})
+	if got := e.resolveOptions(domain.EngineOptions{}).MaxRounds; got != MaxExpansionRounds {
+		t.Errorf("rounds = %d, want %d", got, MaxExpansionRounds)
+	}
+}

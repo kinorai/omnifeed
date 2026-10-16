@@ -59,7 +59,7 @@ falls back to crawl4ai on the `x.com` URL.
 | `OMNIFEED_TWITTER_FXTWITTER_URL` | `https://api.fxtwitter.com` | Base URL of the FxTwitter API the engine reads first. Point it at a **self-hosted [FxEmbed](https://github.com/FxEmbed/FxEmbed)** to stop depending on the public instance. |
 | `OMNIFEED_TWITTER_MAX_REPLIES` | `20` | Replies rendered under a post, from the first page FxTwitter returns (about 35). Must be at least `1`. |
 | `OMNIFEED_REDDIT_TIMEOUT` | `4m` | Wall-clock cap for a Reddit thread expansion |
-| `OMNIFEED_REDDIT_MAX_ROUNDS` | `3` | Default `/api/morechildren` rounds. `?expand=full` allows up to 40. |
+| `OMNIFEED_REDDIT_MAX_ROUNDS` | `3` | Default `/api/morechildren` rounds, capped at 40. `0` here means the default `3`. Only a request's `expand: 0` turns expansion off. `?expand=full` allows up to 40. |
 | `OMNIFEED_REDDIT_FORMAT` | `toon` | Default Reddit output: `toon` or `json` |
 | `OMNIFEED_REDDIT_FETCH_LIMIT` | `500` | Reddit `limit`: max comments in the initial tree |
 | `OMNIFEED_REDDIT_DEPTH` | `20` | Reddit `depth`: max nesting depth of the initial tree |
@@ -252,9 +252,23 @@ FxTwitter, vxTwitter and the syndication endpoint are third-party or unofficial 
 can break or pressure at any time. A self-hosted FxEmbed
 behind `OMNIFEED_TWITTER_FXTWITTER_URL` removes the first dependency.
 
-## Reddit anti-bot handling
+## Reddit access
 
-Reddit's edge fingerprints the TLS/JA3 handshake and 403-blocks non-browser HTTP clients, so the Reddit engine never calls Reddit directly. It drives a **real headless browser** to a `www.reddit.com` page, which clears the bot wall, then runs a **same-origin `fetch()`** of the `.json` and `/api/morechildren` endpoints from inside it. It needs no Reddit auth, cookies or API key. The default browser is crawl4ai, through its token-gated **`POST /execute_js`** endpoint, so crawl4ai must run with `CRAWL4AI_EXECUTE_JS_ENABLED=true`, and `OMNIFEED_CRAWL4AI_TOKEN` must match its `CRAWL4AI_API_TOKEN`.
+Reddit closed its `.json` endpoints to logged-out clients in 2026. The Reddit engine
+reads Reddit through a chain of methods, in the order `OMNIFEED_REDDIT_METHODS` sets.
+[ADR 0001](adr/0001-reddit-access.md) records the measurements and the reasons.
+
+- **`client_id`:** an OAuth client ID (`OMNIFEED_REDDIT_CLIENT_ID`). omnifeed calls
+  `oauth.reddit.com` over plain HTTP with an app-only token. No Reddit account.
+- **`session`:** a logged-in `reddit_session` cookie (`OMNIFEED_REDDIT_SESSION`).
+  omnifeed calls `www.reddit.com` over plain HTTP. Use a secondary account.
+- **`browser`:** crawl4ai renders the thread page logged out, and omnifeed reads the
+  comments from the page. It is slow and gets rate limited quickly. crawl4ai must run
+  with `CRAWL4AI_EXECUTE_JS_ENABLED=true` (omnifeed calls its token-gated
+  **`POST /execute_js`**), and `OMNIFEED_CRAWL4AI_TOKEN` must match its
+  `CRAWL4AI_API_TOKEN`.
+
+`_meta.reddit_method` names the method that served the thread or listing.
 
 > Sustained scraping can raise your IP's risk score. If fetches return the block page, slow down, keep `expand` modest, or route the browser through a residential proxy.
 
@@ -441,6 +455,7 @@ Served at `/metrics` on `OMNIFEED_METRICS_ADDR`, default `:9090`, alongside the 
 | `omnifeed_searxng_empty_searches_total` | counter | `scoped` | Searches with zero results **and** no unresponsive-engine report. `scoped="true"` is a `site:` query, where silent blocks concentrate |
 | `omnifeed_reddit_expansion_rounds` | histogram | none | `/api/morechildren` rounds per Reddit crawl |
 | `omnifeed_reddit_method_calls_total` | counter | `method`, `outcome` | Reddit calls per chain method. `outcome` is `ok`; `incomplete` (a browser answer that holds less than the page counts, served with `partial_reason=browser_incomplete`); a verdict that returns to the caller without failover: `not_found`, `forbidden` (a subreddit refused to everyone), `layout` (a rendered page the browser could not read: Reddit changed its markup), `error`; or the failure kind that moved the call to the next method (`http_403`, `http_429`, `captcha`, `bot_block`, `upstream_error`). `method="chain"` with `outcome="all_held"` is a call that found every method on hold and sent nothing: Reddit is out of reach. It is apart from `omnifeed_requests_total{reason="quota_exhausted"}`, which our own pacing refusals share |
+| `omnifeed_reddit_ratelimit_remaining` | gauge | `method` | `X-Ratelimit-Remaining` of the last answer Reddit sent to a direct method: the requests left in the current window. Watch it on `session`, whose budget the account owner's own browsing also spends |
 | `omnifeed_reddit_method_last_success_timestamp_seconds` | gauge | `method` | When a method last answered (`ok` or `incomplete`), per pod; `0` until it has. A fallback method behind a working one is never called, so this ages without meaning a fault |
 | `omnifeed_reddit_method_up` | gauge | `method` | `1` while a configured method is in use, `0` while it is skipped after a failure or a back-off. With Redis, a hold from another replica sets it to `0` too, read at startup as well as on each call. It returns to `1` only after a call through the method succeeds, not when the cooldown ends |
 | `omnifeed_reddit_session_expiry_timestamp_seconds` | gauge | none | When the `reddit_session` cookie expires. `0` when none is set |

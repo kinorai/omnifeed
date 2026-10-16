@@ -44,6 +44,7 @@ type Fetcher struct {
 	cooldown  time.Duration
 	onOutcome func(method, outcome string)
 	onState   func(method string, up bool, why string, hold time.Duration)
+	onBudget  func(method string, remaining float64)
 
 	// The holds shared with other replicas, when configured. After a failure
 	// the chain uses only its own memory until sharedDownUntil.
@@ -95,6 +96,9 @@ type FetcherConfig struct {
 	// are empty when up. Both hooks are for metrics and logs and can be nil.
 	OnOutcome func(method, outcome string)
 	OnState   func(method string, up bool, why string, hold time.Duration)
+	// OnBudget is told the X-Ratelimit-Remaining of each direct answer that
+	// carries it: the requests left in Reddit's window. It can be nil.
+	OnBudget func(method string, remaining float64)
 
 	// Shared, when non-nil, shares the methods' holds between replicas
 	// (main.go sets it when OMNIFEED_REDIS_URL is set). It fails open: on an
@@ -109,7 +113,7 @@ type FetcherConfig struct {
 // NewFetcher constructs a Fetcher from cfg.
 func NewFetcher(cfg FetcherConfig) *Fetcher {
 	f := &Fetcher{browser: cfg.Browser, quota: cfg.Quota,
-		cooldown: cfg.Cooldown, onOutcome: cfg.OnOutcome, onState: cfg.OnState,
+		cooldown: cfg.Cooldown, onOutcome: cfg.OnOutcome, onState: cfg.OnState, onBudget: cfg.OnBudget,
 		shared: cfg.Shared, onSharedError: cfg.OnSharedError, onSharedDown: cfg.OnSharedDown}
 	if f.cooldown <= 0 {
 		f.cooldown = DefaultMethodCooldown
@@ -146,6 +150,11 @@ func (f *Fetcher) directMethod(name string, c *directClient) *method {
 	m.open = func(context.Context) (*Session, error) {
 		s := &Session{direct: c, quota: f.quota}
 		s.penalize = f.penalizeMethod(m, s)
+		s.budget = func(remaining float64) {
+			if f.onBudget != nil {
+				f.onBudget(name, remaining)
+			}
+		}
 		return s, nil
 	}
 	return m
@@ -314,6 +323,7 @@ type Session struct {
 	incomplete string
 	quota      httpx.Limiter
 	penalize   func(rawURL string, d time.Duration) // holds this session's method
+	budget     func(remaining float64)              // reports a direct answer's X-Ratelimit-Remaining
 }
 
 // admit takes one slot of the Reddit request quota and returns its release.
@@ -393,6 +403,9 @@ func (s *Session) fetchDirect(ctx context.Context, rawURL string) ([]byte, error
 	}
 	if err != nil {
 		return nil, err
+	}
+	if rm, ok := headerNumber(env.RM); ok && s.budget != nil {
+		s.budget(rm)
 	}
 	out, err := s.unwrap(env.unwrap())
 	if err != nil && env.S == http.StatusForbidden {

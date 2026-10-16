@@ -214,7 +214,6 @@ func (s *Server) buildEngineOptions(r *http.Request) domain.EngineOptions {
 		RedditFormat:      s.redditDefaults.Format,
 		RedditKeepDepth:   s.redditDefaults.KeepDepth,
 		RedditKeepCreated: s.redditDefaults.KeepCreated,
-		RedditMaxRounds:   s.redditDefaults.MaxRounds,
 	}
 	if f := q.Get("format"); f == "json" || f == "toon" {
 		opts.RedditFormat = f
@@ -230,10 +229,13 @@ func (s *Server) buildEngineOptions(r *http.Request) domain.EngineOptions {
 		// Cap is enforced inside the reddit engine.
 		switch ex {
 		case "full", "all", "max":
-			opts.RedditMaxRounds = reddit.MaxExpansionRounds
+			rounds := reddit.MaxExpansionRounds
+			opts.RedditMaxRounds = &rounds
 		default:
-			// Engine will validate.
-			opts.RedditMaxRounds = parseIntDefault(ex, opts.RedditMaxRounds)
+			// Engine caps it. Not a number, or negative: the engine default.
+			if rounds, err := strconv.Atoi(ex); err == nil && rounds >= 0 {
+				opts.RedditMaxRounds = &rounds
+			}
 		}
 	}
 	// Generic-crawl opt-in/out: ?scan_full_page=true scrolls append-style feeds,
@@ -249,14 +251,6 @@ func (s *Server) buildEngineOptions(r *http.Request) domain.EngineOptions {
 		opts.NoCache = true
 	}
 	return opts
-}
-
-func parseIntDefault(s string, fallback int) int {
-	n, err := strconv.Atoi(s)
-	if err != nil || n < 0 {
-		return fallback
-	}
-	return n
 }
 
 func writeError(w http.ResponseWriter, code int, msg string) {

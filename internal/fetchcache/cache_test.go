@@ -114,7 +114,8 @@ const testURL = "https://example.com/article"
 // Every option that reaches an engine changes what it renders, so it must
 // change the key; no_cache and URL spellings a server treats alike must not.
 func TestKey_IncludesEveryOutputOption(t *testing.T) {
-	base := domain.EngineOptions{RedditFormat: "toon", RedditMaxRounds: 3}
+	three, forty := 3, 40
+	base := domain.EngineOptions{RedditFormat: "toon", RedditMaxRounds: &three}
 	baseKey, ok := Key(testURL, base)
 	if !ok {
 		t.Fatal("Key failed on a valid URL")
@@ -123,7 +124,7 @@ func TestKey_IncludesEveryOutputOption(t *testing.T) {
 	variants := map[string]func(o *domain.EngineOptions){
 		"format":          func(o *domain.EngineOptions) { o.RedditFormat = "json" },
 		"format_explicit": func(o *domain.EngineOptions) { o.FormatExplicit = true },
-		"expand":          func(o *domain.EngineOptions) { o.RedditMaxRounds = 40 },
+		"expand":          func(o *domain.EngineOptions) { o.RedditMaxRounds = &forty },
 		"limit":           func(o *domain.EngineOptions) { o.RedditFetchLimit = 50 },
 		"depth":           func(o *domain.EngineOptions) { o.RedditDepth = 2 },
 		"sort":            func(o *domain.EngineOptions) { o.RedditSort = "new" },
