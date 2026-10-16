@@ -355,3 +355,46 @@ func TestCrawlReportsMethodAndBrowserPartial(t *testing.T) {
 		t.Errorf("body lacks the note: %.200s", doc.PageContent)
 	}
 }
+
+func chainListing(t *testing.T, f *Fetcher) (*Chain, error) {
+	t.Helper()
+	c, err := f.OpenChain(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = c.Close(context.Background()) })
+	_, err = c.FetchListing(context.Background(), "news", "top", 100, "week")
+	return c, err
+}
+
+// A scrolled listing whose next batch Reddit refused, or that hit the scroll
+// cap, keeps the posts it read but says it is short: without that, a
+// throttled feed loader passed as a complete (and smaller) listing.
+func TestBrowserListingCut(t *testing.T) {
+	for _, tc := range []struct {
+		xs      int
+		partial string
+		states  string
+	}{
+		{429, "http_429", fmt.Sprintf("[browser:false:backoff:%s]", defaultRateLimitBackoff)},
+		{-1, "expansion_failed", "[]"},
+		{0, "", "[]"},
+	} {
+		env, _ := json.Marshal(fetchEnvelope{S: 200, B: browserListingBody, XS: tc.xs})
+		fx := &browserFixture{}
+		f := newBrowserFetcher(fx, pageSession(func(string) string { return string(env) }))
+		c, err := chainListing(t, f)
+		if err != nil {
+			t.Fatalf("xs=%d: %v", tc.xs, err)
+		}
+		if c.Partial() != tc.partial {
+			t.Errorf("xs=%d: partial = %q, want %q", tc.xs, c.Partial(), tc.partial)
+		}
+		if fmt.Sprint(fx.states) != tc.states {
+			t.Errorf("xs=%d: states = %v, want %s", tc.xs, fx.states, tc.states)
+		}
+		if fmt.Sprint(fx.outcomes) != "[browser=ok]" {
+			t.Errorf("xs=%d: outcomes = %v", tc.xs, fx.outcomes)
+		}
+	}
+}
