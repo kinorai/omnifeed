@@ -22,7 +22,7 @@ Package reddit implements the Reddit\-specific engine: fetches threads via the p
   - [func \(c \*Chain\) Close\(ctx context.Context\) error](<#Chain.Close>)
   - [func \(c \*Chain\) FetchListing\(ctx context.Context, sub, sort string, limit int, t string\) \(\[\]byte, error\)](<#Chain.FetchListing>)
   - [func \(c \*Chain\) FetchMoreChildren\(ctx context.Context, linkID string, childIDs \[\]string, sort string\) \(\[\]byte, error\)](<#Chain.FetchMoreChildren>)
-  - [func \(c \*Chain\) FetchThread\(ctx context.Context, permalink string, limit, depth int, sort string\) \(\[\]byte, error\)](<#Chain.FetchThread>)
+  - [func \(c \*Chain\) FetchThread\(ctx context.Context, permalink string, limit, depth int, sort string, expand int\) \(\[\]byte, error\)](<#Chain.FetchThread>)
   - [func \(c \*Chain\) Partial\(\) string](<#Chain.Partial>)
   - [func \(c \*Chain\) ResolveShareURL\(ctx context.Context, shareURL string\) \(string, error\)](<#Chain.ResolveShareURL>)
   - [func \(c \*Chain\) Served\(\) string](<#Chain.Served>)
@@ -50,7 +50,7 @@ Package reddit implements the Reddit\-specific engine: fetches threads via the p
   - [func \(s \*Session\) Close\(ctx context.Context\) error](<#Session.Close>)
   - [func \(s \*Session\) FetchListing\(ctx context.Context, sub, sort string, limit int, t string\) \(\[\]byte, error\)](<#Session.FetchListing>)
   - [func \(s \*Session\) FetchMoreChildren\(ctx context.Context, linkID string, childIDs \[\]string, sort string\) \(\[\]byte, error\)](<#Session.FetchMoreChildren>)
-  - [func \(s \*Session\) FetchThread\(ctx context.Context, permalink string, limit, depth int, sort string\) \(\[\]byte, error\)](<#Session.FetchThread>)
+  - [func \(s \*Session\) FetchThread\(ctx context.Context, permalink string, limit, depth int, sort string, expand int\) \(\[\]byte, error\)](<#Session.FetchThread>)
   - [func \(s \*Session\) ResolveShareURL\(ctx context.Context, shareURL string\) \(string, error\)](<#Session.ResolveShareURL>)
 - [type SharedState](<#SharedState>)
 - [type SubredditListing](<#SubredditListing>)
@@ -202,7 +202,7 @@ FetchMoreChildren is Session.FetchMoreChildren over the direct methods only. The
 ### func \(\*Chain\) FetchThread
 
 ```go
-func (c *Chain) FetchThread(ctx context.Context, permalink string, limit, depth int, sort string) ([]byte, error)
+func (c *Chain) FetchThread(ctx context.Context, permalink string, limit, depth int, sort string, expand int) ([]byte, error)
 ```
 
 FetchThread is Session.FetchThread over the chain.
@@ -387,8 +387,9 @@ type FetcherConfig struct {
     // Quota, when non-nil, admits every request that reaches Reddit — the
     // thread fetch, each /api/morechildren round, a listing, a share-link
     // resolve — not the crawl as a whole. Reddit counts requests, and one
-    // expand=full crawl can be 40 of them. Nil disables it
-    // (OMNIFEED_REDDIT_QUOTA=0, the default).
+    // expand=full crawl can be 40 of them. The requests a browser page sends
+    // itself (scroll batches, "more replies") are charged once the page
+    // answers. Nil disables it (OMNIFEED_REDDIT_QUOTA=0, the default).
     Quota httpx.Limiter
 
     // ClientID and SessionCookie, when set, enable the client_id and session
@@ -422,6 +423,10 @@ type FetcherConfig struct {
     // OnBudget is told the X-Ratelimit-Remaining of each direct answer that
     // carries it: the requests left in Reddit's window. It can be nil.
     OnBudget func(method string, remaining float64)
+    // OnInPage is told how many requests a browser page sent itself, by kind
+    // ("listing" or "thread"): the scroll batches and "more replies" that come
+    // on top of the page load. It can be nil.
+    OnInPage func(kind string, n int)
 
     // Shared, when non-nil, shares the methods' holds between replicas
     // (main.go sets it when OMNIFEED_REDIS_URL is set). It fails open: on an
@@ -583,10 +588,10 @@ FetchMoreChildren expands collapsed reply branches via /api/morechildren. linkID
 ### func \(\*Session\) FetchThread
 
 ```go
-func (s *Session) FetchThread(ctx context.Context, permalink string, limit, depth int, sort string) ([]byte, error)
+func (s *Session) FetchThread(ctx context.Context, permalink string, limit, depth int, sort string, expand int) ([]byte, error)
 ```
 
-FetchThread retrieves a thread from its rendered HTML page, read from inside a real browser on the reddit.com origin \(see html.go for why not .json\). It returns the \[post, comments\] listing pair the .json endpoint used to, so ParseThread reads it unchanged. limit is the comment count at which the in\-page expansion stops. depth is not applied: the page renders its own nesting.
+FetchThread retrieves a thread from its rendered HTML page, read from inside a real browser on the reddit.com origin \(see html.go for why not .json\). It returns the \[post, comments\] listing pair the .json endpoint used to, so ParseThread reads it unchanged. limit is the comment count at which the in\-page expansion stops, and expand the most "more replies" requests it may send \(capped at maxExpandRequests\): the browser's counterpart of the /api/morechildren rounds a direct method makes. depth is not applied: the page renders its own nesting. A direct method ignores expand; the engine expands its gaps afterwards.
 
 <a name="Session.ResolveShareURL"></a>
 ### func \(\*Session\) ResolveShareURL
