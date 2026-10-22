@@ -81,7 +81,9 @@ BENCH.load().then(R=>{
   const tip=document.getElementById('tip');
   addEventListener('mousemove',e=>{let best=null,d=144;stars.forEach(st=>{const q=(st.x-e.clientX)**2+(st.y-e.clientY)**2;if(q<d){d=q;best=st}});hover=best;
     if(best){const s=best.s;tip.style.display='block';tip.style.left=Math.min(e.clientX+14,innerWidth-360)+'px';tip.style.top=(e.clientY+14)+'px';
-      tip.innerHTML=`<b>${host(s.url)}</b> · ${s.cat}<br><span style="color:${C.onlyB}">Built-in</span>: ${s.builtin.outcome} · ${(s.builtin.ms/1000).toFixed(2)}s<br><span style="color:${C.onlyO}">omnifeed</span>: ${s.omnifeed.outcome} · ${(s.omnifeed.ms/1000).toFixed(2)}s<br><span style="opacity:.75">${s.omnifeed.note.slice(0,120)}</span>`}else tip.style.display='none'});
+      tip.innerHTML=`<b></b> · <span></span><br><span style="color:${C.onlyB}">Built-in</span>: ${s.builtin.outcome} · ${(s.builtin.ms/1000).toFixed(2)}s<br><span style="color:${C.onlyO}">omnifeed</span>: ${s.omnifeed.outcome} · ${(s.omnifeed.ms/1000).toFixed(2)}s<br><span style="opacity:.75"></span>`;
+      // Data strings are set as text: a note quoting markup ("raw <html>") must show, not parse.
+      const [h,c]=tip.children;h.textContent=host(s.url);c.textContent=s.cat;tip.lastElementChild.textContent=s.omnifeed.note.slice(0,120)}else tip.style.display='none'});
   document.querySelectorAll('#modes button').forEach(b=>b.onclick=()=>setMode(b.dataset.m));
   addEventListener('resize',resize);resize();requestAnimationFrame(frame);
 });
