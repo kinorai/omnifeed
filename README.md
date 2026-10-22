@@ -180,7 +180,7 @@ Engines, searchers, MCP tools and transports each plug into one small port. **[A
 ```bash
 git clone https://github.com/kinorai/omnifeed.git && cd omnifeed
 make check        # vet + lint + test, hermetic: no upstreams or token needed
-make compose-up   # full stack, tokenless, ports 8080 / 8081 / 9090 (writes .env once)
+make compose-up   # full stack on ports 8080 / 8081 / 9090 (writes .env with a crawl4ai token once)
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the workflow and [SECURITY.md](SECURITY.md) to report a vulnerability. Coding agents read [AGENTS.md](AGENTS.md).

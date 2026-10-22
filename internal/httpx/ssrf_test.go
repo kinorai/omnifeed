@@ -72,6 +72,7 @@ func TestValidateURL(t *testing.T) {
 		{"http://[fc00::1]/", false},
 		{"http://[fd12:3456::1]/", false},
 		{"http://[fe80::1]/", false},
+		{"http://[fec0::1]/", false},
 		{"http://[fe80::1%25eth0]/", false},
 		{"http://[ff02::1]/", false},
 		// Non-canonical IPv4: a browser reads every one of these as an address.
