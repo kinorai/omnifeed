@@ -140,6 +140,7 @@ var reservedPrefixes = func() []netip.Prefix {
 		"3fff::/20",      // documentation
 		"5f00::/16",      // SRv6 SIDs
 		"fc00::/7",       // unique local
+		"fec0::/10",      // site-local (deprecated, still routed on some LANs)
 		"fe80::/10",      // link-local
 		"ff00::/8",       // multicast
 	}
