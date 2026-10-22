@@ -252,6 +252,7 @@ type Config struct {
 
 	// Limits and rate control.
 	MaxURLsPerRequest    int
+	CrawlMaxResponseMB   int
 	PerDomainConcurrency int
 	PerDomainDelay       time.Duration
 	BlockPrivateIPs      bool
@@ -451,6 +452,12 @@ func Load() (Config, error) {
 	}
 	if c.MaxURLsPerRequest, err = envInt("OMNIFEED_MAX_URLS_PER_REQUEST", 30); err != nil {
 		return c, err
+	}
+	if c.CrawlMaxResponseMB, err = envInt("OMNIFEED_CRAWL_MAX_RESPONSE_MB", 256); err != nil {
+		return c, err
+	}
+	if c.CrawlMaxResponseMB < 0 {
+		return c, fmt.Errorf("env OMNIFEED_CRAWL_MAX_RESPONSE_MB: must be >= 0, got %d", c.CrawlMaxResponseMB)
 	}
 	if c.PerDomainConcurrency, err = envInt("OMNIFEED_PER_DOMAIN_CONCURRENCY", 2); err != nil {
 		return c, err
