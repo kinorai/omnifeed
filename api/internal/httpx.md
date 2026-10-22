@@ -13,10 +13,13 @@ Package httpx provides HTTP utilities shared across engines: a retrying HTTP cli
 - [Variables](<#variables>)
 - [func ClassifyClientError\(err error, fallback domain.FailureKind\) \*domain.FetchError](<#ClassifyClientError>)
 - [func HostMatcher\(domain string\) \*regexp.Regexp](<#HostMatcher>)
+- [func IsReservedAddr\(ip netip.Addr\) bool](<#IsReservedAddr>)
+- [func LimiterHost\(rawURL string\) string](<#LimiterHost>)
 - [func NewGuardedClient\(blockPrivate bool, timeout time.Duration\) \*http.Client](<#NewGuardedClient>)
 - [func NewTransport\(\) \*http.Transport](<#NewTransport>)
 - [func RemainingBudget\(ctx context.Context\) \(time.Duration, bool\)](<#RemainingBudget>)
 - [func ValidateURL\(rawURL string, blockPrivate bool\) error](<#ValidateURL>)
+- [func ValidateURLContext\(ctx context.Context, rawURL string, blockPrivate bool\) error](<#ValidateURLContext>)
 - [type Client](<#Client>)
   - [func New\(c \*http.Client\) \*Client](<#New>)
   - [func \(c \*Client\) DoRetry\(ctx context.Context, method, url string, body \[\]byte, headers map\[string\]string, cfg RetryConfig\) \(\*http.Response, error\)](<#Client.DoRetry>)
@@ -31,6 +34,9 @@ Package httpx provides HTTP utilities shared across engines: a retrying HTTP cli
   - [func \(f \*FallbackLimiter\) Acquire\(ctx context.Context, engine, rawURL string\) \(func\(\), error\)](<#FallbackLimiter.Acquire>)
   - [func \(f \*FallbackLimiter\) Penalize\(rawURL string, d time.Duration\)](<#FallbackLimiter.Penalize>)
 - [type Limiter](<#Limiter>)
+- [type ResolveError](<#ResolveError>)
+  - [func \(e \*ResolveError\) Error\(\) string](<#ResolveError.Error>)
+  - [func \(e \*ResolveError\) Unwrap\(\) error](<#ResolveError.Unwrap>)
 - [type RetryConfig](<#RetryConfig>)
 - [type StatusError](<#StatusError>)
   - [func \(e \*StatusError\) Error\(\) string](<#StatusError.Error>)
@@ -70,6 +76,24 @@ func HostMatcher(domain string) *regexp.Regexp
 
 HostMatcher returns a case\-insensitive regexp matching host and all of its subdomains: HostMatcher\("reddit.com"\) matches reddit.com, www.reddit.com, and old.reddit.com, but not evilreddit.com or reddit.com.evil.com. Engines use it to claim URLs; centralizing the pattern keeps this security\-sensitive rule from drifting between engines.
 
+<a name="IsReservedAddr"></a>
+## func IsReservedAddr
+
+```go
+func IsReservedAddr(ip netip.Addr) bool
+```
+
+IsReservedAddr reports whether ip is not a globally reachable unicast address. It is the one predicate behind ValidateURL and NewGuardedClient's dial guard. An IPv4\-mapped IPv6 address is reserved as a literal; callers holding a resolver's answer, where Go may represent IPv4 that way, Unmap first.
+
+<a name="LimiterHost"></a>
+## func LimiterHost
+
+```go
+func LimiterHost(rawURL string) string
+```
+
+LimiterHost is the key a URL is paced under: its hostname, lowercased, without a trailing dot or port. Example.COM., example.com:443 and example.com are one host to the upstream, so they share one slot; a caller that varied the spelling would otherwise get a fresh budget each time. A malformed URL yields the empty host, which paces all such callers together rather than not at all.
+
 <a name="NewGuardedClient"></a>
 ## func NewGuardedClient
 
@@ -77,7 +101,7 @@ HostMatcher returns a case\-insensitive regexp matching host and all of its subd
 func NewGuardedClient(blockPrivate bool, timeout time.Duration) *http.Client
 ```
 
-NewGuardedClient returns an http.Client for fetching caller\-supplied URLs directly \(no crawl4ai in between\). When blockPrivate is true, every dial is checked AFTER DNS resolution and refused if the resolved address is private/reserved — unlike ValidateURL's lookup\-then\-fetch, this can't be raced by DNS rebinding, and it covers every redirect hop because the guard sits below the client's redirect\-following.
+NewGuardedClient returns an http.Client for fetching caller\-supplied URLs directly \(no crawl4ai in between\). When blockPrivate is true, every dial is checked AFTER DNS resolution and refused if the resolved address is private/reserved — unlike ValidateURL's lookup\-then\-fetch, this can't be raced by DNS rebinding, and it covers every redirect hop because the guard sits below the client's redirect\-following. Each redirect target also goes through ValidateURL's name checks, so a hop to localhost, an ambiguous numeric host or a non\-http scheme is refused before any dial; its DNS step is skipped, since the dial guard checks every resolved address anyway. The guarded client ignores HTTP\(S\)\_PROXY: through a proxy, the dial guard would only see the proxy.
 
 <a name="NewTransport"></a>
 ## func NewTransport
@@ -108,11 +132,26 @@ ValidateURL parses rawURL and enforces the proxy's outbound\-request guard:
 
 - the scheme must be http or https \(always — rejects file://, gopher://, …\);
 - the host must be non\-empty;
-- when blockPrivate is true, the host must not be \(or resolve to\) a private/reserved IP — IPv4 OR IPv6 \(loopback, RFC1918, RFC4193 ULA fc00::/7, link\-local 169.254/16 & fe80::/10, unspecified, multicast\).
+- when blockPrivate is true, the host must not be \(or resolve to\) an address that is not globally reachable — see IsReservedAddr.
 
-When blockPrivate is set, obfuscated IPv4 literals \(leading\-zero octal 0177.0.0.1, short 127.1, decimal 2130706433\) are rejected outright: Go's net.LookupIP and a browser disagree on what they resolve to, so validating one interpretation and letting the downstream fetcher act on another is a bypass. DNS failures pass through — the downstream fetcher surfaces them.
+When blockPrivate is set it also fails closed on everything it cannot judge:
 
-NOTE: this is a best\-effort, app\-layer guard only. The actual fetch is done by the crawl4ai upstream's headless browser, which re\-resolves DNS and follows redirects on its own — so a determined attacker can still defeat this via DNS rebinding or a redirect to a private target. The crawl4ai egress NetworkPolicy \(which blocks RFC1918 \+ link\-local\) is the load\-bearing control; this check is defense in depth that rejects the common cases early.
+- non\-canonical IPv4 literals \(octal 0177.0.0.1, short 127.1, decimal 2130706433, hex 0x7f.0.0.1\): Go's resolver and a browser disagree on what they mean, so validating one reading while the fetcher acts on another is a bypass. Any host whose last label is numeric is one, as in the WHATWG URL parser browsers follow;
+- localhost and \*.localhost, which browsers resolve to loopback without asking DNS;
+- a DNS lookup that fails or returns nothing.
+
+NOTE: this is an app\-layer guard only. The crawl4ai upstream's headless browser re\-resolves DNS and follows redirects on its own, so DNS rebinding or a redirect to a private target can still get past it there. An egress network policy on crawl4ai \(public addresses only\) is the load\-bearing control; this check rejects the common cases early. Direct fetches use NewGuardedClient, which re\-checks every dial and every redirect.
+
+ValidateURL has no caller context; prefer ValidateURLContext where one exists.
+
+<a name="ValidateURLContext"></a>
+## func ValidateURLContext
+
+```go
+func ValidateURLContext(ctx context.Context, rawURL string, blockPrivate bool) error
+```
+
+ValidateURLContext is ValidateURL with the DNS lookup bound to ctx as well as lookupTimeout, so a caller that hangs up stops waiting on the resolver.
 
 <a name="Client"></a>
 ## type Client
@@ -317,6 +356,37 @@ type Limiter interface {
     Acquire(ctx context.Context, engine, rawURL string) (release func(), err error)
 }
 ```
+
+<a name="ResolveError"></a>
+## type ResolveError
+
+ResolveError is ValidateURL refusing a host it could not resolve. NotFound tells a name that does not exist \(the caller's mistake\) from a resolver that failed or timed out \(a transient fault on our side\).
+
+```go
+type ResolveError struct {
+    Host     string
+    NotFound bool
+    Err      error
+}
+```
+
+<a name="ResolveError.Error"></a>
+### func \(\*ResolveError\) Error
+
+```go
+func (e *ResolveError) Error() string
+```
+
+
+
+<a name="ResolveError.Unwrap"></a>
+### func \(\*ResolveError\) Unwrap
+
+```go
+func (e *ResolveError) Unwrap() error
+```
+
+
 
 <a name="RetryConfig"></a>
 ## type RetryConfig

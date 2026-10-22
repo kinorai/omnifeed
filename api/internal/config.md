@@ -271,6 +271,7 @@ type Config struct {
 
     // Limits and rate control.
     MaxURLsPerRequest    int
+    CrawlMaxResponseMB   int
     PerDomainConcurrency int
     PerDomainDelay       time.Duration
     BlockPrivateIPs      bool

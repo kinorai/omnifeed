@@ -13,7 +13,9 @@ engines call their upstream directly: Hacker News reads `hn.algolia.com`, GitHub
 `OMNIFEED_DISCOURSE_HOSTS`, and Twitter/X reads `api.fxtwitter.com` (or
 `OMNIFEED_TWITTER_FXTWITTER_URL`), `cdn.syndication.twimg.com`, `api.vxtwitter.com` and
 `t.co`. If outbound traffic may reach only crawl4ai, those five **break**; Twitter/X then
-falls back to crawl4ai on the `x.com` URL.
+falls back to crawl4ai on the `x.com` URL. Restrict crawl4ai's own egress to public
+addresses with a network policy or firewall: its browser follows redirects that omnifeed
+cannot check before they are fetched ([SECURITY.md](../SECURITY.md)).
 
 | Variable | Default | Purpose |
 |---|---|---|
@@ -75,9 +77,10 @@ falls back to crawl4ai on the `x.com` URL.
 | `OMNIFEED_REDDIT_METHOD_COOLDOWN` | `10m` | How long a failed Reddit method is skipped before the chain tries it again. A `429` with a longer `Retry-After` holds it for that long instead. Watch `omnifeed_reddit_method_up` and `omnifeed_reddit_method_calls_total{outcome!="ok"}`. |
 | `OMNIFEED_REDDIT_CLIENT_ID` | _(unset)_ | Client ID of a Reddit OAuth app, used with the installed-client grant: no secret and no Reddit account. It enables the `client_id` method: an app-only token (it lasts 24 h and is renewed on its own), then `oauth.reddit.com` directly. That gives one request per thread, live scores, the full comment tree, and 1000 requests per window. **Short-lived:** Reddit stopped taking new API requests on 2026-10-31, starts cutting off unregistered apps on 2027-01-12, and closes the public API in March 2027. |
 | `OMNIFEED_MAX_URLS_PER_REQUEST` | `30` | Cap on `urls[]` length |
+| `OMNIFEED_CRAWL_MAX_RESPONSE_MB` | `256` | Cap on the page content one `POST /crawl` response carries, summed over its documents. Documents are never cut: one that would cross the cap comes back as an error document asking to request that URL on its own. `0` disables the cap. |
 | `OMNIFEED_PER_DOMAIN_CONCURRENCY` | `2` | Max concurrent requests to one domain |
 | `OMNIFEED_PER_DOMAIN_DELAY` | `1500ms` | Minimum gap between requests to one domain |
-| `OMNIFEED_BLOCK_PRIVATE_IPS` | `true` | SSRF protection. Keep it on in production. |
+| `OMNIFEED_BLOCK_PRIVATE_IPS` | `true` | SSRF protection: refuses hosts that are, or resolve to, addresses that are not globally reachable, non-canonical IPv4 forms, `localhost` names and hosts that do not resolve. Keep it on in production, and restrict crawl4ai's egress to public addresses too (see [SECURITY.md](../SECURITY.md)). |
 | `OMNIFEED_ALLOWED_ORIGINS` | _(unset)_ | Comma-separated browser `Origin` values, e.g. `https://app.example.com`, allowed to call the HTTP APIs cross-origin. Requests with no `Origin`, which covers every native MCP client, always pass, as do loopback origins such as the MCP inspector. Anything else gets **403**. This is the DNS-rebinding guard the MCP transport spec requires, applied to every HTTP endpoint. |
 | `OMNIFEED_LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error` |
 | `OMNIFEED_LOG_FORMAT` | `json` | `json` or `text` |

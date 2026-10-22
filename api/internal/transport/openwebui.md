@@ -37,7 +37,10 @@ type Config struct {
     Logger            *slog.Logger
     Metrics           *observability.Metrics
     MaxURLsPerRequest int
-    RedditDefaults    reddit.Options
+    // MaxResponseBytes caps the page content one /crawl response carries,
+    // summed over its documents; 0 disables the cap.
+    MaxResponseBytes int
+    RedditDefaults   reddit.Options
 }
 ```
 
