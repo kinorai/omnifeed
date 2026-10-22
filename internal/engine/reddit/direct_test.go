@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -241,5 +242,53 @@ func TestDirectReportsBudget(t *testing.T) {
 	}
 	if fmt.Sprint(got) != "[session:57]" {
 		t.Errorf("budget = %v, want [session:57]", got)
+	}
+}
+
+// A share link is resolved on www.reddit.com over https whatever scheme, host
+// or port the caller wrote, so the session cookie never goes anywhere else.
+func TestDirectShareURLPinnedToRedditOrigin(t *testing.T) {
+	var got []string
+	s := directSession(t, func(r *http.Request) *http.Response {
+		if _, err := r.Cookie("reddit_session"); err == nil {
+			got = append(got, r.URL.String())
+		}
+		return reply(r, 301, "", map[string]string{"Location": "/r/news/comments/abc123/t/"})
+	}, nil)
+	for _, in := range []string{
+		"http://www.reddit.com/r/news/s/AbC123",
+		"https://old.reddit.com:8443/r/news/s/AbC123",
+		"http://evil.reddit.com/r/news/s/AbC123?x=1",
+	} {
+		if _, err := s.ResolveShareURL(context.Background(), in); err != nil {
+			t.Fatalf("%s: %v", in, err)
+		}
+	}
+	for _, u := range got {
+		if u != "https://www.reddit.com/r/news/s/AbC123" {
+			t.Errorf("cookie sent to %s", u)
+		}
+	}
+	if len(got) != 3 {
+		t.Errorf("credentialed requests = %d, want 3", len(got))
+	}
+}
+
+func TestCredentialTarget(t *testing.T) {
+	for raw, want := range map[string]bool{
+		"https://www.reddit.com/r/x":      true,
+		"https://oauth.reddit.com/r/x":    true,
+		"https://WWW.Reddit.com/r/x":      true,
+		"http://www.reddit.com/r/x":       false,
+		"https://www.reddit.com:8443/r/x": false,
+		"https://old.reddit.com/r/x":      false,
+		"https://www.reddit.com.evil.io/": false,
+		"https://evilwww.reddit.com/r/x":  false,
+		"https://www.reddit.com./r/x":     false,
+	} {
+		u, _ := url.Parse(raw)
+		if got := credentialTarget(u); got != want {
+			t.Errorf("credentialTarget(%s) = %v, want %v", raw, got, want)
+		}
 	}
 }
