@@ -301,6 +301,9 @@ func TestCrawl_ResponseCap(t *testing.T) {
 	if served != 1 || refused != 2 {
 		t.Errorf("served %d, refused %d; want 1 and 2", served, refused)
 	}
+	if len(docs) == 3 && docs[0].PageContent != page {
+		t.Errorf("first URL refused; the budget must be spent in request order")
+	}
 
 	// 0 disables the cap.
 	srv.maxRespBytes = 0

@@ -28,8 +28,9 @@ func NewTransport() *http.Transport {
 // private/reserved — unlike ValidateURL's lookup-then-fetch, this can't be
 // raced by DNS rebinding, and it covers every redirect hop because the guard
 // sits below the client's redirect-following. Each redirect target also goes
-// through ValidateURL, so a hop to localhost, an ambiguous numeric host or a
-// non-http scheme is refused before any dial. The guarded client ignores
+// through ValidateURL's name checks, so a hop to localhost, an ambiguous
+// numeric host or a non-http scheme is refused before any dial; its DNS step is
+// skipped, since the dial guard checks every resolved address anyway. The guarded client ignores
 // HTTP(S)_PROXY: through a proxy, the dial guard would only see the proxy.
 func NewGuardedClient(blockPrivate bool, timeout time.Duration) *http.Client {
 	t := NewTransport()
@@ -50,7 +51,7 @@ func NewGuardedClient(blockPrivate bool, timeout time.Duration) *http.Client {
 			if len(via) >= maxRedirects {
 				return errors.New("stopped after 10 redirects")
 			}
-			if err := ValidateURL(req.URL.String(), blockPrivate); err != nil {
+			if err := validateURL(req.Context(), req.URL.String(), blockPrivate, false); err != nil {
 				return fmt.Errorf("redirect refused: %w", err)
 			}
 			return nil

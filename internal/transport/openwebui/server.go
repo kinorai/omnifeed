@@ -140,7 +140,6 @@ func (s *Server) crawl(w http.ResponseWriter, r *http.Request) {
 	// document that would push it past the cap is replaced by an error
 	// document saying so, never cut, so no text is dropped silently.
 	results := make([]loaderDocument, len(req.URLs))
-	budget := responseBudget{left: s.maxRespBytes}
 	var wg sync.WaitGroup
 	for i, u := range req.URLs {
 		wg.Add(1)
@@ -154,38 +153,27 @@ func (s *Server) crawl(w http.ResponseWriter, r *http.Request) {
 					results[idx] = errorDocument(rawURL, fmt.Errorf("internal error: %v", v))
 				}
 			}()
-			doc := s.crawlOne(r.Context(), rawURL, opts, tenant)
-			if s.maxRespBytes > 0 && !budget.take(len(doc.PageContent)) {
-				doc = errorDocument(rawURL, &domain.FetchError{Kind: domain.KindError, Err: fmt.Errorf(
-					"this page would push the /crawl response past its %d MiB cap (OMNIFEED_CRAWL_MAX_RESPONSE_MB): request this URL on its own",
-					s.maxRespBytes>>20)})
-			}
-			results[idx] = doc
+			results[idx] = s.crawlOne(r.Context(), rawURL, opts, tenant)
 		}(i, u)
 	}
 	wg.Wait()
+	// Spent in request order, not completion order, so which URLs are served
+	// does not depend on which crawl happened to finish first.
+	if left := s.maxRespBytes; left > 0 {
+		for i, doc := range results {
+			if n := len(doc.PageContent); n <= left {
+				left -= n
+				continue
+			}
+			results[i] = errorDocument(req.URLs[i], &domain.FetchError{Kind: domain.KindError, Err: fmt.Errorf(
+				"this page would push the /crawl response past its %d MiB cap (OMNIFEED_CRAWL_MAX_RESPONSE_MB): request this URL on its own",
+				s.maxRespBytes>>20)})
+		}
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(results)
-}
-
-// responseBudget is what is left of one /crawl response's size cap, shared by
-// the request's crawl goroutines.
-type responseBudget struct {
-	mu   sync.Mutex
-	left int
-}
-
-// take spends n bytes, or reports false and spends nothing when n does not fit.
-func (b *responseBudget) take(n int) bool {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if n > b.left {
-		return false
-	}
-	b.left -= n
-	return true
 }
 
 func (s *Server) crawlOne(ctx context.Context, rawURL string, opts domain.EngineOptions, tenant auth.TenantID) loaderDocument {

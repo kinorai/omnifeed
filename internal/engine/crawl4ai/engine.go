@@ -760,7 +760,7 @@ func (e *Engine) crawlRung(ctx context.Context, rawURL string, o crawlOpts) (dom
 	if result.Success != nil && !*result.Success {
 		return domain.Document{}, verdictError(result.ErrorMessage, result.StatusCode)
 	}
-	if err := e.checkFinalURL(rawURL, result.RedirectedURL); err != nil {
+	if err := e.checkFinalURL(ctx, rawURL, result.RedirectedURL); err != nil {
 		return domain.Document{}, err
 	}
 	// Whitespace-only counts as empty here: a fit_markdown of "\n" must fall
@@ -864,7 +864,7 @@ func (e *Engine) crawlRung(ctx context.Context, rawURL string, o crawlOpts) (dom
 // into a private address away from the caller. The request itself is stopped
 // only by an egress policy on crawl4ai (see SECURITY.md). Final: a fallback
 // would send the browser down the same redirect.
-func (e *Engine) checkFinalURL(rawURL, final string) error {
+func (e *Engine) checkFinalURL(ctx context.Context, rawURL, final string) error {
 	if !e.blockPrivate || final == "" {
 		return nil
 	}
@@ -873,7 +873,7 @@ func (e *Engine) checkFinalURL(rawURL, final string) error {
 	if errA == nil && errB == nil && strings.EqualFold(a.Hostname(), b.Hostname()) {
 		return nil
 	}
-	if err := httpx.ValidateURL(final, e.blockPrivate); err != nil {
+	if err := httpx.ValidateURLContext(ctx, final, e.blockPrivate); err != nil {
 		return domain.NoFallback(&domain.FetchError{Kind: domain.KindError, Err: fmt.Errorf("redirect target rejected: %w", err)})
 	}
 	return nil

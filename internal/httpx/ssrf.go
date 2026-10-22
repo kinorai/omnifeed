@@ -2,6 +2,7 @@ package httpx
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/netip"
@@ -40,7 +41,33 @@ var lookupNetIP = net.DefaultResolver.LookupNetIP
 // network policy on crawl4ai (public addresses only) is the load-bearing
 // control; this check rejects the common cases early. Direct fetches use
 // NewGuardedClient, which re-checks every dial and every redirect.
+//
+// ValidateURL has no caller context; prefer ValidateURLContext where one exists.
 func ValidateURL(rawURL string, blockPrivate bool) error {
+	return ValidateURLContext(context.Background(), rawURL, blockPrivate)
+}
+
+// ValidateURLContext is ValidateURL with the DNS lookup bound to ctx as well as
+// lookupTimeout, so a caller that hangs up stops waiting on the resolver.
+func ValidateURLContext(ctx context.Context, rawURL string, blockPrivate bool) error {
+	return validateURL(ctx, rawURL, blockPrivate, true)
+}
+
+// ResolveError is ValidateURL refusing a host it could not resolve. NotFound
+// tells a name that does not exist (the caller's mistake) from a resolver that
+// failed or timed out (a transient fault on our side).
+type ResolveError struct {
+	Host     string
+	NotFound bool
+	Err      error
+}
+
+func (e *ResolveError) Error() string { return fmt.Sprintf("cannot resolve %q: %v", e.Host, e.Err) }
+func (e *ResolveError) Unwrap() error { return e.Err }
+
+// validateURL is ValidateURL; resolve=false skips the DNS step, for callers
+// whose dial guard already checks every resolved address (NewGuardedClient).
+func validateURL(ctx context.Context, rawURL string, blockPrivate, resolve bool) error {
 	u, err := url.Parse(rawURL)
 	if err != nil {
 		return fmt.Errorf("parse error: %w", err)
@@ -73,15 +100,19 @@ func ValidateURL(rawURL string, blockPrivate bool) error {
 	if name == "localhost" || strings.HasSuffix(name, ".localhost") {
 		return fmt.Errorf("host %q not allowed", host)
 	}
+	if !resolve {
+		return nil
+	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), lookupTimeout)
+	ctx, cancel := context.WithTimeout(ctx, lookupTimeout)
 	defer cancel()
 	ips, err := lookupNetIP(ctx, "ip", host)
 	if err != nil {
-		return fmt.Errorf("cannot resolve %q: %w", host, err)
+		var dnsErr *net.DNSError
+		return &ResolveError{Host: host, NotFound: errors.As(err, &dnsErr) && dnsErr.IsNotFound, Err: err}
 	}
 	if len(ips) == 0 {
-		return fmt.Errorf("cannot resolve %q: no addresses", host)
+		return &ResolveError{Host: host, NotFound: true, Err: errors.New("no addresses")}
 	}
 	for _, ip := range ips {
 		if IsReservedAddr(ip.Unmap()) {

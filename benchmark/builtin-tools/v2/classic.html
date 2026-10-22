@@ -360,8 +360,8 @@ function renderRouter(){
   chip.querySelectorAll('button').forEach(bt=>bt.onclick=()=>{const cur=new Set((chip.dataset.show??'fixed,regressed').split(',').filter(Boolean));cur.has(bt.dataset.k)?cur.delete(bt.dataset.k):cur.add(bt.dataset.k);chip.dataset.show=[...cur].join(',');renderRouter()});
   const order={regressed:0,fixed:1,regrade:2};
   document.getElementById('fixTable').innerHTML='<tr><th>Site</th><th>Tool</th><th>v1</th><th>v2</th><th>Change</th><th>v2 note</th></tr>'+
-   DF.filter(x=>show.split(',').includes(x.kind)).sort((a,b)=>order[a.kind]-order[b.kind]||a.tool.localeCompare(b.tool)).map(x=>`<tr><td>${txt(host(x.url))}</td><td>${x.tool==='builtin'?'Built-in':'omnifeed'}</td><td>${OUT[x.v1]?OUT[x.v1].label:x.v1}</td><td>${OUT[x.v2]?OUT[x.v2].label:x.v2}</td><td>${x.kind}</td><td class="note">${x.v2note}</td></tr>`).join('');
-  document.getElementById('eventTable').innerHTML='<tr><th>Time (UTC)</th><th>Event</th></tr>'+(D.events||[]).map(e=>`<tr><td style="white-space:nowrap">${e.t.replace('2026-10-09T','').replace('Z','')}</td><td class="note">${e.text}</td></tr>`).join('');
+   DF.filter(x=>show.split(',').includes(x.kind)).sort((a,b)=>order[a.kind]-order[b.kind]||a.tool.localeCompare(b.tool)).map(x=>`<tr><td>${txt(host(x.url))}</td><td>${x.tool==='builtin'?'Built-in':'omnifeed'}</td><td>${OUT[x.v1]?OUT[x.v1].label:x.v1}</td><td>${OUT[x.v2]?OUT[x.v2].label:x.v2}</td><td>${x.kind}</td><td class="note">${txt(x.v2note)}</td></tr>`).join('');
+  document.getElementById('eventTable').innerHTML='<tr><th>Time (UTC)</th><th>Event</th></tr>'+(D.events||[]).map(e=>`<tr><td style="white-space:nowrap">${e.t.replace('2026-10-09T','').replace('Z','')}</td><td class="note">${txt(e.text)}</td></tr>`).join('');
 }
 function renderScore(){
   const Q=D.searches,m=(t,k)=>Q.reduce((a,q)=>a+(+q[t][k]||0),0)/Q.length,fr=t=>Q.filter(q=>q[t].fresh).length/Q.length*100;

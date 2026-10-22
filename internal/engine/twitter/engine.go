@@ -303,7 +303,7 @@ func (e *Engine) resolveShortLink(ctx context.Context, rawURL string) (string, e
 		return "", &domain.FetchError{Kind: domain.KindBadResponse, Err: fmt.Errorf("t.co redirect has no usable Location")}
 	}
 	dest := loc.String()
-	if err := httpx.ValidateURL(dest, e.blockPrivate); err != nil {
+	if err := httpx.ValidateURLContext(ctx, dest, e.blockPrivate); err != nil {
 		// Final: the registry's fallback would hand the t.co URL to a browser
 		// that follows the redirect to the destination just rejected.
 		return "", domain.NoFallback(&domain.FetchError{Kind: domain.KindError, Err: fmt.Errorf("t.co destination rejected: %w", err)})
