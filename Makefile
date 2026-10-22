@@ -93,7 +93,8 @@ docker-build: ## Build the local Docker image (multi-stage Dockerfile)
 	docker build -t kinorai/omnifeed:local .
 
 .PHONY: compose-up
-compose-up: ## Start full stack (proxy + crawl4ai upstream)
+compose-up: ## Start full stack (proxy + crawl4ai upstream); creates .env on first run
+	@test -f .env || echo "CRAWL4AI_API_TOKEN=$$(openssl rand -hex 32)" > .env
 	docker compose up -d
 
 .PHONY: compose-down
