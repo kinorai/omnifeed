@@ -1,9 +1,11 @@
 package httpx
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
+	"net/netip"
 	"syscall"
 	"time"
 )
@@ -25,10 +27,14 @@ func NewTransport() *http.Transport {
 // checked AFTER DNS resolution and refused if the resolved address is
 // private/reserved — unlike ValidateURL's lookup-then-fetch, this can't be
 // raced by DNS rebinding, and it covers every redirect hop because the guard
-// sits below the client's redirect-following.
+// sits below the client's redirect-following. Each redirect target also goes
+// through ValidateURL, so a hop to localhost, an ambiguous numeric host or a
+// non-http scheme is refused before any dial. The guarded client ignores
+// HTTP(S)_PROXY: through a proxy, the dial guard would only see the proxy.
 func NewGuardedClient(blockPrivate bool, timeout time.Duration) *http.Client {
 	t := NewTransport()
 	if blockPrivate {
+		t.Proxy = nil
 		// Timeout/KeepAlive mirror DefaultTransport's dialer, which Clone
 		// carries function-wise but not once we replace DialContext.
 		t.DialContext = (&net.Dialer{
@@ -37,8 +43,23 @@ func NewGuardedClient(blockPrivate bool, timeout time.Duration) *http.Client {
 			Control:   refuseReservedAddr,
 		}).DialContext
 	}
-	return &http.Client{Timeout: timeout, Transport: t}
+	return &http.Client{
+		Timeout:   timeout,
+		Transport: t,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= maxRedirects {
+				return errors.New("stopped after 10 redirects")
+			}
+			if err := ValidateURL(req.URL.String(), blockPrivate); err != nil {
+				return fmt.Errorf("redirect refused: %w", err)
+			}
+			return nil
+		},
+	}
 }
+
+// maxRedirects is net/http's default redirect limit, kept for the guarded client.
+const maxRedirects = 10
 
 // refuseReservedAddr is a net.Dialer Control hook: it sees the concrete
 // resolved address of every connection attempt and rejects private/reserved
@@ -48,8 +69,8 @@ func refuseReservedAddr(_, address string, _ syscall.RawConn) error {
 	if err != nil {
 		return fmt.Errorf("refusing dial to unparseable address %q: %w", address, err)
 	}
-	ip := net.ParseIP(host)
-	if ip == nil || isReservedIP(ip) {
+	ip, err := netip.ParseAddr(host)
+	if err != nil || IsReservedAddr(ip.Unmap()) {
 		return fmt.Errorf("refusing dial to private/reserved address %s", host)
 	}
 	return nil

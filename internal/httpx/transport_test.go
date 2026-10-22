@@ -55,3 +55,31 @@ func TestNewGuardedClientBlocksReservedDials(t *testing.T) {
 	}
 	_ = resp.Body.Close()
 }
+
+// Every redirect hop of a guarded fetch goes through ValidateURL, so a hop to
+// a name the dial guard alone would only catch after resolving (localhost) or
+// to a non-http scheme is refused before any dial.
+func TestNewGuardedClientValidatesRedirects(t *testing.T) {
+	stubLookup(t, map[string][]string{"public.example": {"93.184.215.14"}})
+	for _, target := range []string{"http://localhost/", "http://0x7f.0.0.1/", "ftp://public.example/"} {
+		c := NewGuardedClient(true, 5*time.Second)
+		c.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			if r.URL.Host != "public.example" {
+				t.Fatalf("dialed %s, want the redirect refused", r.URL)
+			}
+			return &http.Response{StatusCode: http.StatusFound, Header: http.Header{"Location": {target}},
+				Body: http.NoBody, Request: r}, nil
+		})
+		resp, err := c.Get("http://public.example/")
+		if err == nil {
+			_ = resp.Body.Close()
+			t.Errorf("redirect to %s followed, want refused", target)
+		} else if !strings.Contains(err.Error(), "redirect refused") {
+			t.Errorf("redirect to %s: %v, want the redirect refusal", target, err)
+		}
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
