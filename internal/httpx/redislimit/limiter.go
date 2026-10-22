@@ -54,7 +54,6 @@ import (
 	"errors"
 	"fmt"
 	mrand "math/rand"
-	"net/url"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -373,14 +372,10 @@ func (l *Limiter) observeError(op string, err error) {
 	}
 }
 
-// hostOf mirrors DomainLimiter.slotFor: a malformed URL yields the empty host,
-// which paces all such callers together rather than not at all.
+// hostOf is the in-process limiter's key, so both pace a host under the same
+// normalized name.
 func hostOf(rawURL string) string {
-	u, _ := url.Parse(rawURL)
-	if u == nil {
-		return ""
-	}
-	return u.Hostname()
+	return httpx.LimiterHost(rawURL)
 }
 
 // sleepCtx waits for d and reports whether it completed. It returns false when
