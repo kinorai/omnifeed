@@ -13,7 +13,9 @@ engines call their upstream directly: Hacker News reads `hn.algolia.com`, GitHub
 `OMNIFEED_DISCOURSE_HOSTS`, and Twitter/X reads `api.fxtwitter.com` (or
 `OMNIFEED_TWITTER_FXTWITTER_URL`), `cdn.syndication.twimg.com`, `api.vxtwitter.com` and
 `t.co`. If outbound traffic may reach only crawl4ai, those five **break**; Twitter/X then
-falls back to crawl4ai on the `x.com` URL.
+falls back to crawl4ai on the `x.com` URL. Restrict crawl4ai's own egress to public
+addresses with a network policy or firewall: its browser follows redirects that omnifeed
+cannot check before they are fetched ([SECURITY.md](../SECURITY.md)).
 
 | Variable | Default | Purpose |
 |---|---|---|
@@ -77,7 +79,7 @@ falls back to crawl4ai on the `x.com` URL.
 | `OMNIFEED_MAX_URLS_PER_REQUEST` | `30` | Cap on `urls[]` length |
 | `OMNIFEED_PER_DOMAIN_CONCURRENCY` | `2` | Max concurrent requests to one domain |
 | `OMNIFEED_PER_DOMAIN_DELAY` | `1500ms` | Minimum gap between requests to one domain |
-| `OMNIFEED_BLOCK_PRIVATE_IPS` | `true` | SSRF protection. Keep it on in production. |
+| `OMNIFEED_BLOCK_PRIVATE_IPS` | `true` | SSRF protection: refuses hosts that are, or resolve to, addresses that are not globally reachable, non-canonical IPv4 forms, `localhost` names and hosts that do not resolve. Keep it on in production, and restrict crawl4ai's egress to public addresses too (see [SECURITY.md](../SECURITY.md)). |
 | `OMNIFEED_ALLOWED_ORIGINS` | _(unset)_ | Comma-separated browser `Origin` values, e.g. `https://app.example.com`, allowed to call the HTTP APIs cross-origin. Requests with no `Origin`, which covers every native MCP client, always pass, as do loopback origins such as the MCP inspector. Anything else gets **403**. This is the DNS-rebinding guard the MCP transport spec requires, applied to every HTTP endpoint. |
 | `OMNIFEED_LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error` |
 | `OMNIFEED_LOG_FORMAT` | `json` | `json` or `text` |
