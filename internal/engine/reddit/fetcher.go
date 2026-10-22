@@ -613,6 +613,10 @@ func (s *Session) FetchMoreChildren(ctx context.Context, linkID string, childIDs
 // read the resulting location. Returns the full canonical URL (tracking query
 // params and all — NormalizePermalink only looks at the path).
 func (s *Session) ResolveShareURL(ctx context.Context, shareURL string) (string, error) {
+	shareURL, err := shareRequestURL(shareURL)
+	if err != nil {
+		return "", err
+	}
 	release, err := s.admit(ctx)
 	if err != nil {
 		return "", err
@@ -634,6 +638,18 @@ func (s *Session) ResolveShareURL(ctx context.Context, shareURL string) (string,
 		return "", fmt.Errorf("share link did not resolve to a thread (got %q)", redactQuery(resolved))
 	}
 	return resolved, nil
+}
+
+// shareRequestURL rebuilds a share link on redditOrigin, keeping only its
+// path. The caller chose the scheme, host and port of the URL it passed in;
+// the cookie method sends reddit_session with this request, so none of them
+// may come from the caller.
+func shareRequestURL(shareURL string) (string, error) {
+	u, err := url.Parse(shareURL)
+	if err != nil || !shareRE.MatchString(u.Path) {
+		return "", fmt.Errorf("not a Reddit share link: %q", redactQuery(shareURL))
+	}
+	return redditOrigin + u.EscapedPath(), nil
 }
 
 // --- fetch envelope ---
