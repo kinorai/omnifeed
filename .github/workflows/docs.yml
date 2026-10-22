@@ -11,7 +11,7 @@ on:
       - '.github/workflows/docs.yml'
 
 env:
-  GO_VERSION: '1.26.9'
+  GO_VERSION: '1.26.10'
   # Pinned: the tool runs on every push to main. Bump deliberately.
   GOMARKDOC_VERSION: v1.1.0
 
