@@ -1,3 +1,7 @@
+// HTML-escape data before it goes into an innerHTML template (notes quote raw
+// page markup such as <title>, which would otherwise swallow the rest of the text).
+function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]); }
+
 // Shared, deterministic stats for every site version. Same numbers everywhere.
 const BENCH = (() => {
   const USE = o => o === 'success' || o === 'partial';

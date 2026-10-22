@@ -200,7 +200,7 @@ const median=a=>{const s=[...a].sort((x,y)=>x-y),m=s.length>>1;return s.length%2
 const host=u=>new URL(u).hostname.replace(/^www\./,'');
 // Data strings go into innerHTML templates: render them as text, so a note
 // that quotes markup ("SVG <title> junk") shows instead of being parsed.
-const txt=s=>{const d=document.createElement('div');d.textContent=s??'';return d.innerHTML};
+const txt=s=>{const d=document.createElement('div');d.textContent=s??'';return d.innerHTML.replace(/"/g,'&quot;').replace(/'/g,'&#39;')};
 const safeHref=u=>/^https?:\/\//i.test(u)?txt(u):'#';
 const badge=o=>`<span class="badge"><i style="background:${OUT[o].color}">${OUT[o].icon}</i>${OUT[o].label}</span>`;
 
@@ -318,7 +318,7 @@ function renderRoute(){
   box.querySelectorAll('button').forEach(b=>b.onclick=()=>{box.dataset.cur=b.dataset.k;renderRoute()});
   const rows=R.filter(r=>cur==='all'||r.pick===cur);
   document.getElementById('routeTable').innerHTML='<tr><th>Domain</th><th>Category</th><th>Route to</th><th>Why</th><th class="num">Built-in ms</th><th class="num">omnifeed ms</th></tr>'+
-    rows.map(r=>`<tr><td>${host(r.s.url)}<div class="note">${(new URL(r.s.url).pathname+new URL(r.s.url).search).slice(0,48)}</div></td><td>${r.s.cat}</td><td><span class="badge"><i style="background:${PICK[r.pick].c}">${r.pick==='neither'?'×':'→'}</i>${PICK[r.pick].l}</span></td><td class="note">${txt(r.why)}</td><td class="num">${r.s.builtin.ms}</td><td class="num">${r.s.omnifeed.ms}</td></tr>`).join('');
+    rows.map(r=>`<tr><td>${txt(host(r.s.url))}<div class="note">${txt((new URL(r.s.url).pathname+new URL(r.s.url).search).slice(0,48))}</div></td><td>${txt(r.s.cat)}</td><td><span class="badge"><i style="background:${PICK[r.pick].c}">${r.pick==='neither'?'×':'→'}</i>${PICK[r.pick].l}</span></td><td class="note">${txt(r.why)}</td><td class="num">${r.s.builtin.ms}</td><td class="num">${r.s.omnifeed.ms}</td></tr>`).join('');
   const out=R.map(r=>({domain:host(r.s.url),url:r.s.url,category:r.s.cat,route:r.pick,why:r.why,builtin_outcome:r.s.builtin.outcome,omnifeed_outcome:r.s.omnifeed.outcome,builtin_ms:r.s.builtin.ms,omnifeed_ms:r.s.omnifeed.ms}));
   document.getElementById('dlRouteJson').onclick=()=>download('routing-table.json',JSON.stringify(out,null,1),'application/json');
   document.getElementById('dlRouteCsv').onclick=()=>download('routing-table.csv',[Object.keys(out[0]).join(','),...out.map(o=>Object.values(o).map(csvq).join(','))].join('\n'),'text/csv');
@@ -344,7 +344,7 @@ function renderRouter(){
   const f=(rx,arr)=>arr.filter(x=>rx.test(x.note)).length;
   const fixes=[
    ['#1 Propagate HTTP status + raise near-empty threshold','Silent failures',O.filter(x=>x.outcome==='softblock').length,`${obf.cov-ob.cov} sites recovered via fallback; ${ob.wrong} wrong pages eliminated`,'measured'],
-   ['#2 Modern Chrome fingerprint (UA + Sec-Ch-Ua)','Cloudflare / Akamai / "update browser"',S.filter(s=>/Cloudflare|Akamai/.test(s.omnifeed.reason||'')||/browser/i.test(s.omnifeed.note)&&s.omnifeed.outcome==='softblock').length,`of which ${S.filter(s=>(/Cloudflare|Akamai/.test(s.omnifeed.reason||'')||/browser/i.test(s.omnifeed.note)&&s.omnifeed.outcome==='softblock')&&!USE(s.builtin.outcome)).length} not covered by the built-in either`,'potential'],
+   ['#2 Modern Chrome fingerprint (UA + Sec-Ch-Ua)','Cloudflare / Akamai / "update browser"',S.filter(s=>/Cloudflare|Akamai/.test(s.omnifeed.reason||'')||/browser/i.test(s.omnifeed.note)&&s.omnifeed.outcome==='softblock').length,`of which ${txt(S.filter(s=>(/Cloudflare|Akamai/.test(s.omnifeed.reason||'')||/browser/i.test(s.omnifeed.note)&&s.omnifeed.outcome==='softblock')&&!USE(s.builtin.outcome)).length)} not covered by the built-in either`,'potential'],
    ['#3 Crash fixes (JSON decode, navigation race, PDF)','Crash / engine error',O.filter(x=>x.outcome==='error').length,'all retryable or deterministic engine bugs','measured'],
    ['#4 Keep link-only table cells / list items','Blank cells, dropped values',f(/blank|BLANK|EMPTY|empty|dropped|lost|missing|disappear/i,O.filter(x=>x.outcome==='partial'||x.outcome==='softblock')),'partials that would become clean successes','potential'],
    ['#5 Honour max_chars in structured engines','Output over the requested cap',O.filter(x=>x.cap&&x.chars>x.cap*1.5).length,`median overshoot ×${(pct(O.filter(x=>x.cap&&x.chars>x.cap*1.5).map(x=>x.chars/x.cap),50)||0).toFixed(1)} the requested cap`,'measured'],
@@ -372,7 +372,7 @@ function timeline(id,label,kind){
   el('text',{x:L,y:14,class:'ink',style:'font-weight:600'},svg).textContent=label;
   ['builtin','omnifeed'].forEach((t,k)=>{const pts=T.filter(c=>c.tool===t),col=`var(--series-${k+1})`;
     pts.forEach(p=>{const d=el('circle',{cx:sx(p.i),cy:sy(p.ms),r:3,fill:col,'fill-opacity':.45},svg);
-      d.addEventListener('mousemove',e=>{d.setAttribute('r',5);showTip(e,`<b>${(p.ms/1000).toFixed(2)} s</b> · ${t==='builtin'?'Built-in':'omnifeed'}${p.err?' · error':''}<br>${p.target}<br>call #${p.i+1} · t+${p.m.toFixed(1)} min`)});d.addEventListener('mouseleave',()=>{d.setAttribute('r',3);hideTip()})});
+      d.addEventListener('mousemove',e=>{d.setAttribute('r',5);showTip(e,`<b>${(p.ms/1000).toFixed(2)} s</b> · ${t==='builtin'?'Built-in':'omnifeed'}${p.err?' · error':''}<br>${txt(p.target)}<br>call #${p.i+1} · t+${p.m.toFixed(1)} min`)});d.addEventListener('mouseleave',()=>{d.setAttribute('r',3);hideTip()})});
     const w=15;let dd='',seg=0;pts.forEach((p,j)=>{if(j&&p.m-pts[j-1].m>5)seg=j;const win=pts.slice(Math.max(seg,j-w+1),j+1).map(x=>x.ms);dd+=(j&&j!==seg?'L':'M')+sx(p.i)+','+sy(pct(win,50))});
     el('path',{d:dd,fill:'none',stroke:col,'stroke-width':2.5,'stroke-linejoin':'round'},svg)});
 }
