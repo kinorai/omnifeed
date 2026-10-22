@@ -2,6 +2,9 @@
 # omnifeed in front of both.
 # Use this to point Open WebUI's external loader at http://localhost:8080
 # (set WEB_LOADER_ENGINE=external and EXTERNAL_WEB_LOADER_URL=http://...).
+#
+# crawl4ai's API token comes from .env next to this file. Create it once:
+#   echo "CRAWL4AI_API_TOKEN=$(openssl rand -hex 32)" > .env
 
 # Pin the project name so the network is always `omnifeed_default`, regardless of
 # the directory you run this from — the stdio MCP example in the README joins it.
@@ -35,14 +38,16 @@ services:
     # usable preserve_tags (needed to keep code blocks intact).
     image: unclecode/crawl4ai:0.9.2
     container_name: crawl4ai
-    ports:
-      - "11235:11235"
+    # No published port: crawl4ai runs any JavaScript its token holder sends,
+    # so only this stack's network reaches it. To call it from the host for
+    # debugging, publish it on loopback only: ports: ["127.0.0.1:11235:11235"].
     environment:
       # crawl4ai 0.9.x binds loopback-only until a token is set, and gates its
       # API on it — omnifeed sends the same value via OMNIFEED_CRAWL4AI_TOKEN.
-      CRAWL4AI_API_TOKEN: crawl4ai-dev-token
-      # The Reddit engine runs an in-page fetch via POST /execute_js, which 0.9.x
-      # ships disabled by default. Enable it (token-gated, reachable by this stack only).
+      CRAWL4AI_API_TOKEN: ${CRAWL4AI_API_TOKEN:?set CRAWL4AI_API_TOKEN in .env, see the top of docker-compose.yml}
+      # The Reddit engine's browser method reads the page through POST
+      # /execute_js, which 0.9.x ships disabled by default. Enable it
+      # (token-gated, reachable by this stack only).
       CRAWL4AI_EXECUTE_JS_ENABLED: "true"
       CRAWL4AI_HOOKS_ENABLED: "false"
       # MAX_CONCURRENT_TASKS was here and did nothing: crawl4ai 0.9.2 reads it
@@ -73,7 +78,7 @@ services:
     environment:
       OMNIFEED_CRAWL4AI_URL: http://crawl4ai:11235/crawl
       OMNIFEED_SEARXNG_URL: http://searxng:8080
-      OMNIFEED_CRAWL4AI_TOKEN: crawl4ai-dev-token  # must match crawl4ai's CRAWL4AI_API_TOKEN
+      OMNIFEED_CRAWL4AI_TOKEN: ${CRAWL4AI_API_TOKEN:?set CRAWL4AI_API_TOKEN in .env}
       # Set OMNIFEED_API_KEY to require Authorization: Bearer ... on /crawl.
       # OMNIFEED_API_KEY: changeme
       # Without OMNIFEED_API_KEY the proxy refuses to start; this is the explicit
@@ -135,7 +140,7 @@ services:
     environment:
       OMNIFEED_CRAWL4AI_URL: http://crawl4ai:11235/crawl
       OMNIFEED_SEARXNG_URL: http://searxng:8080
-      OMNIFEED_CRAWL4AI_TOKEN: crawl4ai-dev-token  # must match crawl4ai's CRAWL4AI_API_TOKEN
+      OMNIFEED_CRAWL4AI_TOKEN: ${CRAWL4AI_API_TOKEN:?set CRAWL4AI_API_TOKEN in .env}
     depends_on:
       crawl4ai:
         condition: service_healthy

@@ -374,7 +374,7 @@ up() {
   # (verified against the image), so it only looked like a concurrency cap. The
   # real one is crawler.pool.max_pages in the mounted config.
   run_or_start "$CRAWL4AI" \
-    -p "${CRAWL4AI_PORT}:11235" \
+    -p "127.0.0.1:${CRAWL4AI_PORT}:11235" \
     -m "$CRAWL4AI_MEMORY" \
     -e "CRAWL4AI_API_TOKEN=${token}" \
     -e CRAWL4AI_EXECUTE_JS_ENABLED=true \

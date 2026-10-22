@@ -138,6 +138,17 @@ func (c *directClient) dropToken() {
 	c.mu.Unlock()
 }
 
+// credentialHosts are the only hosts a Reddit credential is ever sent to.
+// Matched exactly, never by suffix: a caller-supplied URL that merely ends in
+// reddit.com must not receive the session cookie or the bearer token.
+var credentialHosts = map[string]bool{"www.reddit.com": true, "oauth.reddit.com": true}
+
+// credentialTarget reports whether u may carry a Reddit credential: https on
+// the default port, to an exact credentialHosts entry.
+func credentialTarget(u *url.URL) bool {
+	return u.Scheme == "https" && u.Port() == "" && credentialHosts[strings.ToLower(u.Host)]
+}
+
 func (c *directClient) request(ctx context.Context, rawURL string, authenticate bool) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
@@ -146,6 +157,9 @@ func (c *directClient) request(ctx context.Context, rawURL string, authenticate 
 	req.Header.Set("User-Agent", c.userAgent)
 	req.Header.Set("Accept", "application/json")
 	if authenticate {
+		if !credentialTarget(req.URL) {
+			return nil, fmt.Errorf("refusing to send the Reddit credential to %s://%s", req.URL.Scheme, req.URL.Host)
+		}
 		if c.clientID != "" {
 			tok, err := c.accessToken(ctx)
 			if err != nil {
@@ -190,7 +204,7 @@ func (c *directClient) get(ctx context.Context, rawURL string) (fetchEnvelope, e
 // location resolves a share link to the URL it redirects to. The client does
 // not follow redirects, so the target comes from the Location header. Share
 // links live on www.reddit.com and redirect without credentials, so only the
-// cookie mode sends one.
+// cookie mode sends one. shareURL must already be canonical (shareRequestURL).
 func (c *directClient) location(ctx context.Context, shareURL string) (string, error) {
 	resp, err := c.request(ctx, shareURL, c.clientID == "")
 	if err != nil {

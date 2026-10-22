@@ -3,16 +3,26 @@ name: Community Support
 on:
   issues:
     types: [opened, reopened, labeled, unlabeled]
-  pull_request:
+  # pull_request_target, not pull_request: a fork's pull_request run gets a
+  # read-only token, so labeling and the welcome comment failed on exactly the
+  # PRs they are for. This is safe only because no job here checks out or
+  # runs PR code: the labeler reads its config from the base branch and the
+  # PR's file list from the API. Never add a checkout of the PR head here.
+  pull_request_target:
     types: [opened, reopened, synchronize, ready_for_review]
   schedule:
     - cron: '0 0 * * 1'  # weekly, Monday 00:00 UTC
+
+permissions: {}
 
 jobs:
   triage-issues:
     name: Triage Issues
     runs-on: ubuntu-latest
     if: github.event_name == 'issues'
+    permissions:
+      contents: read
+      issues: write
     steps:
       - name: Auto-label issues
         uses: github/issue-labeler@c1b0f9f52a63158c4adc09425e858e87b32e9685 # v3.4
@@ -37,15 +47,11 @@ jobs:
   triage-prs:
     name: Triage Pull Requests
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request_target'
     permissions:
-      contents: write
+      contents: read
       pull-requests: write
     steps:
-      - name: Checkout code
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          fetch-depth: 1
       - name: Label PRs
         uses: actions/labeler@b8dd2d9be0f68b860e7dae5dae7d772984eacd6d # v6.2.0
         with:
@@ -69,6 +75,9 @@ jobs:
     name: Mark Stale Issues and PRs
     runs-on: ubuntu-latest
     if: github.event_name == 'schedule'
+    permissions:
+      issues: write
+      pull-requests: write
     steps:
       - name: Mark stale issues and PRs
         uses: actions/stale@1e223db275d687790206a7acac4d1a11bd6fe629 # v10.4.0

@@ -71,6 +71,9 @@ type Engine struct {
 	challengeWait time.Duration
 	minProseChars int
 
+	// blockPrivate re-checks the final URL crawl4ai reports after redirects.
+	blockPrivate bool
+
 	// direct fetches raw non-HTML text without the browser (see rawtext.go).
 	// Its underlying http.Client refuses private/reserved dials post-DNS when
 	// the SSRF guard is on. Nil disables the bypass.
@@ -174,6 +177,7 @@ func New(cfg Config) *Engine {
 	return &Engine{
 		endpoint:         cfg.Endpoint,
 		token:            cfg.Token,
+		blockPrivate:     cfg.BlockPrivateIPs,
 		client:           cfg.Client.WithUpstream("crawl4ai", "crawl"),
 		limiter:          cfg.Limiter,
 		keepLinks:        cfg.KeepLinks,
@@ -756,6 +760,9 @@ func (e *Engine) crawlRung(ctx context.Context, rawURL string, o crawlOpts) (dom
 	if result.Success != nil && !*result.Success {
 		return domain.Document{}, verdictError(result.ErrorMessage, result.StatusCode)
 	}
+	if err := e.checkFinalURL(ctx, rawURL, result.RedirectedURL); err != nil {
+		return domain.Document{}, err
+	}
 	// Whitespace-only counts as empty here: a fit_markdown of "\n" must fall
 	// back to raw_markdown, not win the pick and defeat the fallback chain.
 	content := result.Markdown.FitMarkdown
@@ -849,6 +856,27 @@ func (e *Engine) crawlRung(ctx context.Context, rawURL string, o crawlOpts) (dom
 		content = "> Redirected from " + rawURL + " to " + final + "\n\n" + content
 	}
 	return domain.Document{PageContent: content, Metadata: meta}, nil
+}
+
+// checkFinalURL runs the SSRF guard on the URL the browser ended on, when a
+// redirect took it to another host. The browser has already fetched it by
+// then, so this cannot stop the request; it keeps the response of a redirect
+// into a private address away from the caller. The request itself is stopped
+// only by an egress policy on crawl4ai (see SECURITY.md). Final: a fallback
+// would send the browser down the same redirect.
+func (e *Engine) checkFinalURL(ctx context.Context, rawURL, final string) error {
+	if !e.blockPrivate || final == "" {
+		return nil
+	}
+	a, errA := url.Parse(rawURL)
+	b, errB := url.Parse(final)
+	if errA == nil && errB == nil && strings.EqualFold(a.Hostname(), b.Hostname()) {
+		return nil
+	}
+	if err := httpx.ValidateURLContext(ctx, final, e.blockPrivate); err != nil {
+		return domain.NoFallback(&domain.FetchError{Kind: domain.KindError, Err: fmt.Errorf("redirect target rejected: %w", err)})
+	}
+	return nil
 }
 
 func rawPath(rawURL string) string {

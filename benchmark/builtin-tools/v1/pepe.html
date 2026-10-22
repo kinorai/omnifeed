@@ -86,12 +86,12 @@ BENCH.load().then(R=>{
   const bubble=(id,txt)=>{const el=$(id);el.textContent=txt;el.classList.add('on');setTimeout(()=>el.classList.remove('on'),700/speed)};
   const log=h=>{const d=document.createElement('div');d.innerHTML=h;$('log').prepend(d);while($('log').children.length>5)$('log').lastChild.remove()};
   function step(){if(i>=R.n)return end();const s=R.S[i++],o=s.omnifeed.outcome,bo=s.builtin.outcome;
-    $('card').innerHTML=`${host(s.url)}<small>${s.cat} · site ${i}/${R.n}</small>`;$('card').style.transform='scale(1.08)';setTimeout(()=>$('card').style.transform='',150);
+    $('card').innerHTML=`${esc(host(s.url))}<small>${esc(s.cat)} · site ${i}/${R.n}</small>`;$('card').style.transform='scale(1.08)';setTimeout(()=>$('card').style.transform='',150);
     const fO=$('fO');fO.classList.remove('monka');
-    if(o==='softblock'){fO.classList.add('monka');bubble('bO','monkaS… "success"');log(`😰 <b>${host(s.url)}</b>: omnifeed said ✓ but got: ${s.omnifeed.note.slice(0,70)}`)}
-    else if(USE(o)&&!USE(bo)){g++;bubble('bO','feels good man');bubble('bB','feels bad man');$('fB').classList.remove('shake');void $('fB').offsetWidth;$('fB').classList.add('shake');log(`😎 <b>${host(s.url)}</b>: only omnifeed (built-in: ${s.builtin.reason||bo})`)}
-    else if(USE(bo)&&!USE(o)){b++;bubble('bB','…feels ok man?');log(`🐸 <b>${host(s.url)}</b>: rare built-in W (omnifeed: ${s.omnifeed.reason||o})`)}
-    else if(!USE(bo)&&!USE(o)){bubble('bO','sadge');log(`💀 <b>${host(s.url)}</b>: nobody reads this (${s.omnifeed.reason||o})`)}
+    if(o==='softblock'){fO.classList.add('monka');bubble('bO','monkaS… "success"');log(`😰 <b>${esc(host(s.url))}</b>: omnifeed said ✓ but got: ${esc(s.omnifeed.note.slice(0,70))}`)}
+    else if(USE(o)&&!USE(bo)){g++;bubble('bO','feels good man');bubble('bB','feels bad man');$('fB').classList.remove('shake');void $('fB').offsetWidth;$('fB').classList.add('shake');log(`😎 <b>${esc(host(s.url))}</b>: only omnifeed (built-in: ${esc(s.builtin.reason||bo)})`)}
+    else if(USE(bo)&&!USE(o)){b++;bubble('bB','…feels ok man?');log(`🐸 <b>${esc(host(s.url))}</b>: rare built-in W (omnifeed: ${esc(s.omnifeed.reason||o)})`)}
+    else if(!USE(bo)&&!USE(o)){bubble('bO','sadge');log(`💀 <b>${esc(host(s.url))}</b>: nobody reads this (${esc(s.omnifeed.reason||o)})`)}
     $('sg').textContent='😎 omnifeed-only '+g;$('sb').textContent='🐸 built-in-only '+b;timer=setTimeout(step,650/speed)}
   function end(){playing=false;$('final').style.display='flex';$('ftext').innerHTML=`omnifeed read <b>${R.onlyO.length}</b> sites the built-in couldn't. The built-in read <b>${R.onlyB.length}</b> omnifeed couldn't.<br>Usable: <b>${R.usableO}</b> vs <b>${R.usableB}</b> of ${R.n}. Search: ${R.searchWins.o}–${R.searchWins.b}.<br><span style="color:#ffd27a">…but omnifeed sweated through ${R.soft.length} silent fails. monkaS.</span>`}
   $('play').onclick=()=>{if(playing){clearTimeout(timer);playing=false;$('play').textContent='▶ play'}else{playing=true;$('play').textContent='❚❚ pause';step()}};
