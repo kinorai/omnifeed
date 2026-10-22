@@ -112,12 +112,12 @@ BENCH.load().then(R=>{
   document.getElementById('sB').textContent=(pct(R.lat.sB,50)/1000).toFixed(1);
   bars('speedBars',[['Built-in',pct(R.lat.sB,50),'var(--b)',s(pct(R.lat.sB,50))],['omnifeed',pct(R.lat.sO,50),'var(--o)',s(pct(R.lat.sO,50))]],pct(R.lat.sB,50));
   const order=[...R.both,...R.onlyO,...R.onlyB,...R.neither],col=x=>R.both.includes(x)?'var(--both)':R.onlyO.includes(x)?'var(--o)':R.onlyB.includes(x)?'var(--b)':'var(--none)';
-  document.getElementById('waffle').innerHTML=order.map((x,i)=>`<i title="${host(x.url)}" style="transition-delay:${reduce?0:i*6}ms;background:${col(x)}"></i>`).join('');
+  document.getElementById('waffle').innerHTML=order.map((x,i)=>`<i title="${esc(host(x.url))}" style="transition-delay:${reduce?0:i*6}ms;background:${col(x)}"></i>`).join('');
   document.getElementById('wlegend').innerHTML=[['var(--both)','Both read it',R.both.length],['var(--o)','Only omnifeed',R.onlyO.length],['var(--b)','Only built-in',R.onlyB.length],['var(--none)','Neither',R.neither.length]].map(([c,l,n])=>`<span><i style="background:${c}"></i>${l} · ${n}</span>`).join('');
   const doms=[...new Set(R.refused.map(x=>host(x.url)))];
   document.getElementById('rain').innerHTML=doms.map((d,i)=>`<span style="left:${(i*37)%88+2}%;--y:${30+((i*53)%260)}px;--r:${((i*29)%24)-12}deg;--d:${1.2+((i*7)%10)/10}s;--w:${i*60}ms">${d}</span>`).join('');
   bars('newsBars',[['Built-in',R.news.b,'var(--b)',`${R.news.b}/${R.news.n}`],['omnifeed',R.news.o,'var(--o)',`${R.news.o}/${R.news.n}`]],R.news.n);
-  document.getElementById('flip').innerHTML=R.soft.map(x=>`<div class="card"><div><div class="f"><span class="ok">✓ success</span><br>${host(x.url)}</div><div class="k"><span class="ko">✗ actually:</span> ${x.omnifeed.note.slice(0,90)}</div></div></div>`).join('');
+  document.getElementById('flip').innerHTML=R.soft.map(x=>`<div class="card"><div><div class="f"><span class="ok">✓ success</span><br>${esc(host(x.url))}</div><div class="k"><span class="ko">✗ actually:</span> ${esc(x.omnifeed.note.slice(0,90))}</div></div></div>`).join('');
   bars('fixBars',[['Built-in only',R.usableB,'var(--b)',R.usableB],['omnifeed only',R.usableO,'var(--o)',R.usableO],['omni → built-in today',R.fallbackToday,'var(--none)',R.fallbackToday],['…with the fix',R.fallbackFixed,'var(--both)',R.fallbackFixed]],R.n);
   const io=new IntersectionObserver(es=>es.forEach(e=>{if(!e.isIntersecting)return;const sec=e.target;sec.classList.add('in');
     sec.querySelectorAll('.count:not(.done)').forEach(c=>{c.classList.add('done');countUp(c)});

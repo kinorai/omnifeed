@@ -358,3 +358,27 @@ func TestChallengeTitleMatchesOnlyChallenges(t *testing.T) {
 		}
 	}
 }
+
+// A browser redirect into a private address is caught on the final URL
+// crawl4ai reports, and the page is not returned. Same-host redirects are not
+// looked up again.
+func TestRedirectToPrivateAddressIsRejected(t *testing.T) {
+	final := "http://169.254.169.254/latest/meta-data"
+	e, _ := fakeCrawl(t, func(int32, map[string]any) map[string]any {
+		p := page(200, "# Metadata\n"+realProse)
+		p["results"].([]any)[0].(map[string]any)["redirected_url"] = final
+		return p
+	})
+	e.blockPrivate = true
+	_, err := e.Crawl(context.Background(), deadTargetURL+"/x", domain.EngineOptions{})
+	if err == nil || !strings.Contains(err.Error(), "redirect target rejected") || !domain.IsNoFallback(err) {
+		t.Fatalf("err = %v, want a final redirect rejection", err)
+	}
+	if err := e.checkFinalURL(context.Background(), deadTargetURL+"/x", deadTargetURL+"/y"); err != nil {
+		t.Errorf("same-host redirect: %v", err)
+	}
+	e.blockPrivate = false
+	if _, err := e.Crawl(context.Background(), deadTargetURL+"/x", domain.EngineOptions{}); err != nil {
+		t.Errorf("guard off: %v", err)
+	}
+}

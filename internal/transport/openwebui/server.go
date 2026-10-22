@@ -37,6 +37,7 @@ type Server struct {
 	logger         *slog.Logger
 	metrics        *observability.Metrics
 	maxURLsPerReq  int
+	maxRespBytes   int
 	redditDefaults reddit.Options
 }
 
@@ -47,7 +48,10 @@ type Config struct {
 	Logger            *slog.Logger
 	Metrics           *observability.Metrics
 	MaxURLsPerRequest int
-	RedditDefaults    reddit.Options
+	// MaxResponseBytes caps the page content one /crawl response carries,
+	// summed over its documents; 0 disables the cap.
+	MaxResponseBytes int
+	RedditDefaults   reddit.Options
 }
 
 // New constructs the server.
@@ -64,6 +68,7 @@ func New(cfg Config) *Server {
 		logger:         cfg.Logger,
 		metrics:        cfg.Metrics,
 		maxURLsPerReq:  cfg.MaxURLsPerRequest,
+		maxRespBytes:   cfg.MaxResponseBytes,
 		redditDefaults: cfg.RedditDefaults,
 	}
 }
@@ -130,7 +135,10 @@ func (s *Server) crawl(w http.ResponseWriter, r *http.Request) {
 	// No size control here — deliberately unlike the fetch_url MCP tool, which
 	// caps at OMNIFEED_FETCH_MAX_CHARS. RAG pipelines chunk and embed whatever
 	// they receive, so a cap would silently drop retrievable text; an LLM
-	// context window is what needs protecting, not a vector store.
+	// context window is what needs protecting, not a vector store. What IS
+	// bounded is the response as a whole (OMNIFEED_CRAWL_MAX_RESPONSE_MB): a
+	// document that would push it past the cap is replaced by an error
+	// document saying so, never cut, so no text is dropped silently.
 	results := make([]loaderDocument, len(req.URLs))
 	var wg sync.WaitGroup
 	for i, u := range req.URLs {
@@ -149,6 +157,19 @@ func (s *Server) crawl(w http.ResponseWriter, r *http.Request) {
 		}(i, u)
 	}
 	wg.Wait()
+	// Spent in request order, not completion order, so which URLs are served
+	// does not depend on which crawl happened to finish first.
+	if left := s.maxRespBytes; left > 0 {
+		for i, doc := range results {
+			if n := len(doc.PageContent); n <= left {
+				left -= n
+				continue
+			}
+			results[i] = errorDocument(req.URLs[i], &domain.FetchError{Kind: domain.KindError, Err: fmt.Errorf(
+				"this page would push the /crawl response past its %d MiB cap (OMNIFEED_CRAWL_MAX_RESPONSE_MB): request this URL on its own",
+				s.maxRespBytes>>20)})
+		}
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)

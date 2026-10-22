@@ -438,6 +438,7 @@ func run(cfg config.Config, logger *slog.Logger) error {
 		Logger:            logger,
 		Metrics:           metrics,
 		MaxURLsPerRequest: cfg.MaxURLsPerRequest,
+		MaxResponseBytes:  cfg.CrawlMaxResponseMB << 20,
 		RedditDefaults:    redditDefaults,
 	})
 

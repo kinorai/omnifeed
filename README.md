@@ -45,6 +45,8 @@ get their own engines too.
 # Fetch the compose file and SearXNG settings, then start:
 curl -fsSL https://raw.githubusercontent.com/kinorai/omnifeed/main/docker-compose.yml -o docker-compose.yml
 curl -fsSL --create-dirs https://raw.githubusercontent.com/kinorai/omnifeed/main/searxng/settings.yml -o searxng/settings.yml
+# Once: the token omnifeed and crawl4ai share
+echo "CRAWL4AI_API_TOKEN=$(openssl rand -hex 32)" > .env
 docker compose up
 ```
 
@@ -80,7 +82,7 @@ Works with any MCP client, including **Claude Code, Cursor, Codex, Gemini CLI, O
 <details>
 <summary><b>Standalone stdio, without the compose stack</b></summary>
 
-Spawn the container and tell it where crawl4ai and SearXNG are. omnifeed exits at startup without `OMNIFEED_CRAWL4AI_URL`.
+Spawn the container and tell it where crawl4ai and SearXNG are, and crawl4ai's token. omnifeed exits at startup without `OMNIFEED_CRAWL4AI_URL`.
 
 ```jsonc
 {
@@ -90,6 +92,7 @@ Spawn the container and tell it where crawl4ai and SearXNG are. omnifeed exits a
       "args": [
         "run", "--rm", "-i",
         "-e", "OMNIFEED_CRAWL4AI_URL=http://host.docker.internal:11235/crawl",
+        "-e", "OMNIFEED_CRAWL4AI_TOKEN",
         "-e", "OMNIFEED_SEARXNG_URL=http://host.docker.internal:8080",
         "kinorai/omnifeed:latest", "--mcp-stdio"
       ]
@@ -98,7 +101,7 @@ Spawn the container and tell it where crawl4ai and SearXNG are. omnifeed exits a
 }
 ```
 
-On Linux, add `"--add-host=host.docker.internal:host-gateway"` to the args.
+`-e OMNIFEED_CRAWL4AI_TOKEN` passes the variable through from the client's environment. On Linux, add `"--add-host=host.docker.internal:host-gateway"` to the args. The compose stack does not publish crawl4ai on the host; to use its crawl4ai and SearXNG, add `"--network", "omnifeed_default"` and use `http://crawl4ai:11235/crawl` and `http://searxng:8080`.
 </details>
 
 **`fetch_url`** is always available. **`web_search`** appears only when `OMNIFEED_SEARXNG_URL` is set. The agent calls `web_search`, picks URLs, then calls `fetch_url`.
@@ -177,7 +180,7 @@ Engines, searchers, MCP tools and transports each plug into one small port. **[A
 ```bash
 git clone https://github.com/kinorai/omnifeed.git && cd omnifeed
 make check        # vet + lint + test, hermetic: no upstreams or token needed
-docker compose up # full stack, tokenless, ports 8080 / 8081 / 9090
+make compose-up   # full stack on ports 8080 / 8081 / 9090 (writes .env with a crawl4ai token once)
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the workflow and [SECURITY.md](SECURITY.md) to report a vulnerability. Coding agents read [AGENTS.md](AGENTS.md).

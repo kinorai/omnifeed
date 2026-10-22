@@ -205,6 +205,10 @@ const NS='http://www.w3.org/2000/svg';
 function el(tag,attrs,parent){const n=document.createElementNS(NS,tag);for(const k in attrs)n.setAttribute(k,attrs[k]);parent&&parent.appendChild(n);return n}
 const median=a=>{const s=[...a].sort((x,y)=>x-y),m=s.length>>1;return s.length%2?s[m]:(s[m-1]+s[m])/2};
 const host=u=>new URL(u).hostname.replace(/^www\./,'');
+// Data strings go into innerHTML templates: render them as text, so a note
+// that quotes markup ("SVG <title> junk") shows instead of being parsed.
+const txt=s=>{const d=document.createElement('div');d.textContent=s??'';return d.innerHTML.replace(/"/g,'&quot;').replace(/'/g,'&#39;')};
+const safeHref=u=>/^https?:\/\//i.test(u)?txt(u):'#';
 const badge=o=>`<span class="badge"><i style="background:${OUT[o].color}">${OUT[o].icon}</i>${OUT[o].label}</span>`;
 
 document.getElementById('theme').onclick=()=>{const r=document.documentElement;const dark=r.dataset.theme?r.dataset.theme==='dark':matchMedia('(prefers-color-scheme: dark)').matches;r.dataset.theme=dark?'light':'dark';render();renderExtra()};
@@ -278,7 +282,7 @@ function render(){
 
   // search table
   document.getElementById('searchTable').innerHTML='<tr><th>Query</th><th>Kind</th><th class="num">Built-in<br>ms</th><th class="num">omnifeed<br>ms</th><th class="num">Domains<br>B / O</th><th class="num">Relevant<br>B / O</th><th class="num">Spam<br>B / O</th><th>Winner</th><th>Notes</th></tr>'+
-   Q.map(q=>`<tr><td>${q.query}</td><td>${q.cat}</td><td class="num">${q.builtin.ms.join(' + ')}</td><td class="num">${q.omnifeed.ms.join(', ')}</td><td class="num">${q.builtin.unique_domains} / ${q.omnifeed.unique_domains}</td><td class="num">${q.builtin.relevant} / ${q.omnifeed.relevant}</td><td class="num">${q.builtin.spam} / ${q.omnifeed.spam}</td><td class="${/^omnifeed/.test(q.winner)?'win-o':''}">${q.winner}</td><td class="note"><b>B:</b> ${q.builtin.note}<br><b>O:</b> ${q.omnifeed.note}</td></tr>`).join('');
+   Q.map(q=>`<tr><td>${txt(q.query)}</td><td>${txt(q.cat)}</td><td class="num">${q.builtin.ms.join(' + ')}</td><td class="num">${q.omnifeed.ms.join(', ')}</td><td class="num">${q.builtin.unique_domains} / ${q.omnifeed.unique_domains}</td><td class="num">${q.builtin.relevant} / ${q.omnifeed.relevant}</td><td class="num">${q.builtin.spam} / ${q.omnifeed.spam}</td><td class="${/^omnifeed/.test(q.winner)?'win-o':''}">${q.winner}</td><td class="note"><b>B:</b> ${txt(q.builtin.note)}<br><b>O:</b> ${txt(q.omnifeed.note)}</td></tr>`).join('');
 
   // filters + site table
   const cats=['All',...new Set(S.map(s=>s.cat))];
@@ -308,7 +312,7 @@ function renderMatrix(){
   const rows=matrixRows();
   document.getElementById('mcount').textContent=`${rows.length} of ${D.sites.length} sites`;
   document.getElementById('siteTable').innerHTML='<tr><th>Site</th><th>Category</th><th>Built-in WebFetch</th><th class="num">ms</th><th>omnifeed fetch_url</th><th class="num">ms</th></tr>'+
-   rows.map(s=>`<tr><td><a class="url" href="${s.url}" target="_blank" rel="noopener">${host(s.url)}</a></td><td>${s.cat}</td><td>${badge(s.builtin.outcome)}<div class="note">${s.builtin.note}</div></td><td class="num">${s.builtin.ms}</td><td>${badge(s.omnifeed.outcome)}<div class="note">${s.omnifeed.note}</div></td><td class="num">${s.omnifeed.ms}</td></tr>`).join('');
+   rows.map(s=>`<tr><td><a class="url" href="${safeHref(s.url)}" target="_blank" rel="noopener">${txt(host(s.url))}</a></td><td>${txt(s.cat)}</td><td>${badge(s.builtin.outcome)}<div class="note">${txt(s.builtin.note)}</div></td><td class="num">${s.builtin.ms}</td><td>${badge(s.omnifeed.outcome)}<div class="note">${txt(s.omnifeed.note)}</div></td><td class="num">${s.omnifeed.ms}</td></tr>`).join('');
 }
 function download(name,text,type){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([text],{type}));a.download=name;a.click();URL.revokeObjectURL(a.href)}
 const csvq=v=>'"'+String(v??'').replace(/"/g,'""')+'"';
@@ -327,7 +331,7 @@ function renderRoute(){
   box.querySelectorAll('button').forEach(b=>b.onclick=()=>{box.dataset.cur=b.dataset.k;renderRoute()});
   const rows=R.filter(r=>cur==='all'||r.pick===cur);
   document.getElementById('routeTable').innerHTML='<tr><th>Domain</th><th>Category</th><th>Route to</th><th>Why</th><th class="num">Built-in ms</th><th class="num">omnifeed ms</th></tr>'+
-    rows.map(r=>`<tr><td>${host(r.s.url)}<div class="note">${(new URL(r.s.url).pathname+new URL(r.s.url).search).slice(0,48)}</div></td><td>${r.s.cat}</td><td><span class="badge"><i style="background:${PICK[r.pick].c}">${r.pick==='neither'?'×':'→'}</i>${PICK[r.pick].l}</span></td><td class="note">${r.why}</td><td class="num">${r.s.builtin.ms}</td><td class="num">${r.s.omnifeed.ms}</td></tr>`).join('');
+    rows.map(r=>`<tr><td>${txt(host(r.s.url))}<div class="note">${txt((new URL(r.s.url).pathname+new URL(r.s.url).search).slice(0,48))}</div></td><td>${txt(r.s.cat)}</td><td><span class="badge"><i style="background:${PICK[r.pick].c}">${r.pick==='neither'?'×':'→'}</i>${PICK[r.pick].l}</span></td><td class="note">${txt(r.why)}</td><td class="num">${r.s.builtin.ms}</td><td class="num">${r.s.omnifeed.ms}</td></tr>`).join('');
   const out=R.map(r=>({domain:host(r.s.url),url:r.s.url,category:r.s.cat,route:r.pick,why:r.why,builtin_outcome:r.s.builtin.outcome,omnifeed_outcome:r.s.omnifeed.outcome,builtin_ms:r.s.builtin.ms,omnifeed_ms:r.s.omnifeed.ms}));
   document.getElementById('dlRouteJson').onclick=()=>download('routing-table.json',JSON.stringify(out,null,1),'application/json');
   document.getElementById('dlRouteCsv').onclick=()=>download('routing-table.csv',[Object.keys(out[0]).join(','),...out.map(o=>Object.values(o).map(csvq).join(','))].join('\n'),'text/csv');
@@ -356,8 +360,8 @@ function renderRouter(){
   chip.querySelectorAll('button').forEach(bt=>bt.onclick=()=>{const cur=new Set((chip.dataset.show??'fixed,regressed').split(',').filter(Boolean));cur.has(bt.dataset.k)?cur.delete(bt.dataset.k):cur.add(bt.dataset.k);chip.dataset.show=[...cur].join(',');renderRouter()});
   const order={regressed:0,fixed:1,regrade:2};
   document.getElementById('fixTable').innerHTML='<tr><th>Site</th><th>Tool</th><th>v1</th><th>v2</th><th>Change</th><th>v2 note</th></tr>'+
-   DF.filter(x=>show.split(',').includes(x.kind)).sort((a,b)=>order[a.kind]-order[b.kind]||a.tool.localeCompare(b.tool)).map(x=>`<tr><td>${host(x.url)}</td><td>${x.tool==='builtin'?'Built-in':'omnifeed'}</td><td>${OUT[x.v1]?OUT[x.v1].label:x.v1}</td><td>${OUT[x.v2]?OUT[x.v2].label:x.v2}</td><td>${x.kind}</td><td class="note">${x.v2note}</td></tr>`).join('');
-  document.getElementById('eventTable').innerHTML='<tr><th>Time (UTC)</th><th>Event</th></tr>'+(D.events||[]).map(e=>`<tr><td style="white-space:nowrap">${e.t.replace('2026-10-09T','').replace('Z','')}</td><td class="note">${e.text}</td></tr>`).join('');
+   DF.filter(x=>show.split(',').includes(x.kind)).sort((a,b)=>order[a.kind]-order[b.kind]||a.tool.localeCompare(b.tool)).map(x=>`<tr><td>${txt(host(x.url))}</td><td>${x.tool==='builtin'?'Built-in':'omnifeed'}</td><td>${OUT[x.v1]?OUT[x.v1].label:x.v1}</td><td>${OUT[x.v2]?OUT[x.v2].label:x.v2}</td><td>${x.kind}</td><td class="note">${txt(x.v2note)}</td></tr>`).join('');
+  document.getElementById('eventTable').innerHTML='<tr><th>Time (UTC)</th><th>Event</th></tr>'+(D.events||[]).map(e=>`<tr><td style="white-space:nowrap">${e.t.replace('2026-10-09T','').replace('Z','')}</td><td class="note">${txt(e.text)}</td></tr>`).join('');
 }
 function renderScore(){
   const Q=D.searches,m=(t,k)=>Q.reduce((a,q)=>a+(+q[t][k]||0),0)/Q.length,fr=t=>Q.filter(q=>q[t].fresh).length/Q.length*100;
@@ -378,7 +382,7 @@ function timeline(id,label,kind){
   el('text',{x:L,y:14,class:'ink',style:'font-weight:600'},svg).textContent=label;
   ['builtin','omnifeed'].forEach((t,k)=>{const pts=T.filter(c=>c.tool===t),col=`var(--series-${k+1})`;
     pts.forEach(p=>{const d=el('circle',{cx:sx(p.i),cy:sy(p.ms),r:3,fill:col,'fill-opacity':.45},svg);
-      d.addEventListener('mousemove',e=>{d.setAttribute('r',5);showTip(e,`<b>${(p.ms/1000).toFixed(2)} s</b> · ${t==='builtin'?'Built-in':'omnifeed'}${p.err?' · error':''}<br>${p.target}<br>call #${p.i+1} · t+${p.m.toFixed(1)} min`)});d.addEventListener('mouseleave',()=>{d.setAttribute('r',3);hideTip()})});
+      d.addEventListener('mousemove',e=>{d.setAttribute('r',5);showTip(e,`<b>${(p.ms/1000).toFixed(2)} s</b> · ${t==='builtin'?'Built-in':'omnifeed'}${p.err?' · error':''}<br>${txt(p.target)}<br>call #${p.i+1} · t+${p.m.toFixed(1)} min`)});d.addEventListener('mouseleave',()=>{d.setAttribute('r',3);hideTip()})});
     const w=15;let dd='',seg=0;pts.forEach((p,j)=>{if(j&&p.m-pts[j-1].m>5)seg=j;const win=pts.slice(Math.max(seg,j-w+1),j+1).map(x=>x.ms);dd+=(j&&j!==seg?'L':'M')+sx(p.i)+','+sy(pct(win,50))});
     el('path',{d:dd,fill:'none',stroke:col,'stroke-width':2.5,'stroke-linejoin':'round'},svg)});
 }

@@ -23,13 +23,19 @@ permissions:
   contents: read    # least-privilege default; write-needing jobs declare it per-job
 
 env:
-  GO_VERSION: "1.26.9"
+  GO_VERSION: "1.26.10"
 
 jobs:
   lint:
     name: Lint
     runs-on: ubuntu-latest
-    if: github.event_name != 'pull_request' || (github.event.pull_request.head.ref != 'develop' && github.event.pull_request.head.ref != 'main')
+    # Skipped only for a PR from this repo's own develop/main, whose commits
+    # were already linted and tested on push. A fork's branch can carry any
+    # name, so its PRs always run.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name != github.repository ||
+      (github.event.pull_request.head.ref != 'develop' && github.event.pull_request.head.ref != 'main')
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -76,7 +82,13 @@ jobs:
   test:
     name: Test
     runs-on: ubuntu-latest
-    if: github.event_name != 'pull_request' || (github.event.pull_request.head.ref != 'develop' && github.event.pull_request.head.ref != 'main')
+    # Skipped only for a PR from this repo's own develop/main, whose commits
+    # were already linted and tested on push. A fork's branch can carry any
+    # name, so its PRs always run.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name != github.repository ||
+      (github.event.pull_request.head.ref != 'develop' && github.event.pull_request.head.ref != 'main')
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -139,13 +151,19 @@ jobs:
       (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     permissions:
       contents: write   # push the release commit + tag
+    # One release at a time; a queued run waits rather than racing the tag.
+    concurrency:
+      group: release
+      cancel-in-progress: false
     outputs:
       skipped: ${{ steps.decide.outputs.skipped }}
       tag: ${{ steps.decide.outputs.tag }}
     steps:
+      # The commit lint and test ran on, not main's tip: main may have moved
+      # since, and an untested commit must not be tagged.
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          ref: main
+          ref: ${{ github.sha }}
           fetch-depth: 0
 
       # Auto path only: git-cliff prints the next version to stdout (exposed as
@@ -208,6 +226,9 @@ jobs:
       # Commit the changelog and create the annotated tag. [skip ci] keeps the
       # release commit from re-triggering this workflow (pushes by GITHUB_TOKEN
       # don't trigger workflows anyway, and tag pushes aren't a CI trigger).
+      # The push is a fast-forward of main from the tested commit: if main has
+      # moved on, it is rejected and nothing is tagged; the newer commit's own
+      # run releases it.
       - name: Commit, tag, and push
         if: steps.decide.outputs.skipped != 'true'
         env:
@@ -220,7 +241,7 @@ jobs:
           # we still want the release commit + tag (goreleaser rebuilds the image).
           git commit -m "chore(release): ${TAG} [skip ci]" --allow-empty
           git tag -a "${TAG}" -m "${TAG}"
-          git push --atomic origin main "refs/tags/${TAG}"
+          git push --atomic origin HEAD:refs/heads/main "refs/tags/${TAG}"
 
   release:
     name: Release
