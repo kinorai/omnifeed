@@ -37,6 +37,7 @@ type Server struct {
 	logger         *slog.Logger
 	metrics        *observability.Metrics
 	maxURLsPerReq  int
+	maxRespBytes   int
 	redditDefaults reddit.Options
 }
 
@@ -47,7 +48,10 @@ type Config struct {
 	Logger            *slog.Logger
 	Metrics           *observability.Metrics
 	MaxURLsPerRequest int
-	RedditDefaults    reddit.Options
+	// MaxResponseBytes caps the page content one /crawl response carries,
+	// summed over its documents; 0 disables the cap.
+	MaxResponseBytes int
+	RedditDefaults   reddit.Options
 }
 
 // New constructs the server.
@@ -64,6 +68,7 @@ func New(cfg Config) *Server {
 		logger:         cfg.Logger,
 		metrics:        cfg.Metrics,
 		maxURLsPerReq:  cfg.MaxURLsPerRequest,
+		maxRespBytes:   cfg.MaxResponseBytes,
 		redditDefaults: cfg.RedditDefaults,
 	}
 }
@@ -130,8 +135,12 @@ func (s *Server) crawl(w http.ResponseWriter, r *http.Request) {
 	// No size control here — deliberately unlike the fetch_url MCP tool, which
 	// caps at OMNIFEED_FETCH_MAX_CHARS. RAG pipelines chunk and embed whatever
 	// they receive, so a cap would silently drop retrievable text; an LLM
-	// context window is what needs protecting, not a vector store.
+	// context window is what needs protecting, not a vector store. What IS
+	// bounded is the response as a whole (OMNIFEED_CRAWL_MAX_RESPONSE_MB): a
+	// document that would push it past the cap is replaced by an error
+	// document saying so, never cut, so no text is dropped silently.
 	results := make([]loaderDocument, len(req.URLs))
+	budget := responseBudget{left: s.maxRespBytes}
 	var wg sync.WaitGroup
 	for i, u := range req.URLs {
 		wg.Add(1)
@@ -145,7 +154,13 @@ func (s *Server) crawl(w http.ResponseWriter, r *http.Request) {
 					results[idx] = errorDocument(rawURL, fmt.Errorf("internal error: %v", v))
 				}
 			}()
-			results[idx] = s.crawlOne(r.Context(), rawURL, opts, tenant)
+			doc := s.crawlOne(r.Context(), rawURL, opts, tenant)
+			if s.maxRespBytes > 0 && !budget.take(len(doc.PageContent)) {
+				doc = errorDocument(rawURL, &domain.FetchError{Kind: domain.KindError, Err: fmt.Errorf(
+					"this page would push the /crawl response past its %d MiB cap (OMNIFEED_CRAWL_MAX_RESPONSE_MB): request this URL on its own",
+					s.maxRespBytes>>20)})
+			}
+			results[idx] = doc
 		}(i, u)
 	}
 	wg.Wait()
@@ -153,6 +168,24 @@ func (s *Server) crawl(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(results)
+}
+
+// responseBudget is what is left of one /crawl response's size cap, shared by
+// the request's crawl goroutines.
+type responseBudget struct {
+	mu   sync.Mutex
+	left int
+}
+
+// take spends n bytes, or reports false and spends nothing when n does not fit.
+func (b *responseBudget) take(n int) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if n > b.left {
+		return false
+	}
+	b.left -= n
+	return true
 }
 
 func (s *Server) crawlOne(ctx context.Context, rawURL string, opts domain.EngineOptions, tenant auth.TenantID) loaderDocument {

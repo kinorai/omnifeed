@@ -269,3 +269,43 @@ func TestBuildEngineOptionsScanFullPage(t *testing.T) {
 }
 
 func boolPtr(b bool) *bool { return &b }
+
+// The response cap holds over the whole batch: documents that fit are served
+// whole, and one that would cross it becomes an error document, never a cut.
+func TestCrawl_ResponseCap(t *testing.T) {
+	page := strings.Repeat("x", 600)
+	srv := New(Config{
+		Registry:         engine.New().Fallback(fakeEngine{doc: domain.Document{PageContent: page}}),
+		Authenticator:    auth.AlwaysAllow{},
+		MaxResponseBytes: 1000,
+	})
+	rec := do(srv, http.MethodPost, `{"urls":["https://a.example/","https://b.example/","https://c.example/"]}`, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	var docs []loaderDocument
+	if err := json.Unmarshal(rec.Body.Bytes(), &docs); err != nil {
+		t.Fatal(err)
+	}
+	served, refused := 0, 0
+	for _, d := range docs {
+		switch {
+		case d.PageContent == page:
+			served++
+		case d.Metadata["error"] == "true" && strings.Contains(d.PageContent, "OMNIFEED_CRAWL_MAX_RESPONSE_MB"):
+			refused++
+		default:
+			t.Errorf("unexpected document %q", d.PageContent)
+		}
+	}
+	if served != 1 || refused != 2 {
+		t.Errorf("served %d, refused %d; want 1 and 2", served, refused)
+	}
+
+	// 0 disables the cap.
+	srv.maxRespBytes = 0
+	rec = do(srv, http.MethodPost, `{"urls":["https://a.example/","https://b.example/"]}`, nil)
+	if strings.Contains(rec.Body.String(), "MAX_RESPONSE") {
+		t.Errorf("cap applied while disabled: %s", rec.Body.String())
+	}
+}
