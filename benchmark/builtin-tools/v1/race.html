@@ -89,7 +89,7 @@ BENCH.load().then(R=>{
   }
   function log(c){const el=document.getElementById(c.tool==='builtin'?'lB':'lO'),d=document.createElement('div');
     const ok=['success','partial','search'].includes(c.out),label=c.k==='search'?'search':host(c.target.startsWith('http')?c.target:'https://x/');
-    d.innerHTML=`<span style="color:${COL[c.out]||'#888'}">${ok?'✓':'✗'}</span> ${(c.ms/1000).toFixed(2)}s ${c.k==='search'?'🔍 '+c.target.slice(0,48):label} <span style="opacity:.6">${c.out}</span>`;
+    d.innerHTML=`<span style="color:${COL[c.out]||'#888'}">${ok?'✓':'✗'}</span> ${(c.ms/1000).toFixed(2)}s ${esc(c.k==='search'?'🔍 '+c.target.slice(0,48):label)} <span style="opacity:.6">${c.out}</span>`;
     el.prepend(d);while(el.children.length>8)el.lastChild.remove()}
   function tick(t){if(playing){vt=Math.min(T,vt+(t-last)*+speedEl.value);if(vt>=T)setPlay(false)}last=t;draw();requestAnimationFrame(tick)}
   function setPlay(p){playing=p;document.getElementById('play').textContent=p?'❚❚ Pause':'▶ Play'}

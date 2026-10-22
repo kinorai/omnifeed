@@ -64,14 +64,14 @@ header{text-align:center;padding:14px 10px 4px}h1{margin:4px 0 2px;font:900 clam
 const fl=document.getElementById('flames');for(let i=0;i<22;i++){const f=document.createElement('i');f.style.left=(i*4.7-3)+'%';f.style.setProperty('--d',(.35+Math.random()*.4)+'s');f.style.height=(70+Math.random()*30)+'%';fl.appendChild(f)}
 BENCH.load().then(R=>{
   const {host}=BENCH,$=id=>document.getElementById(id),fails=R.soft,N=fails.length;
-  $('wall').innerHTML=fails.map((s,k)=>`<div class="sticker" style="--r:${((k*37)%14)-7}deg"><b>✓ SUCCESS</b>${host(s.url)}</div>`).join('');
+  $('wall').innerHTML=fails.map((s,k)=>`<div class="sticker" style="--r:${((k*37)%14)-7}deg"><b>✓ SUCCESS</b>${esc(host(s.url))}</div>`).join('');
   const st=[...document.querySelectorAll('.sticker')];
   function reset(){st.forEach(x=>{x.classList.remove('on','fixed');x.querySelector('b').textContent='✓ SUCCESS'});$('flames').style.height='0';$('smoke').style.height='0';$('foam').classList.remove('on');$('ext').classList.remove('on');$('mouth').setAttribute('d','M196 176 Q213 186 230 176');$('bub').classList.add('on');$('bub').textContent='This is fine.';$('h1').textContent='🔥 silent fails: 0';$('h2').textContent='wrong pages accepted: 0';$('h3').textContent='coverage: '+R.usableO+'/'+R.n+' (omnifeed alone)'}
   async function run(){reset();await sleep(1500);
     for(let k=0;k<N;k++){const s=fails[k];st[k].classList.add('on');
       $('flames').style.height=(8+k/N*62)+'%';$('smoke').style.height=(k/N*45)+'%';
       $('h1').textContent='🔥 silent fails: '+(k+1);$('h2').textContent='wrong pages accepted: '+(k+1);
-      $('cap').innerHTML=`<b>${host(s.url)}</b>: omnifeed said ✓ success. Actually: ${s.omnifeed.note}`;
+      $('cap').innerHTML=`<b>${esc(host(s.url))}</b>: omnifeed said ✓ success. Actually: ${esc(s.omnifeed.note)}`;
       if(k===Math.floor(N/2)){$('bub').textContent='This is fine.';}
       if(k===N-3){$('bub').textContent='This is… fine.';$('mouth').setAttribute('d','M198 180 Q213 176 228 180')}
       await sleep(1100)}
