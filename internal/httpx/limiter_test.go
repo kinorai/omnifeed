@@ -3,6 +3,8 @@ package httpx
 import (
 	"context"
 	"errors"
+	"fmt"
+	"sort"
 	"testing"
 	"time"
 )
@@ -620,4 +622,68 @@ func TestSpacedLimiterRunsCallersConcurrently(t *testing.T) {
 	for _, release := range releases {
 		release()
 	}
+}
+
+// Spellings of one host share one slot: case, a trailing dot and the port do
+// not buy a fresh budget.
+func TestLimiterHostNormalizes(t *testing.T) {
+	for _, raw := range []string{
+		"https://example.com/a", "https://EXAMPLE.com/b", "https://example.com./c",
+		"https://example.com:443/d", "http://Example.Com.:80/e",
+	} {
+		if got := LimiterHost(raw); got != "example.com" {
+			t.Errorf("LimiterHost(%q) = %q, want example.com", raw, got)
+		}
+	}
+	if got := LimiterHost("://bad"); got != "" {
+		t.Errorf("malformed URL key = %q, want empty", got)
+	}
+	d := NewDomainLimiter(1, 0)
+	release, err := d.Acquire(context.Background(), "test", "https://example.com/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if _, err := d.Acquire(ctx, "test", "https://EXAMPLE.com.:443/"); err == nil {
+		t.Fatal("a respelled host got its own slot past the concurrency cap of 1")
+	}
+}
+
+// Idle per-host slots are dropped, so the limiter's memory follows the hosts
+// in use, not every host ever named. A held slot, or one an upstream hold
+// still covers, stays.
+func TestSweepDropsIdleSlots(t *testing.T) {
+	d := NewDomainLimiter(2, 0)
+	for i := range 100 {
+		release, err := d.Acquire(context.Background(), "test", fmt.Sprintf("https://h%d.example/", i))
+		if err != nil {
+			t.Fatal(err)
+		}
+		release()
+	}
+	held, err := d.Acquire(context.Background(), "test", "https://held.example/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.Penalize("https://penalized.example/", 2*time.Hour)
+
+	d.sweep(time.Now().Add(time.Hour))
+	var left []string
+	d.limits.Range(func(k, _ any) bool { left = append(left, k.(string)); return true })
+	sort.Strings(left)
+	if fmt.Sprint(left) != "[held.example penalized.example]" {
+		t.Errorf("slots after sweep = %v, want only the held and penalized hosts", left)
+	}
+
+	// Once released, the held slot goes too, and its host still works on a
+	// fresh slot.
+	held()
+	d.sweep(time.Now().Add(time.Hour))
+	release, err := d.Acquire(context.Background(), "test", "https://held.example/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	release()
 }

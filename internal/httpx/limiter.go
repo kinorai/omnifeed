@@ -4,8 +4,33 @@ import (
 	"context"
 	"math/rand"
 	"net/url"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
+)
+
+// LimiterHost is the key a URL is paced under: its hostname, lowercased,
+// without a trailing dot or port. Example.COM., example.com:443 and
+// example.com are one host to the upstream, so they share one slot; a caller
+// that varied the spelling would otherwise get a fresh budget each time. A
+// malformed URL yields the empty host, which paces all such callers together
+// rather than not at all.
+func LimiterHost(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSuffix(strings.ToLower(u.Hostname()), ".")
+}
+
+// slotSweepEvery is how often Acquire looks for idle per-host slots to drop,
+// and slotIdleFloor the least time a slot must sit unused before it goes.
+// Without the sweep, every host a caller ever named keeps a slot for the life
+// of the process.
+const (
+	slotSweepEvery = time.Minute
+	slotIdleFloor  = 5 * time.Minute
 )
 
 // DomainLimiter caps concurrency and enforces a minimum delay between
@@ -20,6 +45,7 @@ type DomainLimiter struct {
 	quotaWindow   time.Duration // width of that window
 	spaceSends    bool          // measure the delay from admission, not completion
 	limits        sync.Map      // host → *domainSlot
+	lastSweep     atomic.Int64  // unix nanos of the last idle-slot sweep
 
 	// OnWait, when non-nil, is called on every Acquire exit with the engine
 	// that waited, the outcome, and the time spent blocked (semaphore wait +
@@ -55,6 +81,13 @@ type domainSlot struct {
 	// Penalize is called.
 	notBefore time.Time
 	window    quotaWindow
+	// refs counts the callers holding this slot, from slotFor until done;
+	// lastUsed is when the last of them let go. The sweep drops only a slot
+	// with no refs whose state can no longer delay anyone, and marks it dead
+	// so a caller that loaded it just before retries on a fresh one.
+	refs     int
+	lastUsed time.Time
+	dead     bool
 }
 
 // NewDomainLimiter returns a limiter with the given concurrency cap and
@@ -113,15 +146,64 @@ func NewSpacedDomainQuotaLimiter(maxConcurrent int, minDelay time.Duration, quot
 	return l
 }
 
+// slotFor returns the slot for rawURL's host with a reference held, so the
+// idle sweep cannot drop it while in use. Callers release it with done.
 func (d *DomainLimiter) slotFor(rawURL string) *domainSlot {
-	u, _ := url.Parse(rawURL)
-	host := u.Hostname()
-	val, _ := d.limits.LoadOrStore(host, &domainSlot{
-		sem:        make(chan struct{}, d.maxConcurrent),
-		window:     quotaWindow{limit: d.quota, period: d.quotaWindow},
-		spaceSends: d.spaceSends,
+	d.maybeSweep(time.Now())
+	host := LimiterHost(rawURL)
+	for {
+		val, ok := d.limits.Load(host)
+		if !ok {
+			val, _ = d.limits.LoadOrStore(host, &domainSlot{
+				sem:        make(chan struct{}, d.maxConcurrent),
+				window:     quotaWindow{limit: d.quota, period: d.quotaWindow},
+				spaceSends: d.spaceSends,
+			})
+		}
+		s := val.(*domainSlot)
+		s.mu.Lock()
+		if s.dead {
+			s.mu.Unlock()
+			continue
+		}
+		s.refs++
+		s.mu.Unlock()
+		return s
+	}
+}
+
+// done drops a reference slotFor took. Callers must hold s.mu.
+func (s *domainSlot) done() {
+	s.refs--
+	s.lastUsed = time.Now()
+}
+
+// maybeSweep runs sweep at most once per slotSweepEvery, on whichever caller
+// gets there first.
+func (d *DomainLimiter) maybeSweep(now time.Time) {
+	last := d.lastSweep.Load()
+	if now.UnixNano()-last < int64(slotSweepEvery) || !d.lastSweep.CompareAndSwap(last, now.UnixNano()) {
+		return
+	}
+	d.sweep(now)
+}
+
+// sweep drops every slot that no caller holds and whose pacing state can no
+// longer delay a new caller: its last use is older than the minimum delay and
+// the quota window, and any upstream hold has passed. A fresh slot then
+// behaves exactly like the dropped one would have.
+func (d *DomainLimiter) sweep(now time.Time) {
+	idle := max(slotIdleFloor, d.minDelay, d.quotaWindow)
+	d.limits.Range(func(key, val any) bool {
+		s := val.(*domainSlot)
+		s.mu.Lock()
+		if s.refs == 0 && now.Sub(s.lastUsed) > idle && now.After(s.notBefore) {
+			s.dead = true
+			d.limits.CompareAndDelete(key, s)
+		}
+		s.mu.Unlock()
+		return true
 	})
-	return val.(*domainSlot)
 }
 
 // Acquire blocks until a slot is available and the minimum delay since the
@@ -139,6 +221,9 @@ func (d *DomainLimiter) Acquire(ctx context.Context, engine, rawURL string) (fun
 	select {
 	case s.sem <- struct{}{}:
 	case <-ctx.Done():
+		s.mu.Lock()
+		s.done()
+		s.mu.Unlock()
 		d.observeWait(engine, "canceled", start)
 		return nil, ctx.Err()
 	}
@@ -154,6 +239,7 @@ func (d *DomainLimiter) Acquire(ctx context.Context, engine, rawURL string) (fun
 	if budget, hasBudget := RemainingBudget(ctx); hasBudget && wait > budget {
 		s.mu.Lock()
 		s.unbook(admitAt, d.minDelay)
+		s.done()
 		s.mu.Unlock()
 		<-s.sem
 		d.observeWait(engine, "budget_exceeded", start)
@@ -169,6 +255,7 @@ func (d *DomainLimiter) Acquire(ctx context.Context, engine, rawURL string) (fun
 			// quota, or repeated cancellations starve the domain.
 			s.mu.Lock()
 			s.unbook(admitAt, d.minDelay)
+			s.done()
 			s.mu.Unlock()
 			<-s.sem
 			d.observeWait(engine, "canceled", start)
@@ -186,6 +273,7 @@ func (d *DomainLimiter) Acquire(ctx context.Context, engine, rawURL string) (fun
 		if !s.spaceSends {
 			s.lastSend = time.Now()
 		}
+		s.done()
 		s.mu.Unlock()
 		<-s.sem
 	}, nil
@@ -208,6 +296,7 @@ func (d *DomainLimiter) Penalize(rawURL string, dur time.Duration) {
 	if until.After(s.notBefore) {
 		s.notBefore = until
 	}
+	s.done()
 	s.mu.Unlock()
 }
 
