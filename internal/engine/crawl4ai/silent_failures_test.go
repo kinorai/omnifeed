@@ -374,7 +374,7 @@ func TestRedirectToPrivateAddressIsRejected(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "redirect target rejected") || !domain.IsNoFallback(err) {
 		t.Fatalf("err = %v, want a final redirect rejection", err)
 	}
-	if err := e.checkFinalURL(deadTargetURL+"/x", deadTargetURL+"/y"); err != nil {
+	if err := e.checkFinalURL(context.Background(), deadTargetURL+"/x", deadTargetURL+"/y"); err != nil {
 		t.Errorf("same-host redirect: %v", err)
 	}
 	e.blockPrivate = false

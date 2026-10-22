@@ -3,6 +3,7 @@ package httpx
 import (
 	"context"
 	"errors"
+	"net"
 	"net/netip"
 	"testing"
 )
@@ -168,5 +169,24 @@ func TestIsReservedAddr(t *testing.T) {
 	}
 	if !IsReservedAddr(netip.Addr{}) {
 		t.Error("the zero Addr must count as reserved")
+	}
+}
+
+// A name that does not exist is told apart from a resolver that failed, so
+// the caller can blame the URL only for the first; redirect hops skip DNS.
+func TestValidateURLResolveErrors(t *testing.T) {
+	orig := lookupNetIP
+	t.Cleanup(func() { lookupNetIP = orig })
+	lookupNetIP = func(_ context.Context, _, host string) ([]netip.Addr, error) {
+		return nil, &net.DNSError{Name: host, Err: "x", IsNotFound: host == "nx.example", IsTimeout: host != "nx.example"}
+	}
+	for host, notFound := range map[string]bool{"nx.example": true, "slow.example": false} {
+		var re *ResolveError
+		if err := ValidateURL("https://"+host+"/", true); !errors.As(err, &re) || re.NotFound != notFound {
+			t.Errorf("%s: err = %v, want ResolveError{NotFound: %v}", host, err, notFound)
+		}
+	}
+	if err := validateURL(context.Background(), "https://slow.example/", true, false); err != nil {
+		t.Errorf("resolve=false looked the name up: %v", err)
 	}
 }

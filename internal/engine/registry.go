@@ -82,7 +82,13 @@ func (r *Registry) Resolve(rawURL string) domain.Engine {
 // SSRF choke point (see BlockPrivateIPs). Validating here — rather than in each
 // transport — guarantees every inbound path is covered.
 func (r *Registry) Crawl(ctx context.Context, rawURL string, opts domain.EngineOptions) (domain.Document, error) {
-	if err := httpx.ValidateURL(rawURL, r.blockPrivate); err != nil {
+	if err := httpx.ValidateURLContext(ctx, rawURL, r.blockPrivate); err != nil {
+		// A resolver that failed or timed out is our fault, not the caller's:
+		// classify it as an upstream error so it is not reported as a bad URL.
+		var re *httpx.ResolveError
+		if errors.As(err, &re) && !re.NotFound {
+			return domain.Document{}, &domain.FetchError{Kind: domain.KindUpstreamError, Err: fmt.Errorf("url check: %w", err)}
+		}
 		return domain.Document{}, fmt.Errorf("url rejected: %w", &domain.InvalidRequestError{Err: err})
 	}
 	for _, e := range r.engines {
