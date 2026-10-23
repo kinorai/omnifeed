@@ -32,6 +32,12 @@ const DefaultCrawl4AIUserAgent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/53
 var ValidSearchAudit = []string{"off", "summary", "full"}
 ```
 
+<a name="ValidSearchers"></a>ValidSearchers is every searcher OMNIFEED\_SEARCHERS may name.
+
+```go
+var ValidSearchers = []string{"searxng", "tinyfish"}
+```
+
 <a name="Config"></a>
 ## type Config
 
@@ -168,6 +174,47 @@ type Config struct {
     // completions, lower it to push back on callers sooner. 0 uses the
     // searcher's own default.
     SearXNGMaxWait time.Duration
+
+    // SearXNGCriticalEngines names the engines whose absence makes a search
+    // degraded: the search still succeeds, but it ran without an engine the
+    // results lean on, so a configured backup searcher tops it up. An engine
+    // is absent when SearXNG reports it unresponsive (rate limited, CAPTCHA,
+    // ...) or when it contributed no rows — the silent block. On this pool
+    // that is `google cse`. Empty (the default) never reports a search
+    // degraded, so only errors, empty and thin answers reach the backup.
+    SearXNGCriticalEngines []string
+
+    // Searchers is the failover order: the first configured searcher answers
+    // every query, and each next one is the backup of the chain before it —
+    // asked only when that answer is an error, empty, thin (see
+    // SearchFallbackMinResults) or degraded (see SearXNGCriticalEngines).
+    // A listed searcher that is not configured (no URL or key) is skipped, so
+    // the default needs nothing new to keep today's SearXNG-only behaviour,
+    // and setting OMNIFEED_TINYFISH_API_KEY alone enables the backup.
+    Searchers []string
+
+    // SearchFallbackMinResults is the result count below which a successful
+    // search counts as thin and is topped up by the backup. 0 disables the
+    // thin trigger.
+    SearchFallbackMinResults int
+
+    // SearchPrimaryBudget bounds how long a searcher with a backup may take
+    // before the backup is asked instead. Without it a hung SearXNG spends its
+    // whole pacing wait plus timeout-and-retry budget (tens of seconds) before
+    // the backup even starts. Applies only between two chained searchers; 0
+    // disables it.
+    SearchPrimaryBudget time.Duration
+
+    // TinyFish Search API (optional searcher). TinyFishAPIKey empty disables
+    // it. The free tier allows 30 requests/minute and 12,000/day per key;
+    // TinyFishQuota/TinyFishQuotaWindow pace under the per-minute limit, and
+    // TinyFishMaxWait bounds how long a query queues for a slot.
+    TinyFishAPIKey      string
+    TinyFishURL         string
+    TinyFishTimeout     time.Duration
+    TinyFishQuota       int
+    TinyFishQuotaWindow time.Duration
+    TinyFishMaxWait     time.Duration
 
     // SearchAudit controls the per-search audit log: "off", "summary" or
     // "full". It is deliberately NOT a log level. A level answers "how bad is
