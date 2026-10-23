@@ -15,7 +15,7 @@ Package searxng implements domain.Searcher against a SearXNG instance's JSON API
   - [func New\(cfg Config\) \*Searcher](<#New>)
   - [func \(s \*Searcher\) InitEngineMetrics\(ctx context.Context\)](<#Searcher.InitEngineMetrics>)
   - [func \(\*Searcher\) Name\(\) string](<#Searcher.Name>)
-  - [func \(s \*Searcher\) Search\(ctx context.Context, query string, opts domain.SearchOptions\) \(\[\]domain.SearchResult, error\)](<#Searcher.Search>)
+  - [func \(s \*Searcher\) Search\(ctx context.Context, query string, opts domain.SearchOptions\) \(domain.SearchReport, error\)](<#Searcher.Search>)
 
 
 <a name="Config"></a>
@@ -41,6 +41,16 @@ type Config struct {
     // Listing the engines that implement the operator keeps the filter
     // meaningful. Empty (the default) queries the whole pool, as before.
     SiteEngines []string
+    // CriticalEngines are the engines whose absence makes a search Degraded
+    // (see domain.SearchReport): when one of them was asked and either failed
+    // openly (unresponsive_engines) or contributed no rows, the search still
+    // succeeds, but the report says it ran without that engine so a caller
+    // with a backup can top it up. On this deployment that is `google cse`:
+    // the rest of the pool answers when it is rate limited, with visibly
+    // weaker results. "Asked" accounts for SiteEngines only: an engine SearXNG
+    // skips for a filter it does not support (time_range, language) reads as
+    // missing too. Empty (the default) never reports a search degraded.
+    CriticalEngines []string
     // Limiter, when non-nil, paces queries to the SearXNG instance. It exists
     // for the ENGINES behind SearXNG, not for SearXNG itself: SearXNG fans one
     // query out to every enabled engine, so each engine sees exactly this
@@ -100,7 +110,7 @@ Name returns the searcher identifier \("searxng"\).
 ### func \(\*Searcher\) Search
 
 ```go
-func (s *Searcher) Search(ctx context.Context, query string, opts domain.SearchOptions) ([]domain.SearchResult, error)
+func (s *Searcher) Search(ctx context.Context, query string, opts domain.SearchOptions) (domain.SearchReport, error)
 ```
 
 Search runs the query against SearXNG and returns up to opts.Limit results.

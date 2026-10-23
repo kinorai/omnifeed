@@ -69,6 +69,7 @@ Package observability wires structured logging, Prometheus metrics, and Kubernet
   - [func \(m \*Metrics\) ObserveRatelimitPenalty\(upstream string\)](<#Metrics.ObserveRatelimitPenalty>)
   - [func \(m \*Metrics\) ObserveResponseChars\(engine string, chars int\)](<#Metrics.ObserveResponseChars>)
   - [func \(m \*Metrics\) ObserveSearch\(searcher, status, reason string, scoped bool, duration time.Duration\)](<#Metrics.ObserveSearch>)
+  - [func \(m \*Metrics\) ObserveSearchFallback\(from, to, trigger, reason, outcome string\)](<#Metrics.ObserveSearchFallback>)
   - [func \(m \*Metrics\) ObserveSearxngQuery\(scoped bool\)](<#Metrics.ObserveSearxngQuery>)
   - [func \(m \*Metrics\) ObserveUnresponsiveEngine\(engine, errType string\)](<#Metrics.ObserveUnresponsiveEngine>)
   - [func \(m \*Metrics\) ObserveUpstream\(upstream, op, status string, duration time.Duration\)](<#Metrics.ObserveUpstream>)
@@ -569,6 +570,7 @@ type Metrics struct {
     RedditInPageRequests    *prometheus.CounterVec   // kind
     SearchesTotal           *prometheus.CounterVec   // searcher, status, reason, scoped
     SearchSecs              *prometheus.HistogramVec // searcher, status
+    SearchFallbacks         *prometheus.CounterVec   // from, to, trigger, reason, outcome
     SearchEnginePos         *prometheus.HistogramVec // engine
     SearchEngineUnique      *prometheus.CounterVec   // engine
     CacheRequests           *prometheus.CounterVec   // result
@@ -748,6 +750,15 @@ func (m *Metrics) ObserveSearch(searcher, status, reason string, scoped bool, du
 ```
 
 ObserveSearch records a single search query result. reason classifies WHY a search failed \(see Reason\); it is "ok" on success. scoped says whether the caller asked for a \`site:\` filter — site\-scoped search runs on a different engine pool and fails for different reasons, and every existing sum\(\) over this counter collapses the label anyway. SearchSecs stays keyed on searcher\+status only — adding reason or scoped would just inflate histogram cardinality.
+
+<a name="Metrics.ObserveSearchFallback"></a>
+### func \(\*Metrics\) ObserveSearchFallback
+
+```go
+func (m *Metrics) ObserveSearchFallback(from, to, trigger, reason, outcome string)
+```
+
+ObserveSearchFallback counts one search a primary searcher handed to its backup: trigger says why \(see failover.Trigger\), reason the primary's classified failure \("ok" unless trigger is error — quota\_exhausted there is omnifeed's own pacing, not an upstream fault\), outcome how the backup did \("served", "empty" when it found nothing, "failed", "canceled" when the caller hung up while the backup ran\).
 
 <a name="Metrics.ObserveSearxngQuery"></a>
 ### func \(\*Metrics\) ObserveSearxngQuery

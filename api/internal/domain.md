@@ -32,6 +32,8 @@ Package domain holds the core types exchanged between transports and engines. It
   - [func \(e \*InvalidRequestError\) Unwrap\(\) error](<#InvalidRequestError.Unwrap>)
 - [type SameHostEngine](<#SameHostEngine>)
 - [type SearchOptions](<#SearchOptions>)
+- [type SearchReport](<#SearchReport>)
+  - [func \(r SearchReport\) Degraded\(\) bool](<#SearchReport.Degraded>)
 - [type SearchResult](<#SearchResult>)
 - [type Searcher](<#Searcher>)
 - [type Truncation](<#Truncation>)
@@ -89,6 +91,12 @@ const ContentTypeKey = "content_type"
 ```
 
 ## Variables
+
+<a name="ErrInvalidQuery"></a>ErrInvalidQuery marks a search refused for its input \(an empty query, ...\) before any upstream was asked. No other searcher would answer it either, so it is never failed over.
+
+```go
+var ErrInvalidQuery = errors.New("invalid search query")
+```
 
 <a name="ValidRedditSorts"></a>ValidRedditSorts are the comment sort orders Reddit's comments endpoint accepts; "confidence" is what the Reddit UI labels "best". Kept here so config and the reddit engine validate against one list. https://www.reddit.com/dev/api/#GET_comments_{article}
 
@@ -388,6 +396,32 @@ type SearchOptions struct {
 }
 ```
 
+<a name="SearchReport"></a>
+## type SearchReport
+
+SearchReport is a Searcher's answer to one query: the ranked results, and whether the upstream answered at full strength.
+
+```go
+type SearchReport struct {
+    Results []SearchResult
+    // DegradedReason is set when the search succeeded but a source the
+    // operator relies on did not contribute — e.g. an engine that was rate
+    // limited or silently blocked — so the results are weaker than usual. It
+    // names the source and why, for logs and metrics. Empty means the search
+    // ran at full strength.
+    DegradedReason string
+}
+```
+
+<a name="SearchReport.Degraded"></a>
+### func \(SearchReport\) Degraded
+
+```go
+func (r SearchReport) Degraded() bool
+```
+
+Degraded reports whether the search ran without a source it relies on.
+
 <a name="SearchResult"></a>
 ## type SearchResult
 
@@ -411,7 +445,7 @@ Searcher turns a query into ranked result URLs. It is the discovery counterpart 
 ```go
 type Searcher interface {
     Name() string
-    Search(ctx context.Context, query string, opts SearchOptions) ([]SearchResult, error)
+    Search(ctx context.Context, query string, opts SearchOptions) (SearchReport, error)
 }
 ```
 
