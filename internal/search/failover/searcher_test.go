@@ -5,6 +5,7 @@ import (
 	"errors"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
@@ -14,18 +15,24 @@ import (
 )
 
 // fakeSearcher answers every query with a fixed report and error, and counts
-// how often it was asked.
+// how often it was asked. With hang set it instead waits for its context to
+// end, the way a stuck upstream does.
 type fakeSearcher struct {
 	name   string
 	report domain.SearchReport
 	err    error
+	hang   bool
 	calls  int
 }
 
 func (f *fakeSearcher) Name() string { return f.name }
 
-func (f *fakeSearcher) Search(context.Context, string, domain.SearchOptions) (domain.SearchReport, error) {
+func (f *fakeSearcher) Search(ctx context.Context, _ string, _ domain.SearchOptions) (domain.SearchReport, error) {
 	f.calls++
+	if f.hang {
+		<-ctx.Done()
+		return domain.SearchReport{}, ctx.Err()
+	}
 	return f.report, f.err
 }
 
@@ -145,4 +152,66 @@ func counterValue(t *testing.T, c prometheus.Counter) float64 {
 		t.Fatalf("read counter: %v", err)
 	}
 	return m.GetCounter().GetValue()
+}
+
+// A backup that answers a failed primary with nothing must not turn the
+// failure into an empty success: "retry in 12s" would read as "nothing exists".
+func TestSearch_EmptyBackupKeepsPrimaryError(t *testing.T) {
+	m := observability.NewMetrics()
+	primary := &fakeSearcher{name: "searxng", err: errQuota}
+	backup := &fakeSearcher{name: "tinyfish"}
+
+	_, err := newComposite(primary, backup, m).Search(context.Background(), "q", domain.SearchOptions{})
+	if !errors.Is(err, errQuota) {
+		t.Fatalf("error = %v, want the primary's quota_exhausted", err)
+	}
+	if got := counterValue(t, m.SearchFallbacks.WithLabelValues("searxng", "tinyfish", "error", "empty")); got != 1 {
+		t.Fatalf("fallbacks{outcome=empty} = %v, want 1", got)
+	}
+}
+
+// Two empty answers are an honest zero-hit search: success, not an error.
+func TestSearch_EmptyPrimaryAndBackupIsEmptySuccess(t *testing.T) {
+	primary := &fakeSearcher{name: "searxng"}
+	backup := &fakeSearcher{name: "tinyfish"}
+
+	report, err := newComposite(primary, backup, nil).Search(context.Background(), "q", domain.SearchOptions{})
+	if err != nil || len(report.Results) != 0 {
+		t.Fatalf("Search = (%d results, %v), want an empty success", len(report.Results), err)
+	}
+}
+
+// A hung primary is cut off at PrimaryBudget and the backup answers, instead
+// of the caller waiting out the primary's whole timeout-and-retry budget.
+func TestSearch_PrimaryBudgetHandsAHungPrimaryToTheBackup(t *testing.T) {
+	primary := &fakeSearcher{name: "searxng", hang: true}
+	backup := &fakeSearcher{name: "tinyfish", report: domain.SearchReport{Results: hits("https://b/1")}}
+	s := New(Config{Primary: primary, Backup: backup, Policy: Policy{MinResults: 3}, PrimaryBudget: 20 * time.Millisecond})
+
+	start := time.Now()
+	report, err := s.Search(context.Background(), "q", domain.SearchOptions{})
+	if err != nil || len(report.Results) != 1 {
+		t.Fatalf("Search = (%d results, %v), want the backup's 1", len(report.Results), err)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("took %s, want about the 20ms budget", elapsed)
+	}
+}
+
+// A chain nests: the middle searcher answers when the first fails, and the
+// last is never asked.
+func TestSearch_ThreeLevelChain(t *testing.T) {
+	first := &fakeSearcher{name: "searxng", err: errQuota}
+	second := &fakeSearcher{name: "tinyfish", report: domain.SearchReport{Results: hits("https://t/1", "https://t/2", "https://t/3")}}
+	third := &fakeSearcher{name: "brave"}
+	chain := New(Config{Primary: first, Policy: Policy{MinResults: 3},
+		Backup: New(Config{Primary: second, Backup: third, Policy: Policy{MinResults: 3}})})
+
+	report, err := chain.Search(context.Background(), "q", domain.SearchOptions{})
+	if err != nil || len(report.Results) != 3 {
+		t.Fatalf("Search = (%d results, %v), want the middle searcher's 3", len(report.Results), err)
+	}
+	if third.calls != 0 {
+		t.Fatalf("last searcher asked %d times behind a healthy middle one", third.calls)
+	}
 }

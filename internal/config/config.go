@@ -5,6 +5,7 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"slices"
@@ -172,6 +173,13 @@ type Config struct {
 	// search counts as thin and is topped up by the backup. 0 disables the
 	// thin trigger.
 	SearchFallbackMinResults int
+
+	// SearchPrimaryBudget bounds how long a searcher with a backup may take
+	// before the backup is asked instead. Without it a hung SearXNG spends its
+	// whole pacing wait plus timeout-and-retry budget (tens of seconds) before
+	// the backup even starts. Applies only between two chained searchers; 0
+	// disables it.
+	SearchPrimaryBudget time.Duration
 
 	// TinyFish Search API (optional searcher). TinyFishAPIKey empty disables
 	// it. The free tier allows 30 requests/minute and 12,000/day per key;
@@ -440,6 +448,9 @@ func Load() (Config, error) {
 	if c.SearchFallbackMinResults, err = envInt("OMNIFEED_SEARCH_FALLBACK_MIN_RESULTS", 3); err != nil {
 		return c, err
 	}
+	if c.SearchPrimaryBudget, err = envDuration("OMNIFEED_SEARCH_PRIMARY_BUDGET", 12*time.Second); err != nil {
+		return c, err
+	}
 	if c.TinyFishTimeout, err = envDuration("OMNIFEED_TINYFISH_TIMEOUT", 10*time.Second); err != nil {
 		return c, err
 	}
@@ -605,11 +616,17 @@ func Load() (Config, error) {
 	if c.TinyFishQuota > 0 && c.TinyFishQuotaWindow <= 0 {
 		return c, fmt.Errorf("OMNIFEED_TINYFISH_QUOTA_WINDOW must be > 0 when OMNIFEED_TINYFISH_QUOTA is set, got %s", c.TinyFishQuotaWindow)
 	}
+	if c.SearchPrimaryBudget < 0 {
+		return c, fmt.Errorf("OMNIFEED_SEARCH_PRIMARY_BUDGET must be >= 0 (0 = unbounded), got %s", c.SearchPrimaryBudget)
+	}
 	if c.TinyFishMaxWait < 0 {
 		return c, fmt.Errorf("OMNIFEED_TINYFISH_MAX_WAIT must be >= 0, got %s", c.TinyFishMaxWait)
 	}
-	if u, perr := url.Parse(c.TinyFishURL); perr != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-		return c, fmt.Errorf("OMNIFEED_TINYFISH_URL must be an absolute http(s) URL, got %q", c.TinyFishURL)
+	if c.TinyFishTimeout <= 0 {
+		return c, fmt.Errorf("OMNIFEED_TINYFISH_TIMEOUT must be > 0, got %s", c.TinyFishTimeout)
+	}
+	if err := validateKeyedURL("OMNIFEED_TINYFISH_URL", c.TinyFishURL); err != nil {
+		return c, err
 	}
 
 	if c.FetchMaxChars < 0 {
@@ -702,6 +719,9 @@ var ValidSearchers = []string{"searxng", "tinyfish"}
 // otherwise drop a searcher from the chain without a word, and a repeat would
 // make a searcher its own backup.
 func validateSearchers(names []string) error {
+	if len(names) == 0 {
+		return fmt.Errorf("OMNIFEED_SEARCHERS must name at least one searcher (valid: %s)", strings.Join(ValidSearchers, ", "))
+	}
 	seen := make(map[string]bool, len(names))
 	for _, name := range names {
 		if !slices.Contains(ValidSearchers, name) {
@@ -713,6 +733,28 @@ func validateSearchers(names []string) error {
 		seen[name] = true
 	}
 	return nil
+}
+
+// validateKeyedURL requires an endpoint that will carry an API key to be an
+// absolute https URL, so the key never crosses the network in cleartext.
+// Plain http is allowed to a loopback host only — a local fake or proxy.
+func validateKeyedURL(name, raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") {
+		return fmt.Errorf("%s must be an absolute https URL, got %q", name, raw)
+	}
+	if u.Scheme == "http" && !isLoopbackHost(u.Hostname()) {
+		return fmt.Errorf("%s must use https (it carries an API key); plain http is allowed to loopback only, got %q", name, raw)
+	}
+	return nil
+}
+
+func isLoopbackHost(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // splitHosts parses a comma-separated hostname list, trimming whitespace,

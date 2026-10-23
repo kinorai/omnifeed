@@ -109,7 +109,7 @@ func TestSearch_MapsResultsAndClampsToLimit(t *testing.T) {
 	}
 }
 
-func TestSearch_ErrorStatusCarriesKindAndCode(t *testing.T) {
+func TestSearch_DailyAllowanceIsQuotaExhausted(t *testing.T) {
 	s := newTestSearcher(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusPaymentRequired)
 		_, _ = w.Write([]byte(`{"error":{"code":"INSUFFICIENT_CREDITS","message":"wallet empty for query secret-text"}}`))
@@ -122,6 +122,11 @@ func TestSearch_ErrorStatusCarriesKindAndCode(t *testing.T) {
 	}
 	if fe.StatusCode != http.StatusPaymentRequired {
 		t.Fatalf("StatusCode = %d, want 402", fe.StatusCode)
+	}
+	// The daily allowance is an expected quota state: quota_exhausted, with
+	// the wait until it resets at 00:00 UTC (pinnedNow is 12:00 UTC).
+	if fe.Kind != domain.KindQuotaExhausted || fe.RetryAfter != 12*time.Hour {
+		t.Fatalf("Kind=%s RetryAfter=%s, want quota_exhausted / 12h", fe.Kind, fe.RetryAfter)
 	}
 	if !strings.Contains(err.Error(), "INSUFFICIENT_CREDITS") {
 		t.Fatalf("error %q should name the quota that ran out", err)
@@ -156,5 +161,52 @@ func TestParseDate(t *testing.T) {
 		if got := parseDate(tc.raw, pinnedNow); got != tc.want {
 			t.Errorf("parseDate(%q) = %q, want %q", tc.raw, got, tc.want)
 		}
+	}
+}
+
+// TinyFish limits per minute, so retrying a 429 seconds later only spends
+// another request of the same minute.
+func TestSearch_RateLimitIsNotRetried(t *testing.T) {
+	calls := 0
+	s := newTestSearcher(t, func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusTooManyRequests)
+	})
+	_, err := s.Search(context.Background(), "q", domain.SearchOptions{})
+	var fe *domain.FetchError
+	if !errors.As(err, &fe) || fe.Kind != domain.KindHTTP429 {
+		t.Fatalf("error = %v, want an http_429 FetchError", err)
+	}
+	if calls != 1 {
+		t.Fatalf("upstream called %d times, want 1 (no retry)", calls)
+	}
+}
+
+// The key rides in X-API-Key, which net/http copies onto a cross-host
+// redirect. A redirect must not be followed at all.
+func TestSearch_RedirectIsRefusedAndKeyStaysHome(t *testing.T) {
+	var leaked string
+	other := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		leaked = r.Header.Get("X-API-Key")
+	}))
+	t.Cleanup(other.Close)
+	s := newTestSearcher(t, func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, other.URL+"/steal", http.StatusFound)
+	})
+
+	if _, err := s.Search(context.Background(), "q", domain.SearchOptions{}); err == nil {
+		t.Fatal("a redirect answer must surface as an error")
+	}
+	if leaked != "" {
+		t.Fatalf("API key forwarded to the redirect target: %q", leaked)
+	}
+}
+
+func TestSearch_NonJSONBodyIsAnError(t *testing.T) {
+	s := newTestSearcher(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("<html>maintenance</html>"))
+	})
+	if _, err := s.Search(context.Background(), "q", domain.SearchOptions{}); err == nil {
+		t.Fatal("expected a decode error for a non-JSON 200")
 	}
 }

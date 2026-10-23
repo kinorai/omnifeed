@@ -2,6 +2,7 @@ package failover
 
 import (
 	"context"
+	"errors"
 
 	"github.com/kinorai/omnifeed/internal/domain"
 )
@@ -51,12 +52,14 @@ type Policy struct {
 	MinResults int
 }
 
-// Decide returns the action for the primary's (report, err).
+// Decide returns the action for the primary's (report, err) to a query that
+// asked for at most limit results (<= 0: no limit).
 //
-// A caller that has gone away is never failed over: the backup would answer
-// nobody, and spend its own quota doing it.
-func (p Policy) Decide(ctx context.Context, report domain.SearchReport, err error) Decision {
-	if ctx.Err() != nil {
+// Two answers are never failed over. A caller that has gone away: the backup
+// would answer nobody, and spend its own quota doing it. And a query refused
+// for its input (domain.ErrInvalidQuery): the backup would refuse it too.
+func (p Policy) Decide(ctx context.Context, limit int, report domain.SearchReport, err error) Decision {
+	if ctx.Err() != nil || errors.Is(err, domain.ErrInvalidQuery) {
 		return Decision{Action: Keep}
 	}
 	switch n := len(report.Results); {
@@ -64,11 +67,21 @@ func (p Policy) Decide(ctx context.Context, report domain.SearchReport, err erro
 		return Decision{Action: Replace, Trigger: TriggerError}
 	case n == 0:
 		return Decision{Action: Replace, Trigger: TriggerEmpty}
-	case n < p.MinResults:
+	case n < p.thinBelow(limit):
 		return Decision{Action: Merge, Trigger: TriggerThin}
 	case report.Degraded():
 		return Decision{Action: Merge, Trigger: TriggerDegraded}
 	default:
 		return Decision{Action: Keep}
 	}
+}
+
+// thinBelow is the result count a successful answer must reach to not be
+// thin. A caller that asked for fewer than MinResults is fully answered at
+// its own limit: 2 results to a limit=2 query is complete, not thin.
+func (p Policy) thinBelow(limit int) int {
+	if limit > 0 && limit < p.MinResults {
+		return limit
+	}
+	return p.MinResults
 }

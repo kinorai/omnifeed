@@ -56,7 +56,9 @@ type Config struct {
 	// succeeds, but the report says it ran without that engine so a caller
 	// with a backup can top it up. On this deployment that is `google cse`:
 	// the rest of the pool answers when it is rate limited, with visibly
-	// weaker results. Empty (the default) never reports a search degraded.
+	// weaker results. "Asked" accounts for SiteEngines only: an engine SearXNG
+	// skips for a filter it does not support (time_range, language) reads as
+	// missing too. Empty (the default) never reports a search degraded.
 	CriticalEngines []string
 	// Limiter, when non-nil, paces queries to the SearXNG instance. It exists
 	// for the ENGINES behind SearXNG, not for SearXNG itself: SearXNG fans one
@@ -171,7 +173,7 @@ type searchHit struct {
 // Search runs the query against SearXNG and returns up to opts.Limit results.
 func (s *Searcher) Search(ctx context.Context, query string, opts domain.SearchOptions) (domain.SearchReport, error) {
 	if strings.TrimSpace(query) == "" {
-		return domain.SearchReport{}, fmt.Errorf("query is empty")
+		return domain.SearchReport{}, fmt.Errorf("%w: query is empty", domain.ErrInvalidQuery)
 	}
 
 	// A caller that logs its own completion line passes the id in (see

@@ -1,6 +1,9 @@
 package domain
 
-import "context"
+import (
+	"context"
+	"errors"
+)
 
 // SearchResult is a single hit returned by a Searcher.
 type SearchResult struct {
@@ -22,6 +25,11 @@ type SearchOptions struct {
 	// Wikipedia article. Must satisfy ValidSiteFilter; empty = no restriction.
 	Site string
 }
+
+// ErrInvalidQuery marks a search refused for its input (an empty query, ...)
+// before any upstream was asked. No other searcher would answer it either, so
+// it is never failed over.
+var ErrInvalidQuery = errors.New("invalid search query")
 
 // SearchReport is a Searcher's answer to one query: the ranked results, and
 // whether the upstream answered at full strength.

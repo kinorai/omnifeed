@@ -179,7 +179,7 @@ func NewMetrics() *Metrics {
 		}, []string{"searcher", "status", "reason", "scoped"}),
 		SearchFallbacks: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "omnifeed_search_fallbacks_total",
-			Help: "Searches handed to a backup searcher, by primary (from), backup (to), why (trigger: error, empty, thin, degraded) and whether the backup answered (outcome: served, failed).",
+			Help: "Searches handed to a backup searcher, by primary (from), backup (to), why (trigger: error, empty, thin, degraded) and how the backup did (outcome: served, empty, failed).",
 		}, []string{"from", "to", "trigger", "outcome"}),
 		SearchSecs: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name:    "omnifeed_search_request_seconds",
@@ -473,8 +473,8 @@ func (m *Metrics) ObserveSearch(searcher, status, reason string, scoped bool, du
 }
 
 // ObserveSearchFallback counts one search a primary searcher handed to its
-// backup: trigger says why (see failover.Trigger), outcome whether the backup
-// answered ("served") or failed too ("failed").
+// backup: trigger says why (see failover.Trigger), outcome how the backup did
+// ("served", "empty" when it found nothing, "failed").
 func (m *Metrics) ObserveSearchFallback(from, to, trigger, outcome string) {
 	m.SearchFallbacks.WithLabelValues(from, to, trigger, outcome).Inc()
 }

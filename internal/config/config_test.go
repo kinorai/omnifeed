@@ -450,9 +450,29 @@ func TestLoad_SearchFailover(t *testing.T) {
 		{"OMNIFEED_SEARCH_FALLBACK_MIN_RESULTS", "-1"},
 		{"OMNIFEED_TINYFISH_QUOTA", "-1"},
 		{"OMNIFEED_TINYFISH_URL", "api.search.tinyfish.ai"},
+		{"OMNIFEED_TINYFISH_URL", "http://api.search.tinyfish.ai"},
+		{"OMNIFEED_TINYFISH_TIMEOUT", "0s"},
+		{"OMNIFEED_SEARCHERS", ","},
+		{"OMNIFEED_SEARCH_PRIMARY_BUDGET", "-1s"},
 	} {
 		if _, err := loadWith(t, bad.key, bad.value); err == nil {
 			t.Errorf("%s=%q accepted", bad.key, bad.value)
 		}
+	}
+}
+
+// The TinyFish key may travel over plain http to a loopback fake only.
+func TestLoad_TinyFishURLAllowsLoopbackHTTP(t *testing.T) {
+	for _, u := range []string{"http://127.0.0.1:8080", "http://localhost:9000", "https://api.search.tinyfish.ai"} {
+		if _, err := loadWith(t, "OMNIFEED_TINYFISH_URL", u); err != nil {
+			t.Errorf("OMNIFEED_TINYFISH_URL=%q rejected: %v", u, err)
+		}
+	}
+	cfg, err := loadWith(t, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.SearchPrimaryBudget != 12*time.Second {
+		t.Fatalf("default SearchPrimaryBudget = %s, want 12s", cfg.SearchPrimaryBudget)
 	}
 }

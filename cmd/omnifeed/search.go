@@ -57,9 +57,12 @@ func buildSearcher(d searchDeps) (domain.Searcher, *searxng.Searcher) {
 			chain = append(chain, newTinyFishSearcher(d))
 		}
 	}
-	if len(chain) == 0 {
-		d.logger.Info("search tool disabled (no configured searcher in OMNIFEED_SEARCHERS)")
+	switch len(chain) {
+	case 0:
+		d.logger.Info("search tool disabled (OMNIFEED_SEARXNG_URL and OMNIFEED_TINYFISH_API_KEY not set)")
 		return nil, nil
+	case 1:
+		return chain[0], searxngSearcher
 	}
 
 	names := make([]string, len(chain))
@@ -68,6 +71,7 @@ func buildSearcher(d searchDeps) (domain.Searcher, *searxng.Searcher) {
 	}
 	d.logger.Info("search failover chain", "searchers", strings.Join(names, " > "),
 		"min_results", d.cfg.SearchFallbackMinResults,
+		"primary_budget", d.cfg.SearchPrimaryBudget,
 		"critical_engines", strings.Join(d.cfg.SearXNGCriticalEngines, ","))
 
 	// Folded from the end so the first searcher is the outermost primary:
@@ -75,11 +79,12 @@ func buildSearcher(d searchDeps) (domain.Searcher, *searxng.Searcher) {
 	searcher := chain[len(chain)-1]
 	for i := len(chain) - 2; i >= 0; i-- {
 		searcher = failover.New(failover.Config{
-			Primary: chain[i],
-			Backup:  searcher,
-			Policy:  failover.Policy{MinResults: d.cfg.SearchFallbackMinResults},
-			Logger:  d.logger,
-			Metrics: d.metrics,
+			Primary:       chain[i],
+			Backup:        searcher,
+			Policy:        failover.Policy{MinResults: d.cfg.SearchFallbackMinResults},
+			PrimaryBudget: d.cfg.SearchPrimaryBudget,
+			Logger:        d.logger,
+			Metrics:       d.metrics,
 		})
 	}
 	return searcher, searxngSearcher

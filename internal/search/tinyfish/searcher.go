@@ -88,7 +88,7 @@ func New(cfg Config) *Searcher {
 	return &Searcher{
 		endpoint: strings.TrimRight(cfg.Endpoint, "/"),
 		apiKey:   cfg.APIKey,
-		client:   cfg.Client.WithUpstream("tinyfish", "search"),
+		client:   withoutRedirects(cfg.Client).WithUpstream("tinyfish", "search"),
 		logger:   cfg.Logger,
 		limiter:  cfg.Limiter,
 		maxWait:  cfg.MaxWait,
@@ -117,7 +117,7 @@ type searchHit struct {
 // answers, it answered at full strength.
 func (s *Searcher) Search(ctx context.Context, query string, opts domain.SearchOptions) (domain.SearchReport, error) {
 	if strings.TrimSpace(query) == "" {
-		return domain.SearchReport{}, fmt.Errorf("query is empty")
+		return domain.SearchReport{}, fmt.Errorf("%w: query is empty", domain.ErrInvalidQuery)
 	}
 
 	if s.limiter != nil {
@@ -131,7 +131,8 @@ func (s *Searcher) Search(ctx context.Context, query string, opts domain.SearchO
 	}
 
 	resp, err := s.client.DoRetry(ctx, http.MethodGet, s.endpoint+"/?"+queryParams(query, opts).Encode(),
-		nil, map[string]string{"X-API-Key": s.apiKey, "Accept": "application/json"}, httpx.RetryConfig{})
+		nil, map[string]string{"X-API-Key": s.apiKey, "Accept": "application/json"},
+		httpx.RetryConfig{RetryableStatus: notRateLimited})
 	if err != nil {
 		return domain.SearchReport{}, httpx.ClassifyClientError(err, domain.KindUpstreamError)
 	}
@@ -142,11 +143,7 @@ func (s *Searcher) Search(ctx context.Context, query string, opts domain.SearchO
 		return domain.SearchReport{}, fmt.Errorf("read response: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return domain.SearchReport{}, &domain.FetchError{
-			Kind:       domain.KindForStatus(resp.StatusCode),
-			StatusCode: resp.StatusCode,
-			Err:        fmt.Errorf("tinyfish returned %d: %s", resp.StatusCode, errorCode(body)),
-		}
+		return domain.SearchReport{}, s.statusError(resp.StatusCode, body)
 	}
 
 	var sr searchResponse
@@ -154,6 +151,48 @@ func (s *Searcher) Search(ctx context.Context, query string, opts domain.SearchO
 		return domain.SearchReport{}, fmt.Errorf("decode response: %w", err)
 	}
 	return domain.SearchReport{Results: s.toResults(sr.Results, opts.Limit)}, nil
+}
+
+// statusError classifies a non-200 answer. 402 is the daily free allowance
+// running out: an expected quota state that lifts at 00:00 UTC, not a fault,
+// so it reads quota_exhausted with that wait rather than as a generic error.
+func (s *Searcher) statusError(status int, body []byte) *domain.FetchError {
+	fe := &domain.FetchError{
+		Kind:       domain.KindForStatus(status),
+		StatusCode: status,
+		Err:        fmt.Errorf("tinyfish returned %d: %s", status, errorCode(body)),
+	}
+	if status == http.StatusPaymentRequired {
+		now := s.now().UTC()
+		fe.Kind = domain.KindQuotaExhausted
+		fe.RetryAfter = now.Truncate(24 * time.Hour).Add(24 * time.Hour).Sub(now)
+	}
+	return fe
+}
+
+// notRateLimited vetoes retrying a 429. TinyFish limits requests per minute,
+// so the retry loop's seconds of backoff cannot outwait it: a retry would only
+// spend another request of the same minute. Its Retry-After still reaches the
+// limiter through the client's OnRetryAfter hook.
+func notRateLimited(status int, _ string) bool { return status != http.StatusTooManyRequests }
+
+// withoutRedirects returns a copy of c that never follows a redirect. The API
+// key rides in X-API-Key, which net/http — unlike Authorization — copies onto
+// a redirect to ANOTHER host, so a 3xx from the endpoint (or anything between)
+// would hand the key to whoever it points at. The API has no reason to
+// redirect; a 3xx surfaces as an error status instead.
+func withoutRedirects(c *httpx.Client) *httpx.Client {
+	if c == nil {
+		return nil
+	}
+	cp := *c
+	hc := http.Client{}
+	if c.HTTP != nil {
+		hc = *c.HTTP
+	}
+	hc.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	cp.HTTP = &hc
+	return &cp
 }
 
 // queryParams builds the request. The site filter goes in include_domains,

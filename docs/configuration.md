@@ -56,9 +56,10 @@ cannot check before they are fetched ([SECURITY.md](../SECURITY.md)).
 | `OMNIFEED_SEARCH_MAX_RESULTS` | `25` | Cap on the search `limit` argument, 1 to 100 |
 | `OMNIFEED_SEARCHERS` | `searxng,tinyfish` | Search [failover order](#search-failover). The first configured searcher answers every query; each next one is the backup of the chain before it. A listed searcher with no URL or key is skipped, so the default stays SearXNG-only until `OMNIFEED_TINYFISH_API_KEY` is set. Valid names: `searxng`, `tinyfish`. An unknown or repeated name fails startup. |
 | `OMNIFEED_SEARXNG_CRITICAL_ENGINES` | _(unset)_ | Comma-separated SearXNG engines whose absence makes a search **degraded**: it succeeded, but one of these was rate limited, CAPTCHA'd or returned no rows, so the backup tops it up. On a pool that leans on Google, `google cse`. A critical engine outside `OMNIFEED_SEARXNG_SITE_ENGINES` doesn't count on site-scoped searches, which never ask it. Unset never reports degraded. |
-| `OMNIFEED_SEARCH_FALLBACK_MIN_RESULTS` | `3` | A successful search with fewer results than this is **thin** and is topped up by the backup. `0` disables the thin trigger. |
-| `OMNIFEED_TINYFISH_API_KEY` | _(unset, off)_ | [TinyFish Search](https://docs.tinyfish.ai/search-api) API key. Set, it adds `tinyfish` to the searcher chain. Free tier: 30 requests/minute and 12,000/day per key, then HTTP 402 until 00:00 UTC. Every query it answers leaves your network, and TinyFish's terms let it train on usage. |
-| `OMNIFEED_TINYFISH_URL` | `https://api.search.tinyfish.ai` | TinyFish Search endpoint |
+| `OMNIFEED_SEARCH_FALLBACK_MIN_RESULTS` | `3` | A successful search with fewer results than this is **thin** and is topped up by the backup. A caller `limit` below it lowers the bar to the limit, so 2 results to `limit=2` are complete. `0` disables the thin trigger. |
+| `OMNIFEED_SEARCH_PRIMARY_BUDGET` | `12s` | How long a searcher with a backup may take before the backup is asked instead. Without it a hung SearXNG spends its pacing wait plus up to 3 timed-out attempts before the backup starts. Applies only between chained searchers. `0` disables it. |
+| `OMNIFEED_TINYFISH_API_KEY` | _(unset, off)_ | [TinyFish Search](https://docs.tinyfish.ai/search-api) API key. Set, it adds `tinyfish` to the searcher chain. Free tier: 30 requests/minute and 12,000/day per key, then HTTP 402 until 00:00 UTC, which omnifeed reports as `quota_exhausted` with that wait. A 429 is not retried: the limit is per minute, so a retry seconds later can't succeed. Every query it answers leaves your network, and TinyFish's terms let it train on usage. |
+| `OMNIFEED_TINYFISH_URL` | `https://api.search.tinyfish.ai` | TinyFish Search endpoint. Must be https, since it carries the key; plain http is accepted to a loopback host only. Redirects are never followed, because net/http would copy `X-API-Key` to the redirect target. |
 | `OMNIFEED_TINYFISH_TIMEOUT` | `10s` | Per-attempt timeout to TinyFish. Its measured median was about 2s, worst about 6.5s. |
 | `OMNIFEED_TINYFISH_QUOTA` | `25` | Maximum TinyFish queries per `OMNIFEED_TINYFISH_QUOTA_WINDOW`, shared across replicas with Redis. The default stays under the free tier's 30/minute. `0` sends unpaced. |
 | `OMNIFEED_TINYFISH_QUOTA_WINDOW` | `1m` | Rolling window for `OMNIFEED_TINYFISH_QUOTA` |
@@ -150,10 +151,19 @@ Interleaving takes the primary's first result, then the backup's, and so on, and
 drops a URL already taken (scheme, `www.`, a trailing slash and the fragment are
 ignored). Each result's `engine` says who found it, e.g. `tinyfish`.
 
-If the backup fails too, the primary's answer stands: its results if it had any, its
-original error if not, so `quota_exhausted` still reads `quota_exhausted`. A caller
-that hung up is never failed over. Every handoff is counted in
-`omnifeed_search_fallbacks_total` and logged as `search served by backup` or
+If the backup fails too, or answers a failed primary with no results, the primary's
+answer stands: its results if it had any, its original error if not, so
+`quota_exhausted` still reads `quota_exhausted` instead of an empty success. Two
+searches are never failed over: one whose caller hung up or ran out of deadline, and
+one refused for its input (an empty query), which the backup would refuse too. A
+primary that runs past `OMNIFEED_SEARCH_PRIMARY_BUDGET` counts as failed.
+
+A critical engine that SearXNG skips for a filter it doesn't support (some engines
+ignore `time_range` or `language`) reads as missing, so those searches go to the
+backup too. Watch `omnifeed_search_fallbacks_total{trigger="degraded"}` against the
+backup's daily quota. Every handoff is counted in
+`omnifeed_search_fallbacks_total` and logged as `search served by backup`,
+`search backup found nothing, primary answer stands` or
 `search backup failed, primary answer stands`, with `trigger`, `cause` and `query_id`.
 
 With a backup, a long pacing queue costs more than it saves: lower
@@ -502,7 +512,7 @@ Served at `/metrics` on `OMNIFEED_METRICS_ADDR`, default `:9090`, alongside the 
 | `omnifeed_reddit_inpage_requests_total` | counter | `kind` | Requests a `browser` page sent to Reddit itself, on top of its page load: `kind="listing"` for scroll batches, `kind="thread"` for "more replies". They are charged to `OMNIFEED_REDDIT_QUOTA`. Page loads plus these are what Reddit counts against the IP |
 | `omnifeed_reddit_session_expiry_timestamp_seconds` | gauge | none | When the `reddit_session` cookie expires. `0` when none is set |
 | `omnifeed_search_requests_total` | counter | `searcher, status, reason`, `scoped` | Search queries as **callers** sent them, refused ones included, unlike `omnifeed_searxng_queries_total`. `scoped="true"` is a `site:` query. `sum()` queries ignore the added label. Queries matching an exact label set don't |
-| `omnifeed_search_fallbacks_total` | counter | `from, to, trigger, outcome` | Searches handed to a backup searcher. `trigger` is `error`, `empty`, `thin` or `degraded`, `outcome` is `served` or `failed`. See [Search failover](#search-failover) |
+| `omnifeed_search_fallbacks_total` | counter | `from, to, trigger, outcome` | Searches handed to a backup searcher. `trigger` is `error`, `empty`, `thin` or `degraded`, `outcome` is `served`, `empty` (the backup found nothing) or `failed`. See [Search failover](#search-failover) |
 | `omnifeed_search_request_seconds` | histogram | `searcher, status` | Search latency |
 | `omnifeed_search_engine_position_rank` | histogram | `engine` | The rank each engine gave each row it returned. 1 to 3 is a result a caller reads, 20 and above is filler |
 | `omnifeed_search_engine_unique_results_total` | counter | `engine` | Results no other engine returned, which shows whether an engine earns its slot |
