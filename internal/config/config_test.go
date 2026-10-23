@@ -408,3 +408,71 @@ func TestLoad_Crawl4AIBrowserIdentity(t *testing.T) {
 		})
 	}
 }
+
+// The search failover knobs: SearXNG then TinyFish by default (TinyFish
+// skipped until a key is set), no critical engines, a thin threshold of 3, and
+// TinyFish paced under its 30/min free tier.
+func TestLoad_SearchFailover(t *testing.T) {
+	cfg, err := loadWith(t, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(cfg.Searchers, []string{"searxng", "tinyfish"}) {
+		t.Fatalf("default Searchers = %v, want [searxng tinyfish]", cfg.Searchers)
+	}
+	if cfg.SearXNGCriticalEngines != nil || cfg.SearchFallbackMinResults != 3 {
+		t.Fatalf("defaults: critical=%v min=%d, want none/3", cfg.SearXNGCriticalEngines, cfg.SearchFallbackMinResults)
+	}
+	if cfg.TinyFishAPIKey != "" || cfg.TinyFishQuota != 25 || cfg.TinyFishQuotaWindow != time.Minute ||
+		cfg.TinyFishTimeout != 10*time.Second || cfg.TinyFishMaxWait != 5*time.Second {
+		t.Fatalf("TinyFish defaults wrong: %+v", cfg)
+	}
+
+	cfg, err = loadWith(t, "OMNIFEED_SEARXNG_CRITICAL_ENGINES", "Google CSE, braveapi")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(cfg.SearXNGCriticalEngines, []string{"google cse", "braveapi"}) {
+		t.Fatalf("critical engines = %v, want [google cse braveapi]", cfg.SearXNGCriticalEngines)
+	}
+
+	cfg, err = loadWith(t, "OMNIFEED_SEARCHERS", "tinyfish,searxng")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(cfg.Searchers, []string{"tinyfish", "searxng"}) {
+		t.Fatalf("Searchers = %v, want the order as given", cfg.Searchers)
+	}
+
+	for _, bad := range []struct{ key, value string }{
+		{"OMNIFEED_SEARCHERS", "searxng,bing"},
+		{"OMNIFEED_SEARCHERS", "searxng,searxng"},
+		{"OMNIFEED_SEARCH_FALLBACK_MIN_RESULTS", "-1"},
+		{"OMNIFEED_TINYFISH_QUOTA", "-1"},
+		{"OMNIFEED_TINYFISH_URL", "api.search.tinyfish.ai"},
+		{"OMNIFEED_TINYFISH_URL", "http://api.search.tinyfish.ai"},
+		{"OMNIFEED_TINYFISH_TIMEOUT", "0s"},
+		{"OMNIFEED_SEARCHERS", ","},
+		{"OMNIFEED_SEARCH_PRIMARY_BUDGET", "-1s"},
+	} {
+		if _, err := loadWith(t, bad.key, bad.value); err == nil {
+			t.Errorf("%s=%q accepted", bad.key, bad.value)
+		}
+	}
+}
+
+// The TinyFish key may travel over plain http to a loopback fake only.
+func TestLoad_TinyFishURLAllowsLoopbackHTTP(t *testing.T) {
+	for _, u := range []string{"http://127.0.0.1:8080", "http://localhost:9000", "https://api.search.tinyfish.ai"} {
+		if _, err := loadWith(t, "OMNIFEED_TINYFISH_URL", u); err != nil {
+			t.Errorf("OMNIFEED_TINYFISH_URL=%q rejected: %v", u, err)
+		}
+	}
+	cfg, err := loadWith(t, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.SearchPrimaryBudget != 12*time.Second {
+		t.Fatalf("default SearchPrimaryBudget = %s, want 12s", cfg.SearchPrimaryBudget)
+	}
+}

@@ -21,7 +21,7 @@ lossless and about 40% fewer tokens than JSON, with <b>no Reddit API key</b>. Ha
 get their own engines too.
 </p>
 
-- **`web_search`** queries SearXNG (Google, Bing, DDG, Reddit included) and returns ranked URLs with titles and snippets. Pass `site` to scope results to one hostname. Naming the site in the query text fails, because engines read it as a topic word.
+- **`web_search`** queries SearXNG (Google, Bing, DDG, Reddit included) and returns ranked URLs with titles and snippets. Pass `site` to scope results to one hostname. Naming the site in the query text fails, because engines read it as a topic word. With `OMNIFEED_TINYFISH_API_KEY` set, [TinyFish](https://www.tinyfish.ai/search) backs SearXNG up when a search fails, comes back empty or thin, or runs without Google ([search failover](docs/configuration.md#search-failover)).
 - **`fetch_url`** returns any URL as clean markdown through crawl4ai. Dedicated engines return TOON instead: Reddit threads and `/r/{sub}` listings through a real browser (listings honor the URL's `?t=` and `?limit=`), plus Hacker News, GitHub issues and pull requests, Bluesky posts and profiles, and Discourse topics from their public APIs. The GitHub engine also returns compact markdown for repository roots (metadata, latest release, README), files, directories, releases, commits, gists and, with a token, discussions. X/Twitter post links (`x.com`, `twitter.com`, the fxtwitter/vxtwitter mirrors and `t.co`) return markdown with the full text, quote, media alt text, community note, poll, the author's thread and top replies, read from FxTwitter with syndication, vxTwitter and crawl4ai as fallbacks.
 
 <img src="https://user-images.githubusercontent.com/74038190/212284100-561aa473-3905-4a80-b561-0d28506553ee.gif" width="100%">
@@ -104,7 +104,7 @@ Spawn the container and tell it where crawl4ai and SearXNG are, and crawl4ai's t
 `-e OMNIFEED_CRAWL4AI_TOKEN` passes the variable through from the client's environment. On Linux, add `"--add-host=host.docker.internal:host-gateway"` to the args. The compose stack does not publish crawl4ai on the host; to use its crawl4ai and SearXNG, add `"--network", "omnifeed_default"` and use `http://crawl4ai:11235/crawl` and `http://searxng:8080`.
 </details>
 
-**`fetch_url`** is always available. **`web_search`** appears only when `OMNIFEED_SEARXNG_URL` is set. The agent calls `web_search`, picks URLs, then calls `fetch_url`.
+**`fetch_url`** is always available. **`web_search`** appears only when a searcher is configured: `OMNIFEED_SEARXNG_URL`, `OMNIFEED_TINYFISH_API_KEY`, or both. The agent calls `web_search`, picks URLs, then calls `fetch_url`.
 
 `/crawl` returns `[{"page_content": "...", "metadata": {...}}]`, the shape of a LangChain or LlamaIndex `Document`, so a custom document loader takes a few lines.
 

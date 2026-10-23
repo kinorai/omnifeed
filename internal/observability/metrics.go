@@ -40,6 +40,7 @@ type Metrics struct {
 	RedditInPageRequests    *prometheus.CounterVec   // kind
 	SearchesTotal           *prometheus.CounterVec   // searcher, status, reason, scoped
 	SearchSecs              *prometheus.HistogramVec // searcher, status
+	SearchFallbacks         *prometheus.CounterVec   // from, to, trigger, reason, outcome
 	SearchEnginePos         *prometheus.HistogramVec // engine
 	SearchEngineUnique      *prometheus.CounterVec   // engine
 	CacheRequests           *prometheus.CounterVec   // result
@@ -176,6 +177,10 @@ func NewMetrics() *Metrics {
 			Name: "omnifeed_search_requests_total",
 			Help: "Total search queries by searcher, status, failure reason, and whether a `site:` filter was applied.",
 		}, []string{"searcher", "status", "reason", "scoped"}),
+		SearchFallbacks: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "omnifeed_search_fallbacks_total",
+			Help: "Searches handed to a backup searcher, by primary (from), backup (to), why (trigger: error, empty, thin, degraded), the primary's classified failure (reason: ok unless trigger=error, e.g. quota_exhausted or timeout) and how the backup did (outcome: served, empty, failed, canceled).",
+		}, []string{"from", "to", "trigger", "reason", "outcome"}),
 		SearchSecs: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name:    "omnifeed_search_request_seconds",
 			Help:    "Search latency by searcher and status.",
@@ -253,7 +258,7 @@ func NewMetrics() *Metrics {
 		m.LimiterWaitSecs, m.RatelimitErrors, m.RatelimitPenalties, m.RatelimitDegraded,
 		m.ResponseChars, m.EngineFallbacks, m.SearxngUnresponsive,
 		m.SearxngEngineHits, m.SearxngEmpty, m.SearxngQueries, m.SearxngEngineZero,
-		m.RedditRounds, m.RedditMethodCalls, m.RedditMethodUp, m.RedditMethodLastSuccess, m.RedditRemaining, m.RedditSessionExpiry, m.RedditInPageRequests, m.SearchesTotal, m.SearchSecs,
+		m.RedditRounds, m.RedditMethodCalls, m.RedditMethodUp, m.RedditMethodLastSuccess, m.RedditRemaining, m.RedditSessionExpiry, m.RedditInPageRequests, m.SearchesTotal, m.SearchSecs, m.SearchFallbacks,
 		m.SearchEnginePos, m.SearchEngineUnique, m.CacheRequests, m.CacheBytes,
 		m.CacheBackend, m.CacheBackendErrors)
 	reg.MustRegister(
@@ -465,6 +470,16 @@ func (m *Metrics) ObserveEmptySearch(scoped bool) {
 func (m *Metrics) ObserveSearch(searcher, status, reason string, scoped bool, duration time.Duration) {
 	m.SearchesTotal.WithLabelValues(searcher, status, reason, strconv.FormatBool(scoped)).Inc()
 	m.SearchSecs.WithLabelValues(searcher, status).Observe(duration.Seconds())
+}
+
+// ObserveSearchFallback counts one search a primary searcher handed to its
+// backup: trigger says why (see failover.Trigger), reason the primary's
+// classified failure ("ok" unless trigger is error — quota_exhausted there is
+// omnifeed's own pacing, not an upstream fault), outcome how the backup did
+// ("served", "empty" when it found nothing, "failed", "canceled" when the
+// caller hung up while the backup ran).
+func (m *Metrics) ObserveSearchFallback(from, to, trigger, reason, outcome string) {
+	m.SearchFallbacks.WithLabelValues(from, to, trigger, reason, outcome).Inc()
 }
 
 // ObserveSearxngQuery counts one query actually sent to SearXNG — past the

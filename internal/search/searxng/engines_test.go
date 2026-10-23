@@ -167,6 +167,22 @@ func TestInitEngineMetricsMintsEnabledEnginesOnly(t *testing.T) {
 	}
 }
 
+// A critical engine the instance does not enable (a typo, a disabled engine)
+// makes every search degraded; startup must say so rather than silently spend
+// the backup's quota.
+func TestInitEngineMetricsWarnsOnUnknownCriticalEngine(t *testing.T) {
+	s, cap, _ := configSearcher(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, configFixture)
+	}, `{"results":[]}`)
+	s.criticalEngines = []string{"google cse", "bing", "google_cse"}
+
+	s.InitEngineMetrics(context.Background())
+
+	if n := countLevel(cap, slog.LevelWarn); n != 2 {
+		t.Fatalf("WARN lines = %d, want 2 (bing is disabled, google_cse does not exist)", n)
+	}
+}
+
 // SearXNG may come up after omnifeed: /config failing at first must be
 // retried, and the series minted once it answers.
 func TestInitEngineMetricsRetriesUntilConfigAnswers(t *testing.T) {

@@ -49,7 +49,11 @@ internal/
   fetchcache/    fetch_url/crawl response cache: decorates engine.Dispatcher
                  (Redis when configured, else in-process LRU; singleflight)
   search/
-    searxng/     Searcher adapter (JSON API) — the only Searcher
+    searxng/     Searcher adapter (JSON API); reports a search Degraded when a
+                 critical engine (google cse) was missing
+    tinyfish/    Searcher adapter (TinyFish Search API) — the backup
+    failover/    Composite Searcher: primary + backup, Policy decides (pure),
+                 merge interleaves; chains nest
   transport/
     mcp/         MCP server (stdio + Streamable HTTP) — pure JSON-RPC transport
       tools/     fetch_url + web_search tool constructors (bind ports → tools)
@@ -69,7 +73,7 @@ cmd/omnifeed/    entry point + wiring
 
 - **New engine**: create `internal/engine/<name>/engine.go` implementing `domain.Engine`; register it in `main.go` **before** the fallback; add a `*_test.go` with a fixture covering URL matching. `internal/engine/hackernews` is a worked example (it and `internal/engine/github` are the engines that fetch their upstream directly rather than through crawl4ai).
 - **New browser backend** (an engine that needs to clear a browser-only bot wall): implement `browser.Browser`/`browser.Session` under `internal/browser/<name>/`, keep the transport glue thin and testable, and wire it in `main.go`. Engines drive the port, never a specific backend.
-- **New searcher** (e.g. Brave): implement `domain.Searcher`; wire in `main.go`.
+- **New searcher** (e.g. Brave): implement `domain.Searcher` (return a `SearchReport`; set `DegradedReason` only if the upstream can tell you it ran short), add its name to `config.ValidSearchers` and a case in `cmd/omnifeed/search.go`. The failover chain picks it up from `OMNIFEED_SEARCHERS`; the transports never change.
 - **New MCP tool**: add a constructor in `internal/transport/mcp/tools`; append it to `mcpTools` in `main.go`. The MCP server itself never changes.
 - **New transport**: create `internal/transport/<name>/server.go` taking the port(s) it needs; mount it from `main.go`. (`searchapi` is the smallest example to copy.)
 
@@ -91,7 +95,7 @@ cmd/omnifeed/    entry point + wiring
 - **Reddit needs a credential.** Reddit closed logged-out `.json` in 2026: every logged-out client gets `403`, browser or not. The Reddit engine tries a method chain (`OMNIFEED_REDDIT_METHODS`): `client_id` and `session` call Reddit's JSON over plain HTTP with a credential, and `browser` reads the rendered page through the `browser.Browser` port. Never add a logged-out `.json` path. See `docs/adr/0001-reddit-access.md` and `internal/engine/reddit`.
 - **HTTP transports fail closed.** No `OMNIFEED_API_KEY` → the binary refuses to start, unless `OMNIFEED_DEV_NO_AUTH=true` (local only). Stdio MCP is unauthenticated by design.
 - **SSRF:** validate caller-supplied URLs with `httpx.ValidateURL`; `OMNIFEED_BLOCK_PRIVATE_IPS` defaults to on.
-- **Search is optional.** `web_search` and `POST /search` are exposed only when `OMNIFEED_SEARXNG_URL` is set.
+- **Search is optional.** `web_search` and `POST /search` are exposed only when a searcher is configured (`OMNIFEED_SEARXNG_URL` and/or `OMNIFEED_TINYFISH_API_KEY`). TinyFish needs outbound access to `api.search.tinyfish.ai`.
 
 ## Definition of done
 
