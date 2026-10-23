@@ -22,10 +22,10 @@ type fakeSearcher struct {
 
 func (f *fakeSearcher) Name() string { return "fake" }
 
-func (f *fakeSearcher) Search(_ context.Context, query string, opts domain.SearchOptions) ([]domain.SearchResult, error) {
+func (f *fakeSearcher) Search(_ context.Context, query string, opts domain.SearchOptions) (domain.SearchReport, error) {
 	f.gotQuery = query
 	f.gotOpts = opts
-	return f.results, f.err
+	return domain.SearchReport{Results: f.results}, f.err
 }
 
 func newServer(s domain.Searcher, a auth.Authenticator) *Server {

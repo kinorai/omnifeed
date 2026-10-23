@@ -118,7 +118,7 @@ func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 	opts.Site = req.Site
 
 	start := time.Now()
-	results, err := s.searcher.Search(r.Context(), req.Query, opts)
+	report, err := s.searcher.Search(r.Context(), req.Query, opts)
 	if s.metrics != nil {
 		s.metrics.ObserveSearch(s.searcher.Name(), observability.StatusOf(err), observability.Reason(err),
 			opts.Site != "", time.Since(start))
@@ -135,11 +135,11 @@ func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 	// Success exemplar (query-level) for latency triage — see the matching
 	// "crawl completed" / "mcp tool call completed" lines.
 	s.logger.InfoContext(r.Context(), "search completed", "query", req.Query,
-		"results", len(results), "duration_ms", time.Since(start).Milliseconds())
+		"results", len(report.Results), "duration_ms", time.Since(start).Milliseconds())
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(results)
+	_ = json.NewEncoder(w).Encode(report.Results)
 }
 
 func writeError(w http.ResponseWriter, code int, msg string) {

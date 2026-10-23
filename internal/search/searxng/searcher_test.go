@@ -44,7 +44,7 @@ func TestSearch_MapsResultsAndSendsParams(t *testing.T) {
 		_, _ = w.Write([]byte(fixture))
 	})
 
-	results, err := s.Search(context.Background(), "golang generics",
+	report, err := s.Search(context.Background(), "golang generics",
 		domain.SearchOptions{TimeRange: "month", Language: "en"})
 	if err != nil {
 		t.Fatalf("Search: %v", err)
@@ -56,18 +56,18 @@ func TestSearch_MapsResultsAndSendsParams(t *testing.T) {
 	if gotTimeRange != "month" || gotLang != "en" {
 		t.Fatalf("optional params: got time_range=%q language=%q", gotTimeRange, gotLang)
 	}
-	if len(results) != 3 {
-		t.Fatalf("results: got %d, want 3", len(results))
+	if len(report.Results) != 3 {
+		t.Fatalf("results: got %d, want 3", len(report.Results))
 	}
-	first := results[0]
+	first := report.Results[0]
 	if first.Title != "First" || first.URL != "https://example.com/a" ||
 		first.Snippet != "snippet a" || first.Engine != "google" ||
 		first.PublishedDate != "2026-06-01T00:00:00" {
 		t.Fatalf("first result mapped wrong: %+v", first)
 	}
 	// null publishedDate must not error and must map to "".
-	if results[1].PublishedDate != "" {
-		t.Fatalf("null publishedDate: got %q, want empty", results[1].PublishedDate)
+	if report.Results[1].PublishedDate != "" {
+		t.Fatalf("null publishedDate: got %q, want empty", report.Results[1].PublishedDate)
 	}
 }
 
@@ -76,12 +76,12 @@ func TestSearch_ClampsToLimit(t *testing.T) {
 		_, _ = w.Write([]byte(fixture))
 	})
 
-	results, err := s.Search(context.Background(), "q", domain.SearchOptions{Limit: 2})
+	report, err := s.Search(context.Background(), "q", domain.SearchOptions{Limit: 2})
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
-	if len(results) != 2 {
-		t.Fatalf("results: got %d, want 2 (limit)", len(results))
+	if len(report.Results) != 2 {
+		t.Fatalf("results: got %d, want 2 (limit)", len(report.Results))
 	}
 }
 
@@ -154,12 +154,12 @@ func TestSearch_ZeroResultsClassification(t *testing.T) {
 			s := newTestSearcher(t, func(w http.ResponseWriter, _ *http.Request) {
 				_, _ = w.Write([]byte(tc.body))
 			})
-			results, err := s.Search(context.Background(), "q", domain.SearchOptions{})
+			report, err := s.Search(context.Background(), "q", domain.SearchOptions{})
 			if err != nil {
 				t.Fatalf("Search: unexpected error %v", err)
 			}
-			if len(results) != tc.wantResults {
-				t.Fatalf("results: got %d, want %d", len(results), tc.wantResults)
+			if len(report.Results) != tc.wantResults {
+				t.Fatalf("results: got %d, want %d", len(report.Results), tc.wantResults)
 			}
 		})
 	}

@@ -1,6 +1,9 @@
 package domain
 
-import "context"
+import (
+	"context"
+	"errors"
+)
 
 // SearchResult is a single hit returned by a Searcher.
 type SearchResult struct {
@@ -23,10 +26,30 @@ type SearchOptions struct {
 	Site string
 }
 
+// ErrInvalidQuery marks a search refused for its input (an empty query, ...)
+// before any upstream was asked. No other searcher would answer it either, so
+// it is never failed over.
+var ErrInvalidQuery = errors.New("invalid search query")
+
+// SearchReport is a Searcher's answer to one query: the ranked results, and
+// whether the upstream answered at full strength.
+type SearchReport struct {
+	Results []SearchResult
+	// DegradedReason is set when the search succeeded but a source the
+	// operator relies on did not contribute — e.g. an engine that was rate
+	// limited or silently blocked — so the results are weaker than usual. It
+	// names the source and why, for logs and metrics. Empty means the search
+	// ran at full strength.
+	DegradedReason string
+}
+
+// Degraded reports whether the search ran without a source it relies on.
+func (r SearchReport) Degraded() bool { return r.DegradedReason != "" }
+
 // Searcher turns a query into ranked result URLs. It is the discovery
 // counterpart of Engine: a Searcher finds URLs (query → results), Engine
 // implementations then render them (URL → content).
 type Searcher interface {
 	Name() string
-	Search(ctx context.Context, query string, opts SearchOptions) ([]SearchResult, error)
+	Search(ctx context.Context, query string, opts SearchOptions) (SearchReport, error)
 }

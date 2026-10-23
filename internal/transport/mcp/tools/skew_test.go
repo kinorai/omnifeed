@@ -94,9 +94,9 @@ func TestFetchURL_CacheLabelOnErrors(t *testing.T) {
 type idSearcher struct{ seen string }
 
 func (*idSearcher) Name() string { return "searxng" }
-func (s *idSearcher) Search(ctx context.Context, _ string, _ domain.SearchOptions) ([]domain.SearchResult, error) {
+func (s *idSearcher) Search(ctx context.Context, _ string, _ domain.SearchOptions) (domain.SearchReport, error) {
 	s.seen = observability.QueryIDFrom(ctx)
-	return nil, nil
+	return domain.SearchReport{}, nil
 }
 
 // web_search hands the searcher the query_id its audit lines use and returns
