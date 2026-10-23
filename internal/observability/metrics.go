@@ -40,7 +40,7 @@ type Metrics struct {
 	RedditInPageRequests    *prometheus.CounterVec   // kind
 	SearchesTotal           *prometheus.CounterVec   // searcher, status, reason, scoped
 	SearchSecs              *prometheus.HistogramVec // searcher, status
-	SearchFallbacks         *prometheus.CounterVec   // from, to, trigger, outcome
+	SearchFallbacks         *prometheus.CounterVec   // from, to, trigger, reason, outcome
 	SearchEnginePos         *prometheus.HistogramVec // engine
 	SearchEngineUnique      *prometheus.CounterVec   // engine
 	CacheRequests           *prometheus.CounterVec   // result
@@ -179,8 +179,8 @@ func NewMetrics() *Metrics {
 		}, []string{"searcher", "status", "reason", "scoped"}),
 		SearchFallbacks: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "omnifeed_search_fallbacks_total",
-			Help: "Searches handed to a backup searcher, by primary (from), backup (to), why (trigger: error, empty, thin, degraded) and how the backup did (outcome: served, empty, failed, canceled).",
-		}, []string{"from", "to", "trigger", "outcome"}),
+			Help: "Searches handed to a backup searcher, by primary (from), backup (to), why (trigger: error, empty, thin, degraded), the primary's classified failure (reason: ok unless trigger=error, e.g. quota_exhausted or timeout) and how the backup did (outcome: served, empty, failed, canceled).",
+		}, []string{"from", "to", "trigger", "reason", "outcome"}),
 		SearchSecs: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name:    "omnifeed_search_request_seconds",
 			Help:    "Search latency by searcher and status.",
@@ -473,11 +473,13 @@ func (m *Metrics) ObserveSearch(searcher, status, reason string, scoped bool, du
 }
 
 // ObserveSearchFallback counts one search a primary searcher handed to its
-// backup: trigger says why (see failover.Trigger), outcome how the backup did
+// backup: trigger says why (see failover.Trigger), reason the primary's
+// classified failure ("ok" unless trigger is error — quota_exhausted there is
+// omnifeed's own pacing, not an upstream fault), outcome how the backup did
 // ("served", "empty" when it found nothing, "failed", "canceled" when the
 // caller hung up while the backup ran).
-func (m *Metrics) ObserveSearchFallback(from, to, trigger, outcome string) {
-	m.SearchFallbacks.WithLabelValues(from, to, trigger, outcome).Inc()
+func (m *Metrics) ObserveSearchFallback(from, to, trigger, reason, outcome string) {
+	m.SearchFallbacks.WithLabelValues(from, to, trigger, reason, outcome).Inc()
 }
 
 // ObserveSearxngQuery counts one query actually sent to SearXNG — past the

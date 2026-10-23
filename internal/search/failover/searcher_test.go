@@ -67,7 +67,7 @@ func TestSearch_PrimaryErrorIsServedByBackup(t *testing.T) {
 	if got := urls(report.Results); !slices.Equal(got, []string{"https://b/1"}) {
 		t.Fatalf("results = %v, want the backup's", got)
 	}
-	if got := counterValue(t, m.SearchFallbacks.WithLabelValues("searxng", "tinyfish", "error", "served")); got != 1 {
+	if got := counterValue(t, m.SearchFallbacks.WithLabelValues("searxng", "tinyfish", "error", "quota_exhausted", "served")); got != 1 {
 		t.Fatalf("fallbacks{trigger=error,outcome=served} = %v, want 1", got)
 	}
 }
@@ -84,7 +84,7 @@ func TestSearch_BackupFailureKeepsPrimaryError(t *testing.T) {
 	if got := observability.Reason(err); got != "quota_exhausted" {
 		t.Fatalf("reason = %q, want quota_exhausted preserved", got)
 	}
-	if got := counterValue(t, m.SearchFallbacks.WithLabelValues("searxng", "tinyfish", "error", "failed")); got != 1 {
+	if got := counterValue(t, m.SearchFallbacks.WithLabelValues("searxng", "tinyfish", "error", "quota_exhausted", "failed")); got != 1 {
 		t.Fatalf("fallbacks{outcome=failed} = %v, want 1", got)
 	}
 }
@@ -111,10 +111,10 @@ func TestSearch_CallerHangUpDuringBackupIsNotAFailure(t *testing.T) {
 	if _, err := s.Search(ctx, "q", domain.SearchOptions{}); !errors.Is(err, errQuota) {
 		t.Fatalf("error = %v, want the primary's original error", err)
 	}
-	if got := counterValue(t, m.SearchFallbacks.WithLabelValues("searxng", "tinyfish", "error", "canceled")); got != 1 {
+	if got := counterValue(t, m.SearchFallbacks.WithLabelValues("searxng", "tinyfish", "error", "quota_exhausted", "canceled")); got != 1 {
 		t.Fatalf("fallbacks{outcome=canceled} = %v, want 1", got)
 	}
-	if got := counterValue(t, m.SearchFallbacks.WithLabelValues("searxng", "tinyfish", "error", "failed")); got != 0 {
+	if got := counterValue(t, m.SearchFallbacks.WithLabelValues("searxng", "tinyfish", "error", "quota_exhausted", "failed")); got != 0 {
 		t.Fatalf("fallbacks{outcome=failed} = %v, want 0", got)
 	}
 }
@@ -195,7 +195,7 @@ func TestSearch_EmptyBackupKeepsPrimaryError(t *testing.T) {
 	if !errors.Is(err, errQuota) {
 		t.Fatalf("error = %v, want the primary's quota_exhausted", err)
 	}
-	if got := counterValue(t, m.SearchFallbacks.WithLabelValues("searxng", "tinyfish", "error", "empty")); got != 1 {
+	if got := counterValue(t, m.SearchFallbacks.WithLabelValues("searxng", "tinyfish", "error", "quota_exhausted", "empty")); got != 1 {
 		t.Fatalf("fallbacks{outcome=empty} = %v, want 1", got)
 	}
 }

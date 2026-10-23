@@ -122,7 +122,7 @@ func (s *Searcher) observe(ctx context.Context, decision Decision,
 		outcome = "empty"
 	}
 	if s.metrics != nil {
-		s.metrics.ObserveSearchFallback(s.primary.Name(), s.backup.Name(), string(decision.Trigger), outcome)
+		s.metrics.ObserveSearchFallback(s.primary.Name(), s.backup.Name(), string(decision.Trigger), observability.Reason(err), outcome)
 	}
 
 	attrs := []any{
