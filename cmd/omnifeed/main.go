@@ -34,7 +34,6 @@ import (
 	"github.com/kinorai/omnifeed/internal/httpx"
 	"github.com/kinorai/omnifeed/internal/httpx/redislimit"
 	"github.com/kinorai/omnifeed/internal/observability"
-	"github.com/kinorai/omnifeed/internal/search/searxng"
 	"github.com/kinorai/omnifeed/internal/transport/mcp"
 	"github.com/kinorai/omnifeed/internal/transport/mcp/tools"
 	"github.com/kinorai/omnifeed/internal/transport/openwebui"
@@ -349,41 +348,14 @@ func run(cfg config.Config, logger *slog.Logger) error {
 
 	// --- Searcher (optional — search tool is exposed only when configured) ---
 
-	var searcher domain.Searcher
-	var searxngSearcher *searxng.Searcher
-	var searxngClient *httpx.Client
-	if cfg.SearXNGURL != "" {
-		searxngPacer := searxngLimiter(cfg, rdb, metrics, logger)
-		if tracing && searxngPacer != nil {
-			searxngPacer = httpx.TraceLimiter("searxng", searxngPacer)
-		}
-		searxngClient = httpx.New(&http.Client{Timeout: cfg.SearXNGTimeout, Transport: transport})
-		searxngClient.OnAttempt = metrics.ObserveAttempt
-		searxngClient.OnUpstream = metrics.ObserveUpstream
-		searxngClient.OnRetryAfter = retryAfterHook(searxngPacer, metrics)
-		searxngSearcher = searxng.New(searxng.Config{
-			Endpoint:    cfg.SearXNGURL,
-			Client:      searxngClient,
-			Logger:      logger,
-			Metrics:     metrics,
-			SiteEngines: cfg.SearXNGSiteEngines,
-			Limiter:     searxngPacer,
-			MaxWait:     cfg.SearXNGMaxWait,
-			Audit:       cfg.SearchAudit,
-		})
-		searcher = searxngSearcher
-		if cfg.SearchAudit != "off" {
-			// Announced at startup because both modes log every query string
-			// and "full" adds every result URL. An operator who did not intend
-			// that should find out from the first log line, not from the log
-			// store. Config.Load has already guaranteed the level lets INFO
-			// through, so this cannot be swallowed.
-			logger.Info("search audit log enabled", "mode", cfg.SearchAudit,
-				"logs_queries", true, "logs_result_urls", cfg.SearchAudit == "full")
-		}
-	} else {
-		logger.Info("search tool disabled (OMNIFEED_SEARXNG_URL not set)")
-	}
+	searcher, searxngSearcher := buildSearcher(searchDeps{
+		cfg:       cfg,
+		rdb:       rdb,
+		metrics:   metrics,
+		logger:    logger,
+		transport: transport,
+		tracing:   tracing,
+	})
 
 	// --- MCP tools (shared by the stdio and HTTP transports) ---
 
@@ -480,7 +452,7 @@ func run(cfg config.Config, logger *slog.Logger) error {
 	health := observability.NewHealth(5 * time.Second)
 	health.Register(obsMux)
 	deps := &observability.DependencyChecker{
-		Checks:  dependencyChecks(cfg, rdb, searcher != nil),
+		Checks:  dependencyChecks(cfg, rdb, searxngSearcher != nil),
 		Metrics: metrics,
 		Logger:  logger,
 	}
@@ -902,12 +874,12 @@ func redisClient(cfg config.Config, logger *slog.Logger) (redis.UniversalClient,
 // always (it is mandatory), SearXNG when search is configured, Redis when
 // OMNIFEED_REDIS_URL is set. The probes use their own plain client, not the
 // shared outbound one: no retries, no upstream metrics, and no trace per probe.
-func dependencyChecks(cfg config.Config, rdb redis.UniversalClient, search bool) map[string]observability.DependencyCheck {
+func dependencyChecks(cfg config.Config, rdb redis.UniversalClient, searxng bool) map[string]observability.DependencyCheck {
 	client := &http.Client{Timeout: 5 * time.Second}
 	checks := map[string]observability.DependencyCheck{
 		"crawl4ai": upstreamReachable(client, cfg.Crawl4AIURL),
 	}
-	if search {
+	if searxng {
 		checks["searxng"] = upstreamReachable(client, cfg.SearXNGURL+"/healthz")
 	}
 	if rdb != nil {

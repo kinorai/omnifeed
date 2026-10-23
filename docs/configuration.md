@@ -54,6 +54,15 @@ cannot check before they are fetched ([SECURITY.md](../SECURITY.md)).
 | `OMNIFEED_REDIS_TIMEOUT` | `250ms` | Budget for **one Redis operation**. An acquisition can wait minutes for a quota window, and only each Redis call inside it gets this budget. On a breach the limiter paces in process for a 30s cooldown before trying Redis again, so a dead Redis costs one timeout per cooldown, not one per request. |
 | `OMNIFEED_SEARCH_AUDIT` | `off` | Per-search audit log: `off`, `summary` or `full`. It is a data feed, **not a log level**. Putting it behind `debug` would force every component's debug output on, and invite sampling, which biases the per-engine statistics. `summary` logs one line per search with `query_id`, query, `site`, `time_range`, `total`, `duration_ms` and per-engine row counts, plus one line per unresponsive engine with `engine` and `reason_class`. `full` adds one line per engine and result with that engine's own rank, joined on `query_id`. Lines stay flat because log stores turn JSON arrays into opaque strings that can't be grouped or averaged. **Both** modes log the query, and `full` logs every result URL, so retention is your call. Lines log at INFO, so startup rejects any mode but `off` unless `OMNIFEED_LOG_LEVEL` is `debug` or `info`. The `omnifeed_search_engine_position_rank` and `omnifeed_search_engine_unique_results_total` metrics carry no queries or URLs and are always recorded. |
 | `OMNIFEED_SEARCH_MAX_RESULTS` | `25` | Cap on the search `limit` argument, 1 to 100 |
+| `OMNIFEED_SEARCHERS` | `searxng,tinyfish` | Search [failover order](#search-failover). The first configured searcher answers every query; each next one is the backup of the chain before it. A listed searcher with no URL or key is skipped, so the default stays SearXNG-only until `OMNIFEED_TINYFISH_API_KEY` is set. Valid names: `searxng`, `tinyfish`. An unknown or repeated name fails startup. |
+| `OMNIFEED_SEARXNG_CRITICAL_ENGINES` | _(unset)_ | Comma-separated SearXNG engines whose absence makes a search **degraded**: it succeeded, but one of these was rate limited, CAPTCHA'd or returned no rows, so the backup tops it up. On a pool that leans on Google, `google cse`. A critical engine outside `OMNIFEED_SEARXNG_SITE_ENGINES` doesn't count on site-scoped searches, which never ask it. Unset never reports degraded. |
+| `OMNIFEED_SEARCH_FALLBACK_MIN_RESULTS` | `3` | A successful search with fewer results than this is **thin** and is topped up by the backup. `0` disables the thin trigger. |
+| `OMNIFEED_TINYFISH_API_KEY` | _(unset, off)_ | [TinyFish Search](https://docs.tinyfish.ai/search-api) API key. Set, it adds `tinyfish` to the searcher chain. Free tier: 30 requests/minute and 12,000/day per key, then HTTP 402 until 00:00 UTC. Every query it answers leaves your network, and TinyFish's terms let it train on usage. |
+| `OMNIFEED_TINYFISH_URL` | `https://api.search.tinyfish.ai` | TinyFish Search endpoint |
+| `OMNIFEED_TINYFISH_TIMEOUT` | `10s` | Per-attempt timeout to TinyFish. Its measured median was about 2s, worst about 6.5s. |
+| `OMNIFEED_TINYFISH_QUOTA` | `25` | Maximum TinyFish queries per `OMNIFEED_TINYFISH_QUOTA_WINDOW`, shared across replicas with Redis. The default stays under the free tier's 30/minute. `0` sends unpaced. |
+| `OMNIFEED_TINYFISH_QUOTA_WINDOW` | `1m` | Rolling window for `OMNIFEED_TINYFISH_QUOTA` |
+| `OMNIFEED_TINYFISH_MAX_WAIT` | `5s` | How long a TinyFish query may wait for a pacing slot before it fails with `quota_exhausted` |
 | `OMNIFEED_FETCH_MAX_CHARS` | `120000` | Default cap on **markdown** returned by `fetch_url`. `0` is unlimited. Over the cap, the reply ends with a resumable truncation marker. TOON and JSON output from the dedicated engines is never cut; use their own limits. Doesn't apply to `/crawl`. See [Controlling fetched content size](#controlling-fetched-content-size). |
 | `OMNIFEED_GITHUB_TOKEN` | _(unset)_ | Personal access token for the GitHub engine. Anonymous access allows 60 requests per hour per IP. A token raises it to 5000. A repository root costs 3 requests, most other pages 1. Discussions need it: they are read through GraphQL, which refuses anonymous callers, so without a token discussion URLs go to the generic fallback. A fine-grained token with no extra permissions (public repositories, read-only) is enough. |
 | `OMNIFEED_DISCOURSE_HOSTS` | `meta.discourse.org,discuss.python.org,users.rust-lang.org,internals.rust-lang.org,discuss.pytorch.org` | Hostnames where the Discourse engine claims `/t/…` topic URLs. Discourse runs on **arbitrary** domains and the engine can't detect it, so **list the forums you use**. Matching is exact and case-insensitive, with no subdomain wildcards. Unlisted forums go through the generic browser fallback, which returns less of the thread. An **empty string** disables the engine. |
@@ -123,6 +132,35 @@ later. If it fires more often than the engines require, raise
 deadline still queues. Refusals show up as `outcome="budget_exceeded"` on
 `omnifeed_domain_limiter_wait_seconds`, at about 0 seconds each, unlike
 `outcome="canceled"`.
+
+## Search failover
+
+`web_search` and `POST /search` answer through one searcher, which may be a chain
+(`OMNIFEED_SEARCHERS`). The first searcher answers every query. Its backup is asked
+only when that answer is not good enough:
+
+| Trigger | When | What the caller gets |
+|---|---|---|
+| `error` | The primary failed: `quota_exhausted`, a timeout, an upstream error status | The backup's results |
+| `empty` | The primary succeeded with no results, how a silently blocked pool answers | The backup's results |
+| `thin` | Fewer than `OMNIFEED_SEARCH_FALLBACK_MIN_RESULTS` results | Both, interleaved |
+| `degraded` | A critical engine (`OMNIFEED_SEARXNG_CRITICAL_ENGINES`) was missing | Both, interleaved |
+
+Interleaving takes the primary's first result, then the backup's, and so on, and
+drops a URL already taken (scheme, `www.`, a trailing slash and the fragment are
+ignored). Each result's `engine` says who found it, e.g. `tinyfish`.
+
+If the backup fails too, the primary's answer stands: its results if it had any, its
+original error if not, so `quota_exhausted` still reads `quota_exhausted`. A caller
+that hung up is never failed over. Every handoff is counted in
+`omnifeed_search_fallbacks_total` and logged as `search served by backup` or
+`search backup failed, primary answer stands`, with `trigger`, `cause` and `query_id`.
+
+With a backup, a long pacing queue costs more than it saves: lower
+`OMNIFEED_SEARXNG_MAX_WAIT` (e.g. `3s`) so a burst spills over to the backup instead
+of waiting 15s to fail. The chain's name, e.g. `searxng+tinyfish`, is the `searcher`
+label on `omnifeed_search_requests_total` and the `searcher` key in `web_search`
+`_meta`.
 
 ## Controlling fetched content size
 
@@ -464,6 +502,7 @@ Served at `/metrics` on `OMNIFEED_METRICS_ADDR`, default `:9090`, alongside the 
 | `omnifeed_reddit_inpage_requests_total` | counter | `kind` | Requests a `browser` page sent to Reddit itself, on top of its page load: `kind="listing"` for scroll batches, `kind="thread"` for "more replies". They are charged to `OMNIFEED_REDDIT_QUOTA`. Page loads plus these are what Reddit counts against the IP |
 | `omnifeed_reddit_session_expiry_timestamp_seconds` | gauge | none | When the `reddit_session` cookie expires. `0` when none is set |
 | `omnifeed_search_requests_total` | counter | `searcher, status, reason`, `scoped` | Search queries as **callers** sent them, refused ones included, unlike `omnifeed_searxng_queries_total`. `scoped="true"` is a `site:` query. `sum()` queries ignore the added label. Queries matching an exact label set don't |
+| `omnifeed_search_fallbacks_total` | counter | `from, to, trigger, outcome` | Searches handed to a backup searcher. `trigger` is `error`, `empty`, `thin` or `degraded`, `outcome` is `served` or `failed`. See [Search failover](#search-failover) |
 | `omnifeed_search_request_seconds` | histogram | `searcher, status` | Search latency |
 | `omnifeed_search_engine_position_rank` | histogram | `engine` | The rank each engine gave each row it returned. 1 to 3 is a result a caller reads, 20 and above is filler |
 | `omnifeed_search_engine_unique_results_total` | counter | `engine` | Results no other engine returned, which shows whether an engine earns its slot |

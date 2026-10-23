@@ -334,7 +334,7 @@ func WebSearch(searcher domain.Searcher, maxResults int, metrics *observability.
 			ctx = observability.WithQueryID(ctx, queryID)
 
 			start := time.Now()
-			results, err := searcher.Search(ctx, query, opts)
+			report, err := searcher.Search(ctx, query, opts)
 			if metrics != nil {
 				metrics.ObserveSearch(searcher.Name(), observability.StatusOf(err), observability.Reason(err),
 					opts.Site != "", time.Since(start))
@@ -343,7 +343,7 @@ func WebSearch(searcher domain.Searcher, maxResults int, metrics *observability.
 				return mcp.ToolResult{}, err
 			}
 
-			text, err := json.Marshal(results)
+			text, err := json.Marshal(report.Results)
 			if err != nil {
 				return mcp.ToolResult{}, err
 			}
@@ -352,7 +352,7 @@ func WebSearch(searcher domain.Searcher, maxResults int, metrics *observability.
 				Meta: map[string]string{
 					"query":    query,
 					"query_id": queryID,
-					"count":    strconv.Itoa(len(results)),
+					"count":    strconv.Itoa(len(report.Results)),
 					"searcher": searcher.Name(),
 				},
 			}, nil

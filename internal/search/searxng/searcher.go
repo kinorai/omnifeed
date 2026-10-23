@@ -50,6 +50,14 @@ type Config struct {
 	// Listing the engines that implement the operator keeps the filter
 	// meaningful. Empty (the default) queries the whole pool, as before.
 	SiteEngines []string
+	// CriticalEngines are the engines whose absence makes a search Degraded
+	// (see domain.SearchReport): when one of them was asked and either failed
+	// openly (unresponsive_engines) or contributed no rows, the search still
+	// succeeds, but the report says it ran without that engine so a caller
+	// with a backup can top it up. On this deployment that is `google cse`:
+	// the rest of the pool answers when it is rate limited, with visibly
+	// weaker results. Empty (the default) never reports a search degraded.
+	CriticalEngines []string
 	// Limiter, when non-nil, paces queries to the SearXNG instance. It exists
 	// for the ENGINES behind SearXNG, not for SearXNG itself: SearXNG fans one
 	// query out to every enabled engine, so each engine sees exactly this
@@ -74,9 +82,14 @@ type Searcher struct {
 	logger      *slog.Logger
 	metrics     *observability.Metrics
 	siteEngines string // pre-joined for the `engines` param; empty = all engines
-	limiter     httpx.Limiter
-	maxWait     time.Duration
-	audit       string
+	// siteEngineSet and criticalEngines feed degradation: a site-scoped search
+	// only asks the site engines, so a critical engine outside that set is not
+	// missing, it was never asked.
+	siteEngineSet   map[string]struct{}
+	criticalEngines []string
+	limiter         httpx.Limiter
+	maxWait         time.Duration
+	audit           string
 	// configURL/configClient serve InitEngineMetrics' GET /config; the
 	// init* fields bound its retries (tests shrink them).
 	configURL      string
@@ -100,19 +113,21 @@ func New(cfg Config) *Searcher {
 		cfg.MaxWait = defaultMaxWait
 	}
 	s := &Searcher{
-		searchURL:      strings.TrimRight(cfg.Endpoint, "/") + "/search",
-		client:         cfg.Client.WithUpstream("searxng", "search"),
-		logger:         cfg.Logger,
-		metrics:        cfg.Metrics,
-		siteEngines:    strings.Join(cfg.SiteEngines, ","),
-		limiter:        cfg.Limiter,
-		maxWait:        cfg.MaxWait,
-		audit:          cfg.Audit,
-		configURL:      strings.TrimRight(cfg.Endpoint, "/") + "/config",
-		configClient:   cfg.Client.WithUpstream("searxng", "config"),
-		initBackoff:    initBackoff,
-		initMaxBackoff: initMaxBackoff,
-		initBudget:     initBudget,
+		searchURL:       strings.TrimRight(cfg.Endpoint, "/") + "/search",
+		client:          cfg.Client.WithUpstream("searxng", "search"),
+		logger:          cfg.Logger,
+		metrics:         cfg.Metrics,
+		siteEngines:     strings.Join(cfg.SiteEngines, ","),
+		siteEngineSet:   setOf(cfg.SiteEngines),
+		criticalEngines: cfg.CriticalEngines,
+		limiter:         cfg.Limiter,
+		maxWait:         cfg.MaxWait,
+		audit:           cfg.Audit,
+		configURL:       strings.TrimRight(cfg.Endpoint, "/") + "/config",
+		configClient:    cfg.Client.WithUpstream("searxng", "config"),
+		initBackoff:     initBackoff,
+		initMaxBackoff:  initMaxBackoff,
+		initBudget:      initBudget,
 	}
 	// The site engines are known now, with no round-trip: their series start
 	// at zero before the first search. The rest of the pool follows from
@@ -154,9 +169,9 @@ type searchHit struct {
 }
 
 // Search runs the query against SearXNG and returns up to opts.Limit results.
-func (s *Searcher) Search(ctx context.Context, query string, opts domain.SearchOptions) ([]domain.SearchResult, error) {
+func (s *Searcher) Search(ctx context.Context, query string, opts domain.SearchOptions) (domain.SearchReport, error) {
 	if strings.TrimSpace(query) == "" {
-		return nil, fmt.Errorf("query is empty")
+		return domain.SearchReport{}, fmt.Errorf("query is empty")
 	}
 
 	// A caller that logs its own completion line passes the id in (see
@@ -195,7 +210,7 @@ func (s *Searcher) Search(ctx context.Context, query string, opts domain.SearchO
 		release, lerr := s.limiter.Acquire(waitCtx, s.Name(), s.searchURL)
 		cancel()
 		if lerr != nil {
-			return nil, httpx.ClassifyClientError(lerr, domain.KindUpstreamError)
+			return domain.SearchReport{}, httpx.ClassifyClientError(lerr, domain.KindUpstreamError)
 		}
 		defer release()
 	}
@@ -215,16 +230,16 @@ func (s *Searcher) Search(ctx context.Context, query string, opts domain.SearchO
 	resp, err := s.client.DoRetry(ctx, http.MethodGet, s.searchURL+"?"+params.Encode(),
 		nil, nil, httpx.RetryConfig{})
 	if err != nil {
-		return nil, httpx.ClassifyClientError(err, domain.KindUpstreamError)
+		return domain.SearchReport{}, httpx.ClassifyClientError(err, domain.KindUpstreamError)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
 	if err != nil {
-		return nil, fmt.Errorf("read response: %w", err)
+		return domain.SearchReport{}, fmt.Errorf("read response: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, &domain.FetchError{
+		return domain.SearchReport{}, &domain.FetchError{
 			Kind:       domain.KindForStatus(resp.StatusCode),
 			StatusCode: resp.StatusCode,
 			Err:        fmt.Errorf("searxng returned %d (is the json format enabled in settings.yml?)", resp.StatusCode),
@@ -233,7 +248,7 @@ func (s *Searcher) Search(ctx context.Context, query string, opts domain.SearchO
 
 	var sr searchResponse
 	if err := json.Unmarshal(body, &sr); err != nil {
-		return nil, fmt.Errorf("decode response: %w", err)
+		return domain.SearchReport{}, fmt.Errorf("decode response: %w", err)
 	}
 
 	// Zero results with a failure report is ambiguous: SearXNG lists only the
@@ -287,7 +302,25 @@ func (s *Searcher) Search(ctx context.Context, query string, opts domain.SearchO
 			break
 		}
 	}
-	return results, nil
+	return domain.SearchReport{
+		Results:        results,
+		DegradedReason: degradation(s.criticalAsked(scoped != query), rows, sr.UnresponsiveEngines),
+	}, nil
+}
+
+// criticalAsked returns the critical engines this search actually asked. A
+// site-scoped search with SiteEngines set runs on that list alone.
+func (s *Searcher) criticalAsked(siteScoped bool) []string {
+	if !siteScoped || len(s.siteEngineSet) == 0 {
+		return s.criticalEngines
+	}
+	asked := make([]string, 0, len(s.criticalEngines))
+	for _, engine := range s.criticalEngines {
+		if _, ok := s.siteEngineSet[engine]; ok {
+			asked = append(asked, engine)
+		}
+	}
+	return asked
 }
 
 // siteScoped prefixes the query with a `site:` operator when the caller asked

@@ -150,6 +150,40 @@ type Config struct {
 	// searcher's own default.
 	SearXNGMaxWait time.Duration
 
+	// SearXNGCriticalEngines names the engines whose absence makes a search
+	// degraded: the search still succeeds, but it ran without an engine the
+	// results lean on, so a configured backup searcher tops it up. An engine
+	// is absent when SearXNG reports it unresponsive (rate limited, CAPTCHA,
+	// ...) or when it contributed no rows — the silent block. On this pool
+	// that is `google cse`. Empty (the default) never reports a search
+	// degraded, so only errors, empty and thin answers reach the backup.
+	SearXNGCriticalEngines []string
+
+	// Searchers is the failover order: the first configured searcher answers
+	// every query, and each next one is the backup of the chain before it —
+	// asked only when that answer is an error, empty, thin (see
+	// SearchFallbackMinResults) or degraded (see SearXNGCriticalEngines).
+	// A listed searcher that is not configured (no URL or key) is skipped, so
+	// the default needs nothing new to keep today's SearXNG-only behaviour,
+	// and setting OMNIFEED_TINYFISH_API_KEY alone enables the backup.
+	Searchers []string
+
+	// SearchFallbackMinResults is the result count below which a successful
+	// search counts as thin and is topped up by the backup. 0 disables the
+	// thin trigger.
+	SearchFallbackMinResults int
+
+	// TinyFish Search API (optional searcher). TinyFishAPIKey empty disables
+	// it. The free tier allows 30 requests/minute and 12,000/day per key;
+	// TinyFishQuota/TinyFishQuotaWindow pace under the per-minute limit, and
+	// TinyFishMaxWait bounds how long a query queues for a slot.
+	TinyFishAPIKey      string
+	TinyFishURL         string
+	TinyFishTimeout     time.Duration
+	TinyFishQuota       int
+	TinyFishQuotaWindow time.Duration
+	TinyFishMaxWait     time.Duration
+
 	// SearchAudit controls the per-search audit log: "off", "summary" or
 	// "full". It is deliberately NOT a log level. A level answers "how bad is
 	// this?", while this stream answers "what did the pool return?" — putting it
@@ -327,6 +361,11 @@ func Load() (Config, error) {
 	// which splitHosts' trim+lowercase preserves.
 	c.SearXNGSiteEngines = splitHosts(env("OMNIFEED_SEARXNG_SITE_ENGINES", ""))
 
+	c.SearXNGCriticalEngines = splitHosts(env("OMNIFEED_SEARXNG_CRITICAL_ENGINES", ""))
+	c.Searchers = splitHosts(env("OMNIFEED_SEARCHERS", "searxng,tinyfish"))
+	c.TinyFishAPIKey = env("OMNIFEED_TINYFISH_API_KEY", "")
+	c.TinyFishURL = env("OMNIFEED_TINYFISH_URL", "https://api.search.tinyfish.ai")
+
 	c.SearchAudit = strings.ToLower(strings.TrimSpace(env("OMNIFEED_SEARCH_AUDIT", "off")))
 
 	var err error
@@ -396,6 +435,21 @@ func Load() (Config, error) {
 		return c, err
 	}
 	if c.SearchMaxResults, err = envInt("OMNIFEED_SEARCH_MAX_RESULTS", 25); err != nil {
+		return c, err
+	}
+	if c.SearchFallbackMinResults, err = envInt("OMNIFEED_SEARCH_FALLBACK_MIN_RESULTS", 3); err != nil {
+		return c, err
+	}
+	if c.TinyFishTimeout, err = envDuration("OMNIFEED_TINYFISH_TIMEOUT", 10*time.Second); err != nil {
+		return c, err
+	}
+	if c.TinyFishQuota, err = envInt("OMNIFEED_TINYFISH_QUOTA", 25); err != nil {
+		return c, err
+	}
+	if c.TinyFishQuotaWindow, err = envDuration("OMNIFEED_TINYFISH_QUOTA_WINDOW", time.Minute); err != nil {
+		return c, err
+	}
+	if c.TinyFishMaxWait, err = envDuration("OMNIFEED_TINYFISH_MAX_WAIT", 5*time.Second); err != nil {
 		return c, err
 	}
 	if c.FetchMaxChars, err = envInt("OMNIFEED_FETCH_MAX_CHARS", 120000); err != nil {
@@ -539,6 +593,24 @@ func Load() (Config, error) {
 	if c.SearchMaxResults < 1 || c.SearchMaxResults > 100 {
 		return c, fmt.Errorf("OMNIFEED_SEARCH_MAX_RESULTS must be between 1 and 100, got %d", c.SearchMaxResults)
 	}
+	if err := validateSearchers(c.Searchers); err != nil {
+		return c, err
+	}
+	if c.SearchFallbackMinResults < 0 {
+		return c, fmt.Errorf("OMNIFEED_SEARCH_FALLBACK_MIN_RESULTS must be >= 0 (0 = no thin trigger), got %d", c.SearchFallbackMinResults)
+	}
+	if c.TinyFishQuota < 0 {
+		return c, fmt.Errorf("OMNIFEED_TINYFISH_QUOTA must be >= 0 (0 = no quota), got %d", c.TinyFishQuota)
+	}
+	if c.TinyFishQuota > 0 && c.TinyFishQuotaWindow <= 0 {
+		return c, fmt.Errorf("OMNIFEED_TINYFISH_QUOTA_WINDOW must be > 0 when OMNIFEED_TINYFISH_QUOTA is set, got %s", c.TinyFishQuotaWindow)
+	}
+	if c.TinyFishMaxWait < 0 {
+		return c, fmt.Errorf("OMNIFEED_TINYFISH_MAX_WAIT must be >= 0, got %s", c.TinyFishMaxWait)
+	}
+	if u, perr := url.Parse(c.TinyFishURL); perr != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return c, fmt.Errorf("OMNIFEED_TINYFISH_URL must be an absolute http(s) URL, got %q", c.TinyFishURL)
+	}
 
 	if c.FetchMaxChars < 0 {
 		return c, fmt.Errorf("OMNIFEED_FETCH_MAX_CHARS must be >= 0 (0 = unlimited), got %d", c.FetchMaxChars)
@@ -621,6 +693,26 @@ func Load() (Config, error) {
 	}
 
 	return c, nil
+}
+
+// ValidSearchers is every searcher OMNIFEED_SEARCHERS may name.
+var ValidSearchers = []string{"searxng", "tinyfish"}
+
+// validateSearchers rejects an unknown or repeated name: a typo would
+// otherwise drop a searcher from the chain without a word, and a repeat would
+// make a searcher its own backup.
+func validateSearchers(names []string) error {
+	seen := make(map[string]bool, len(names))
+	for _, name := range names {
+		if !slices.Contains(ValidSearchers, name) {
+			return fmt.Errorf("OMNIFEED_SEARCHERS: unknown searcher %q (valid: %s)", name, strings.Join(ValidSearchers, ", "))
+		}
+		if seen[name] {
+			return fmt.Errorf("OMNIFEED_SEARCHERS: %q listed twice", name)
+		}
+		seen[name] = true
+	}
+	return nil
 }
 
 // splitHosts parses a comma-separated hostname list, trimming whitespace,
