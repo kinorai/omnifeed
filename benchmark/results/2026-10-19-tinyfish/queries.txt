@@ -1,0 +1,12 @@
+Q1	kubernetes gateway api vs ingress-nginx retirement migration
+Q2	site:reddit.com selfhosted best reverse proxy traefik caddy
+Q3	site:news.ycombinator.com rust vs go performance
+Q4	how to undo last git commit
+Q5	golang token bucket rate limiter library github
+Q6	postgres 18 new features async io
+Q7	site:x.com karpathy
+Q8	crawl4ai execute_js endpoint
+Q9	who won the 2025 nobel prize in physics
+Q10	reddit lawsuit perplexity serpapi ruling
+Q11	site:linkedin.com kubernetes platform engineer paris
+Q12	meilleur hébergeur vps france
