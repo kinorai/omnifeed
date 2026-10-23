@@ -620,7 +620,7 @@ func Load() (Config, error) {
 		return c, fmt.Errorf("OMNIFEED_SEARCH_PRIMARY_BUDGET must be >= 0 (0 = unbounded), got %s", c.SearchPrimaryBudget)
 	}
 	if c.TinyFishMaxWait < 0 {
-		return c, fmt.Errorf("OMNIFEED_TINYFISH_MAX_WAIT must be >= 0, got %s", c.TinyFishMaxWait)
+		return c, fmt.Errorf("OMNIFEED_TINYFISH_MAX_WAIT must be >= 0 (0 = default 5s), got %s", c.TinyFishMaxWait)
 	}
 	if c.TinyFishTimeout <= 0 {
 		return c, fmt.Errorf("OMNIFEED_TINYFISH_TIMEOUT must be > 0, got %s", c.TinyFishTimeout)
@@ -750,7 +750,7 @@ func validateKeyedURL(name, raw string) error {
 }
 
 func isLoopbackHost(host string) bool {
-	if host == "localhost" {
+	if strings.EqualFold(host, "localhost") {
 		return true
 	}
 	ip := net.ParseIP(host)

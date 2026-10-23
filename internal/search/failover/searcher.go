@@ -44,6 +44,7 @@ type Searcher struct {
 	primaryBudget time.Duration
 	logger        *slog.Logger
 	metrics       *observability.Metrics
+	name          string
 }
 
 // New returns a Searcher wired with the given config.
@@ -58,13 +59,15 @@ func New(cfg Config) *Searcher {
 		primaryBudget: cfg.PrimaryBudget,
 		logger:        cfg.Logger,
 		metrics:       cfg.Metrics,
+		name:          cfg.Primary.Name() + "+" + cfg.Backup.Name(),
 	}
 }
 
 // Name joins the members' names, e.g. "searxng+tinyfish". It is the searcher
 // label on omnifeed_search_requests_total, so a dashboard can tell a
 // deployment with a backup from one without.
-func (s *Searcher) Name() string { return s.primary.Name() + "+" + s.backup.Name() }
+// Computed once in New: transports read it on every search.
+func (s *Searcher) Name() string { return s.name }
 
 // Search asks the primary, and the backup when the policy calls for it.
 //
@@ -110,6 +113,9 @@ func (s *Searcher) observe(ctx context.Context, decision Decision,
 	report domain.SearchReport, err error, backup domain.SearchReport, backupErr error) {
 	outcome := "served"
 	switch {
+	case backupErr != nil && ctx.Err() != nil:
+		// The caller hung up while the backup ran: not the backup's failure.
+		outcome = "canceled"
 	case backupErr != nil:
 		outcome = "failed"
 	case len(backup.Results) == 0:
@@ -128,6 +134,9 @@ func (s *Searcher) observe(ctx context.Context, decision Decision,
 		"query_id", observability.QueryIDFrom(ctx),
 	}
 	switch outcome {
+	case "canceled":
+		s.logger.InfoContext(ctx, "search backup canceled by caller, primary answer stands", attrs...)
+		return
 	case "failed":
 		s.logger.WarnContext(ctx, "search backup failed, primary answer stands",
 			append(attrs, "backup_reason", observability.Reason(backupErr), "err", backupErr)...)

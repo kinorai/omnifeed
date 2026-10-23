@@ -59,7 +59,8 @@ func buildSearcher(d searchDeps) (domain.Searcher, *searxng.Searcher) {
 	}
 	switch len(chain) {
 	case 0:
-		d.logger.Info("search tool disabled (OMNIFEED_SEARXNG_URL and OMNIFEED_TINYFISH_API_KEY not set)")
+		d.logger.Info("search tool disabled: no searcher in OMNIFEED_SEARCHERS is configured",
+			"searchers", strings.Join(d.cfg.Searchers, ","))
 		return nil, nil
 	case 1:
 		return chain[0], searxngSearcher

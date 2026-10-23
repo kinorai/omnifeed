@@ -89,6 +89,36 @@ func TestSearch_BackupFailureKeepsPrimaryError(t *testing.T) {
 	}
 }
 
+// hangUpSearcher is a backup during which the caller hangs up.
+type hangUpSearcher struct{ cancel context.CancelFunc }
+
+func (*hangUpSearcher) Name() string { return "tinyfish" }
+
+func (h *hangUpSearcher) Search(ctx context.Context, _ string, _ domain.SearchOptions) (domain.SearchReport, error) {
+	h.cancel()
+	return domain.SearchReport{}, ctx.Err()
+}
+
+// A caller that hangs up while the backup runs is not a backup failure: it
+// must not inflate outcome="failed", which an operator reads as TinyFish down.
+func TestSearch_CallerHangUpDuringBackupIsNotAFailure(t *testing.T) {
+	m := observability.NewMetrics()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	primary := &fakeSearcher{name: "searxng", err: errQuota}
+	s := New(Config{Primary: primary, Backup: &hangUpSearcher{cancel: cancel}, Policy: Policy{MinResults: 3}, Metrics: m})
+
+	if _, err := s.Search(ctx, "q", domain.SearchOptions{}); !errors.Is(err, errQuota) {
+		t.Fatalf("error = %v, want the primary's original error", err)
+	}
+	if got := counterValue(t, m.SearchFallbacks.WithLabelValues("searxng", "tinyfish", "error", "canceled")); got != 1 {
+		t.Fatalf("fallbacks{outcome=canceled} = %v, want 1", got)
+	}
+	if got := counterValue(t, m.SearchFallbacks.WithLabelValues("searxng", "tinyfish", "error", "failed")); got != 0 {
+		t.Fatalf("fallbacks{outcome=failed} = %v, want 0", got)
+	}
+}
+
 func TestSearch_DegradedPrimaryIsMergedWithBackup(t *testing.T) {
 	primary := &fakeSearcher{name: "searxng", report: domain.SearchReport{
 		Results:        hits("https://p/1", "https://p/2", "https://shared/x"),

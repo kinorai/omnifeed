@@ -37,15 +37,3 @@ func degradation(critical []string, rows map[string]int, unresponsive [][]string
 	}
 	return ""
 }
-
-// setOf returns the members of names as a set; nil for an empty list.
-func setOf(names []string) map[string]struct{} {
-	if len(names) == 0 {
-		return nil
-	}
-	set := make(map[string]struct{}, len(names))
-	for _, name := range names {
-		set[name] = struct{}{}
-	}
-	return set
-}

@@ -93,6 +93,7 @@ func (s *Searcher) InitEngineMetrics(ctx context.Context) {
 			s.initEngineMetrics(engines)
 			s.logger.Info("searxng engine metrics initialized at zero",
 				"engines", len(engines), "attempts", attempt)
+			s.warnUnknownCritical(engines)
 			return
 		}
 		if ctx.Err() != nil {
@@ -161,4 +162,17 @@ func inQueriedCategory(categories []string) bool {
 		}
 	}
 	return false
+}
+
+// warnUnknownCritical names each critical engine the instance does not enable.
+// Such an engine never contributes rows, so every search reads as degraded and
+// is handed to the backup — a typo in OMNIFEED_SEARXNG_CRITICAL_ENGINES would
+// otherwise spend the backup's daily quota without a word.
+func (s *Searcher) warnUnknownCritical(enabled []string) {
+	for _, engine := range s.criticalEngines {
+		if !slices.Contains(enabled, engine) {
+			s.logger.Warn("critical engine is not enabled on the searxng instance: every search will read as degraded",
+				"engine", engine, "setting", "OMNIFEED_SEARXNG_CRITICAL_ENGINES")
+		}
+	}
 }

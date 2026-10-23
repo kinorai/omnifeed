@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -84,14 +85,14 @@ type Searcher struct {
 	logger      *slog.Logger
 	metrics     *observability.Metrics
 	siteEngines string // pre-joined for the `engines` param; empty = all engines
-	// siteEngineSet and criticalEngines feed degradation: a site-scoped search
-	// only asks the site engines, so a critical engine outside that set is not
-	// missing, it was never asked.
-	siteEngineSet   map[string]struct{}
-	criticalEngines []string
-	limiter         httpx.Limiter
-	maxWait         time.Duration
-	audit           string
+	// criticalEngines and criticalSiteEngines feed degradation: a site-scoped
+	// search only asks the site engines, so a critical engine outside that set
+	// is not missing, it was never asked. Both are fixed at New.
+	criticalEngines     []string
+	criticalSiteEngines []string
+	limiter             httpx.Limiter
+	maxWait             time.Duration
+	audit               string
 	// configURL/configClient serve InitEngineMetrics' GET /config; the
 	// init* fields bound its retries (tests shrink them).
 	configURL      string
@@ -115,21 +116,21 @@ func New(cfg Config) *Searcher {
 		cfg.MaxWait = defaultMaxWait
 	}
 	s := &Searcher{
-		searchURL:       strings.TrimRight(cfg.Endpoint, "/") + "/search",
-		client:          cfg.Client.WithUpstream("searxng", "search"),
-		logger:          cfg.Logger,
-		metrics:         cfg.Metrics,
-		siteEngines:     strings.Join(cfg.SiteEngines, ","),
-		siteEngineSet:   setOf(cfg.SiteEngines),
-		criticalEngines: cfg.CriticalEngines,
-		limiter:         cfg.Limiter,
-		maxWait:         cfg.MaxWait,
-		audit:           cfg.Audit,
-		configURL:       strings.TrimRight(cfg.Endpoint, "/") + "/config",
-		configClient:    cfg.Client.WithUpstream("searxng", "config"),
-		initBackoff:     initBackoff,
-		initMaxBackoff:  initMaxBackoff,
-		initBudget:      initBudget,
+		searchURL:           strings.TrimRight(cfg.Endpoint, "/") + "/search",
+		client:              cfg.Client.WithUpstream("searxng", "search"),
+		logger:              cfg.Logger,
+		metrics:             cfg.Metrics,
+		siteEngines:         strings.Join(cfg.SiteEngines, ","),
+		criticalEngines:     cfg.CriticalEngines,
+		criticalSiteEngines: criticalAmong(cfg.CriticalEngines, cfg.SiteEngines),
+		limiter:             cfg.Limiter,
+		maxWait:             cfg.MaxWait,
+		audit:               cfg.Audit,
+		configURL:           strings.TrimRight(cfg.Endpoint, "/") + "/config",
+		configClient:        cfg.Client.WithUpstream("searxng", "config"),
+		initBackoff:         initBackoff,
+		initMaxBackoff:      initMaxBackoff,
+		initBudget:          initBudget,
 	}
 	// The site engines are known now, with no round-trip: their series start
 	// at zero before the first search. The rest of the pool follows from
@@ -313,12 +314,21 @@ func (s *Searcher) Search(ctx context.Context, query string, opts domain.SearchO
 // criticalAsked returns the critical engines this search actually asked. A
 // site-scoped search with SiteEngines set runs on that list alone.
 func (s *Searcher) criticalAsked(siteScoped bool) []string {
-	if !siteScoped || len(s.siteEngineSet) == 0 {
-		return s.criticalEngines
+	if siteScoped {
+		return s.criticalSiteEngines
 	}
-	asked := make([]string, 0, len(s.criticalEngines))
-	for _, engine := range s.criticalEngines {
-		if _, ok := s.siteEngineSet[engine]; ok {
+	return s.criticalEngines
+}
+
+// criticalAmong returns the critical engines a site-scoped search asks: those
+// in siteEngines, or all of them when siteEngines is empty (the whole pool).
+func criticalAmong(critical, siteEngines []string) []string {
+	if len(siteEngines) == 0 {
+		return critical
+	}
+	var asked []string
+	for _, engine := range critical {
+		if slices.Contains(siteEngines, engine) {
 			asked = append(asked, engine)
 		}
 	}
