@@ -17,8 +17,7 @@ func Reason(err error) string {
 	if err == nil {
 		return "ok" // success sentinel; not a FailureKind
 	}
-	var fe *domain.FetchError
-	if errors.As(err, &fe) {
+	if fe, ok := errors.AsType[*domain.FetchError](err); ok {
 		return string(fe.Kind)
 	}
 	if errors.Is(err, context.Canceled) {

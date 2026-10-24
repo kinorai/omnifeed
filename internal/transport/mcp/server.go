@@ -499,8 +499,7 @@ func (s *Server) handleToolsCall(ctx context.Context, req rpcRequest, probe para
 	observability.SpanError(span, err)
 	span.End()
 	if err != nil {
-		var paramErr ParamError
-		if errors.As(err, &paramErr) {
+		if paramErr, ok := errors.AsType[ParamError](err); ok {
 			s.observeTool(name, "invalid_params", client, start)
 			return errorResp(req.ID, codeInvalidParams, paramErr.Error())
 		}

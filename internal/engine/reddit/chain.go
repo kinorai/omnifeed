@@ -160,8 +160,7 @@ const (
 // outcomeOf names a non-failover error for OnOutcome: a missing thread, a
 // subreddit refused to everyone, an unreadable page, or anything else.
 func outcomeOf(err error) string {
-	var fe *domain.FetchError
-	if errors.As(err, &fe) {
+	if fe, ok := errors.AsType[*domain.FetchError](err); ok {
 		switch {
 		case fe.Kind == domain.KindNotFound:
 			return "not_found"
