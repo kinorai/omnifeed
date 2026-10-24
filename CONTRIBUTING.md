@@ -7,7 +7,7 @@ git clone https://github.com/kinorai/omnifeed.git
 cd omnifeed
 make install-tools        # golangci-lint, govulncheck, gomarkdoc
 make pre-commit-install   # git hooks that mirror CI, once per clone
-make check                # vet + lint + test, the targets CI runs
+make check                # vet + fix-check + lint + test, the targets CI runs
 ```
 
 CI and the pre-commit hooks call the same `make` targets, so a green `make check`

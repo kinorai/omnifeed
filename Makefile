@@ -97,7 +97,7 @@ tidy-check: ## Fail if go.mod or go.sum would change after `go mod tidy` (non-mu
 	fi
 
 .PHONY: check
-check: vet lint test ## Run all checks (vet + lint + test)
+check: vet fix-check lint test ## Run all checks (vet + fix-check + lint + test)
 
 ## --- Docker / compose ---
 
