@@ -345,7 +345,7 @@ func (l *Limiter) semFor(host string) chan struct{} {
 	if v, ok := l.sems.Load(host); ok {
 		return v.(chan struct{})
 	}
-	n := max(l.cfg.ClusterConcurrency, max(l.cfg.MaxConcurrent, 1))
+	n := max(l.cfg.ClusterConcurrency, l.cfg.MaxConcurrent, 1)
 	v, _ := l.sems.LoadOrStore(host, make(chan struct{}, n))
 	return v.(chan struct{})
 }
