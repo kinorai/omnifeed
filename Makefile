@@ -50,7 +50,7 @@ fmt: ## Format code with gofmt + goimports (mutates files)
 	@command -v goimports >/dev/null 2>&1 && goimports -w . || true
 
 .PHONY: fmt-check
-fmt-check: ## Fail if any .go file is not gofmt-clean (non-mutating, used by CI + pre-commit)
+fmt-check: ## Fail if any .go file is not gofmt-clean (non-mutating, used by CI)
 	@out=$$(gofmt -l .); \
 	if [ -n "$$out" ]; then \
 	  echo "Files not gofmt-clean (run 'make fmt' to fix):"; \
@@ -64,7 +64,7 @@ fix: ## Apply the go fix modernizers (mutates files)
 
 .PHONY: fix-check
 fix-check: ## Fail if `go fix` would rewrite anything (non-mutating, used by CI)
-	@out=$$($(GO) fix -diff ./... 2>&1); rc=$$?; \
+	@out=$$($(GO) fix -diff ./...); rc=$$?; \
 	if [ $$rc -ne 0 ] || [ -n "$$out" ]; then \
 	  echo "go fix has pending modernizations or failed (run 'make fix' and commit the diff):"; \
 	  echo "$$out"; \
