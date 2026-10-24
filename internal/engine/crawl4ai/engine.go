@@ -142,8 +142,8 @@ type Config struct {
 	Stealth bool
 	// ChallengeWait waits up to this long for an interstitial bot challenge
 	// ("Just a moment…") to clear by itself before extraction; 0 disables it
-	// (OMNIFEED_CRAWL4AI_CHALLENGE_WAIT). Pages without a challenge title pay
-	// nothing: the wait_for predicate is true on the first poll.
+	// (OMNIFEED_CRAWL4AI_CHALLENGE_WAIT). Pages without a challenge pay
+	// nothing: challengeWaitFor matches on the first poll.
 	ChallengeWait time.Duration
 	// MinProseChars rejects a rendered page whose human-readable text (link
 	// targets, URLs and markdown syntax removed) is shorter than this, as
@@ -252,12 +252,24 @@ type crawlRequest struct {
 	CrawlerConfig map[string]any `json:"crawler_config,omitempty"`
 }
 
-// challengeTitle matches the whole <title> of a self-clearing bot challenge:
-// Cloudflare's "Just a moment..." and its localized forms, and the older
-// "Attention Required! | Cloudflare" / "Please Wait... | Cloudflare". It is
-// anchored to the full title so an ordinary page whose title merely contains
-// "please wait" or "un instant" does not wait out the timeout.
-const challengeTitle = `/^\s*(just a moment|un instant|einen moment|un momento|um momento|attention required! \| cloudflare|please wait\.\.\. \| cloudflare)\s*(\.\.\.|…)?\s*$/i` //nolint:misspell // Spanish/Portuguese "un/um momento", not "memento"
+// challengeWaitFor is the crawl4ai wait_for that holds extraction while a
+// Cloudflare challenge runs. A challenge page loads its solver from
+// /cdn-cgi/challenge-platform/…/orchestrate/…; once the challenge passes,
+// Cloudflare navigates to the real page and the script is gone. Normal pages on
+// Cloudflare load /cdn-cgi/challenge-platform/scripts/jsd/main.js, with no
+// /orchestrate/, so they match on the first poll. This also catches challenges
+// with a site's own title ("Security | Glassdoor"), which a title test missed.
+//
+// It has to be a selector: crawl4ai 0.9.5 (GHSA-qj46-wp7m-rgj8) refuses a
+// JavaScript wait_for from a request body with HTTP 400 and treats any other
+// value as a CSS selector. crawl4ai hands it to Playwright's wait_for_selector,
+// which waits for the first match to be visible. `:visible` makes that any
+// visible element, not <html> itself, which has zero height on a page whose
+// content is all fixed or absolute. `:root`, not `html`: a URL that renders as
+// a bare SVG document has no <html>, and `html` would hold it for the whole
+// wait and then fail it as a challenge. A timeout means the challenge never
+// cleared: see challengeTimeoutPattern.
+const challengeWaitFor = `css::root:not(:has(script[src*="/cdn-cgi/challenge-platform/"][src*="/orchestrate/"])) :visible`
 
 type crawlResponse struct {
 	Success bool          `json:"success"`
@@ -684,7 +696,7 @@ func (e *Engine) crawlRung(ctx context.Context, rawURL string, o crawlOpts) (dom
 		}
 	}
 	if e.challengeWait > 0 && !pdf {
-		params["wait_for"] = "js:() => !" + challengeTitle + ".test(document.title)"
+		params["wait_for"] = challengeWaitFor
 		params["wait_for_timeout"] = int(e.challengeWait / time.Millisecond)
 	}
 
