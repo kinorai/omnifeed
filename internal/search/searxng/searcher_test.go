@@ -816,7 +816,7 @@ func TestSearchAuditDurationExcludesLimiterWait(t *testing.T) {
 		Endpoint: srv.URL, Client: httpx.New(srv.Client()),
 		Logger: slog.New(cap), Audit: "summary", Limiter: limiter,
 	})
-	for i := 0; i < 2; i++ { // the second query pays the pacing delay
+	for range 2 { // the second query pays the pacing delay
 		if _, err := s.Search(context.Background(), "q", domain.SearchOptions{}); err != nil {
 			t.Fatalf("Search: %v", err)
 		}

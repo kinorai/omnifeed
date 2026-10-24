@@ -156,14 +156,12 @@ func TestFailover_RuntimeNOPERMSwitchesOnce(t *testing.T) {
 	c := newCache(inner, f, clock, m)
 	var wg sync.WaitGroup
 	for i := range 8 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			u := fmt.Sprintf("%s/%d", testURL, i)
 			if doc, err := c.Crawl(context.Background(), u, domain.EngineOptions{}); err != nil || doc.Metadata[MetaCachedAt] == "" {
 				t.Errorf("%s: err=%v meta=%v, want a stored miss", u, err, doc.Metadata)
 			}
-		}()
+		})
 	}
 	wg.Wait()
 

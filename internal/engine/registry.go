@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net/url"
 	"unicode/utf8"
 
@@ -207,9 +208,7 @@ const FallbackNotice = "> Note: the dedicated %s engine failed (%s); this is the
 // metadata map is copied, never mutated in place — the fallback engine owns it.
 func markFallback(doc domain.Document, from, reason string) domain.Document {
 	meta := make(map[string]string, len(doc.Metadata)+2)
-	for k, v := range doc.Metadata {
-		meta[k] = v
-	}
+	maps.Copy(meta, doc.Metadata)
 	meta[domain.FallbackFromKey] = from
 	meta["fallback_reason"] = reason
 	doc.Metadata = meta

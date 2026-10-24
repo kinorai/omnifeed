@@ -75,35 +75,35 @@ func TestClassifyCrawlError(t *testing.T) {
 func TestCrawlClassifiesUnsuccessfulResponse(t *testing.T) {
 	cases := []struct {
 		name     string
-		response map[string]interface{}
+		response map[string]any
 		wantErr  bool
 		wantKind domain.FailureKind
 		wantBody string
 	}{
 		{
 			"success=false structural content-gate to thin_content",
-			map[string]interface{}{"success": false, "error": "Blocked by anti-bot protection: Structural: minimal_text on small page"},
+			map[string]any{"success": false, "error": "Blocked by anti-bot protection: Structural: minimal_text on small page"},
 			true, domain.KindThinContent, "",
 		},
 		{
 			"success=false genuine wall to bot_block",
-			map[string]interface{}{"success": false, "error": "Blocked by anti-bot protection: Cloudflare JS challenge"},
+			map[string]any{"success": false, "error": "Blocked by anti-bot protection: Cloudflare JS challenge"},
 			true, domain.KindBotBlock, "",
 		},
 		{
 			"success=false timeout is a timeout",
-			map[string]interface{}{"success": false, "error": "navigation timeout"},
+			map[string]any{"success": false, "error": "navigation timeout"},
 			true, domain.KindTimeout, "",
 		},
 		{
 			"success=false generic stays upstream_error",
-			map[string]interface{}{"success": false, "error": "Unexpected error in _crawl_web: browser crashed"},
+			map[string]any{"success": false, "error": "Unexpected error in _crawl_web: browser crashed"},
 			true, domain.KindUpstreamError, "",
 		},
 		{
 			"success=true returns content",
-			map[string]interface{}{"success": true, "results": []interface{}{map[string]interface{}{
-				"success": true, "status_code": 200, "markdown": map[string]interface{}{"raw_markdown": "# Hello"},
+			map[string]any{"success": true, "results": []any{map[string]any{
+				"success": true, "status_code": 200, "markdown": map[string]any{"raw_markdown": "# Hello"},
 			}}},
 			false, "", "# Hello",
 		},

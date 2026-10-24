@@ -264,16 +264,14 @@ func TestFallbackLimiterConcurrentAcquire(t *testing.T) {
 
 	var wg sync.WaitGroup
 	for range 50 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			release, err := f.Acquire(context.Background(), "reddit", "https://www.reddit.com/")
 			if err != nil {
 				t.Errorf("Acquire: %v", err)
 				return
 			}
 			release()
-		}()
+		})
 	}
 	wg.Wait()
 

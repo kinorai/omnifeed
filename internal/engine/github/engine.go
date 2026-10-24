@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -523,9 +524,7 @@ func (e *Engine) finish(content, contentType, source string, extra map[string]st
 		"status_code":         "200",
 		domain.ContentTypeKey: contentType,
 	}
-	for k, val := range extra {
-		meta[k] = val
-	}
+	maps.Copy(meta, extra)
 	e.logger.Info("github crawl complete", "source", source, "bytes", len(content))
 	return domain.Document{PageContent: content, Metadata: meta}
 }

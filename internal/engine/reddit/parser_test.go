@@ -212,10 +212,7 @@ func TestToonEncoding_NonEmpty(t *testing.T) {
 		t.Error("TOON output missing comments[ tabular header")
 	}
 	if !strings.Contains(s, "{id,parent_id,author,score,body") {
-		end := 400
-		if len(s) < end {
-			end = len(s)
-		}
+		end := min(len(s), 400)
 		t.Errorf("TOON output missing expected fields header; first chars:\n%s", s[:end])
 	}
 	j, _ := json.Marshal(thread)
@@ -262,7 +259,7 @@ func TestCapCommentsBreadthFirst(t *testing.T) {
 		cs = append(cs, Comment{ID: fmt.Sprintf("d%d", i), ParentID: fmt.Sprintf("d%d", i-1)})
 	}
 	// 15 more top-level threads, each with one reply.
-	for i := 0; i < 15; i++ {
+	for i := range 15 {
 		cs = append(cs, Comment{ID: fmt.Sprintf("t%d", i), ParentID: "p"},
 			Comment{ID: fmt.Sprintf("t%dr", i), ParentID: fmt.Sprintf("t%d", i)})
 	}

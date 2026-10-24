@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -248,9 +249,7 @@ func (e *Engine) document(v any, source string, extra map[string]string) (domain
 		"status_code":         "200",
 		domain.ContentTypeKey: domain.ContentTypeTOON,
 	}
-	for k, val := range extra {
-		meta[k] = val
-	}
+	maps.Copy(meta, extra)
 	e.logger.Info("bluesky crawl complete", "source", source, "bytes", len(encoded))
 	return domain.Document{PageContent: string(encoded), Metadata: meta}, nil
 }

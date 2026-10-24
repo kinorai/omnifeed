@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"runtime/debug"
+	"slices"
 
 	"github.com/prometheus/client_golang/prometheus"
 )
@@ -40,13 +41,7 @@ func init() {
 // returned. Callers that recover themselves (middleware that must also write a
 // 500) use this; everyone else defers Recover.
 func ObservePanic(where string, v any) {
-	known := false
-	for _, w := range panicSites {
-		if w == where {
-			known = true
-			break
-		}
-	}
+	known := slices.Contains(panicSites, where)
 	if !known {
 		where = panicWhereUnchecked
 	}

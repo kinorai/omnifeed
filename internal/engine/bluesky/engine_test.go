@@ -183,7 +183,7 @@ func TestCrawlThreadTruncates(t *testing.T) {
 	var b strings.Builder
 	b.WriteString(`{"thread":{"post":{"uri":"at://did:plc:aaa/app.bsky.feed.post/root",` +
 		`"author":{"handle":"alice.bsky.social"},"record":{"text":"root"}},"replies":[`)
-	for i := 0; i < maxThreadReplies+10; i++ {
+	for i := range maxThreadReplies + 10 {
 		if i > 0 {
 			b.WriteString(",")
 		}

@@ -261,7 +261,7 @@ func TestCrawlCapsPosts(t *testing.T) {
 	var b strings.Builder
 	fmt.Fprintf(&b, `{"title":"Megathread","posts_count":%d,"created_at":"2026-01-01T00:00:00Z",`, maxPosts+10)
 	b.WriteString(`"post_stream":{"posts":[`)
-	for i := 0; i < maxPosts+10; i++ {
+	for i := range maxPosts + 10 {
 		if i > 0 {
 			b.WriteString(",")
 		}

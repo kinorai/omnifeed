@@ -253,8 +253,8 @@ func TestBuildEngineOptionsScanFullPage(t *testing.T) {
 		want  *bool
 	}{
 		{"", nil},
-		{"scan_full_page=true", boolPtr(true)},
-		{"scan_full_page=false", boolPtr(false)},
+		{"scan_full_page=true", new(true)},
+		{"scan_full_page=false", new(false)},
 		{"scan_full_page=yes", nil}, // only the exact literals count
 	} {
 		req := httptest.NewRequest(http.MethodPost, "/crawl?"+c.query, nil)
@@ -267,8 +267,6 @@ func TestBuildEngineOptionsScanFullPage(t *testing.T) {
 		}
 	}
 }
-
-func boolPtr(b bool) *bool { return &b }
 
 // The response cap holds over the whole batch: documents that fit are served
 // whole, and one that would cross it becomes an error document, never a cut.
