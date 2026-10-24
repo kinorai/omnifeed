@@ -392,8 +392,7 @@ func (c *chainError) classify() error {
 }
 
 func kindOf(err error) domain.FailureKind {
-	var fe *domain.FetchError
-	if errors.As(err, &fe) {
+	if fe, ok := errors.AsType[*domain.FetchError](err); ok {
 		return fe.Kind
 	}
 	return domain.KindError

@@ -44,8 +44,7 @@ func page(status int, md string) map[string]any {
 const realProse = "This is a real article body with enough words to count as genuine prose content for a reader, well past the floor."
 
 func kindOf(err error) domain.FailureKind {
-	var fe *domain.FetchError
-	if errors.As(err, &fe) {
+	if fe, ok := errors.AsType[*domain.FetchError](err); ok {
 		return fe.Kind
 	}
 	return ""

@@ -581,8 +581,7 @@ func (e *Engine) crawlOnce(ctx context.Context, rawURL string, o crawlOpts, atte
 	defer span.End()
 	doc, err := e.crawlRung(ctx, rawURL, o)
 	if err != nil {
-		var fe *domain.FetchError
-		if errors.As(err, &fe) {
+		if fe, ok := errors.AsType[*domain.FetchError](err); ok {
 			span.SetAttributes(attribute.String("error.kind", string(fe.Kind)))
 		}
 		observability.SpanError(span, err)
