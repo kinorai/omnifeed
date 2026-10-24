@@ -78,6 +78,38 @@ dockers_v2:
       org.opencontainers.image.created: "{{ .Date }}"
       org.opencontainers.image.licenses: "MIT"
 
+# Keyless cosign signatures (Sigstore): the release job's GitHub OIDC token
+# is the identity, so there is no key to store or rotate. Config from
+# goreleaser's own .goreleaser.yaml and its cosign v3 guide
+# (https://goreleaser.com/blog/cosign-v3/). checksums.txt covers every
+# archive, so signing it signs them all. Verify with:
+#   cosign verify-blob --bundle checksums.txt.sigstore.json \
+#     --certificate-identity-regexp '^https://github.com/kinorai/omnifeed/' \
+#     --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+#     checksums.txt
+signs:
+  - cmd: cosign
+    signature: "${artifact}.sigstore.json"
+    artifacts: checksum
+    args:
+      - sign-blob
+      - "--bundle=${signature}"
+      - "${artifact}"
+      - --yes
+
+# Signs each multi-arch manifest by digest and pushes the signature next to it
+# on Docker Hub. Verify with:
+#   cosign verify kinorai/omnifeed:<version> \
+#     --certificate-identity-regexp '^https://github.com/kinorai/omnifeed/' \
+#     --certificate-oidc-issuer https://token.actions.githubusercontent.com
+docker_signs:
+  - cmd: cosign
+    artifacts: manifests
+    args:
+      - sign
+      - "${artifact}@${digest}"
+      - --yes
+
 sboms:
   - id: archive
     artifacts: archive
