@@ -16,8 +16,8 @@ import (
 	"github.com/kinorai/omnifeed/internal/domain"
 )
 
-// DefaultCrawl4AIUserAgent matches the Chromium bundled in crawl4ai 0.9.4.
-const DefaultCrawl4AIUserAgent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36"
+// DefaultCrawl4AIUserAgent matches the Chromium bundled in crawl4ai 0.9.5.
+const DefaultCrawl4AIUserAgent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36"
 
 // Config is the fully-resolved runtime configuration.
 type Config struct {
@@ -85,7 +85,7 @@ type Config struct {
 	// Crawl4AIUserAgent is the browser identity crawl4ai presents. crawl4ai's
 	// own default is a malformed Chrome/116 string that Cloudflare challenges
 	// and some sites reject as an outdated browser. Keep the version in step
-	// with the Chromium the crawl4ai image bundles (153 in 0.9.4): a UA that
+	// with the Chromium the crawl4ai image bundles (156 in 0.9.5): a UA that
 	// disagrees with the engine is itself a bot signal. Set it empty to keep
 	// crawl4ai's own (and disable the alternate-identity retry).
 	Crawl4AIUserAgent string
