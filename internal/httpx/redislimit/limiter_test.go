@@ -144,9 +144,7 @@ func TestAcquireBoundsConcurrencyPerHost(t *testing.T) {
 	var wg sync.WaitGroup
 	start := make(chan struct{})
 	for range 6 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			<-start
 			release, err := l.Acquire(context.Background(), "crawl4ai", "https://example.com/a")
 			if err != nil {
@@ -163,7 +161,7 @@ func TestAcquireBoundsConcurrencyPerHost(t *testing.T) {
 			time.Sleep(10 * time.Millisecond)
 			inFlight.Add(-1)
 			release()
-		}()
+		})
 	}
 	close(start)
 	wg.Wait()

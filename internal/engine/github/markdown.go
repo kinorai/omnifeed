@@ -217,7 +217,7 @@ func excerpt(md string, maxChars int) (out string, cut bool) {
 	}
 	head = strings.TrimSpace(head)
 	open := ""
-	for _, l := range strings.Split(head, "\n") {
+	for l := range strings.SplitSeq(head, "\n") {
 		if m := fenceRE.FindStringSubmatch(l); m != nil {
 			if open == "" {
 				open = m[1]

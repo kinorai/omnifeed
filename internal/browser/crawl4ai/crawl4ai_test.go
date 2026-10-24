@@ -14,15 +14,15 @@ import (
 	"github.com/kinorai/omnifeed/internal/httpx"
 )
 
-func mustJSON(v interface{}) []byte { b, _ := json.Marshal(v); return b }
+func mustJSON(v any) []byte { b, _ := json.Marshal(v); return b }
 
 // execJSOK builds a successful /execute_js response whose js_execution_result
 // wraps the given string (the value the caller's snippet returned).
 func execJSOK(jsReturn string) []byte {
-	return mustJSON(map[string]interface{}{
+	return mustJSON(map[string]any{
 		"success":             true,
 		"status_code":         200,
-		"js_execution_result": map[string]interface{}{"results": []interface{}{jsReturn}},
+		"js_execution_result": map[string]any{"results": []any{jsReturn}},
 	})
 }
 
@@ -143,12 +143,12 @@ func TestEvalErrorClassification(t *testing.T) {
 		// verdict, which would hold the browser method for its cooldown.
 		{"5xx without a verdict", 503, []byte(`{"error":"Service Unavailable"}`), "503", domain.KindUpstreamError},
 		{"4xx passthrough", 400, []byte(`{"error":"bad request"}`), "crawl4ai returned 400", domain.KindError},
-		{"result success=false", 200, mustJSON(map[string]interface{}{
+		{"result success=false", 200, mustJSON(map[string]any{
 			"success": false, "error_message": "nav timeout",
 		}), "nav timeout", domain.KindBotBlock},
-		{"empty js results", 200, mustJSON(map[string]interface{}{
+		{"empty js results", 200, mustJSON(map[string]any{
 			"success":             true,
-			"js_execution_result": map[string]interface{}{"results": []interface{}{}},
+			"js_execution_result": map[string]any{"results": []any{}},
 		}), "no js result", domain.KindBotBlock},
 	}
 	for _, tc := range cases {

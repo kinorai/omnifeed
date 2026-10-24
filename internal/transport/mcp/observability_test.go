@@ -73,7 +73,7 @@ func observedServer(buf *bytes.Buffer, tools ...Tool) (*Server, *observability.M
 
 func logLine(t *testing.T, buf *bytes.Buffer, msg string) map[string]any {
 	t.Helper()
-	for _, l := range strings.Split(strings.TrimSpace(buf.String()), "\n") {
+	for l := range strings.SplitSeq(strings.TrimSpace(buf.String()), "\n") {
 		var line map[string]any
 		if json.Unmarshal([]byte(l), &line) == nil && line["msg"] == msg {
 			return line

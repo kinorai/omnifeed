@@ -373,11 +373,9 @@ func TestCrawl_SingleflightSharesOneFetch(t *testing.T) {
 	docs := make([]domain.Document, n)
 	errs := make([]error, n)
 	for i := range n {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			docs[i], errs[i] = c.Crawl(context.Background(), testURL, domain.EngineOptions{})
-		}()
+		})
 	}
 	// Wait until the leader is upstream and every follower has joined.
 	deadline := time.Now().Add(5 * time.Second)

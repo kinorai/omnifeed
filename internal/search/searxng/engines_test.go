@@ -30,7 +30,7 @@ func scrape(t *testing.T, m *observability.Metrics) string {
 // sample returns the value of the exposition line starting with series, or
 // "" when no such series is exposed.
 func sample(body, series string) string {
-	for _, line := range strings.Split(body, "\n") {
+	for line := range strings.SplitSeq(body, "\n") {
 		if rest, ok := strings.CutPrefix(line, series+" "); ok {
 			return rest
 		}
