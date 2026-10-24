@@ -34,9 +34,10 @@ services:
     restart: unless-stopped
 
   crawl4ai:
-    # Pinned after the 2026-07-30 perf benchmark: 0.9.2 is the first release with
-    # usable preserve_tags (needed to keep code blocks intact).
-    image: unclecode/crawl4ai:0.9.2
+    # 0.9.2 is the first release with usable preserve_tags (needed to keep code
+    # blocks intact); 0.9.5 closes six Docker-server advisories and needs
+    # omnifeed's CSS-selector challenge wait (it refuses a JavaScript wait_for).
+    image: unclecode/crawl4ai:0.9.5
     container_name: crawl4ai
     # No published port: crawl4ai runs any JavaScript its token holder sends,
     # so only this stack's network reaches it. To call it from the host for
@@ -50,6 +51,8 @@ services:
       # (token-gated, reachable by this stack only).
       CRAWL4AI_EXECUTE_JS_ENABLED: "true"
       CRAWL4AI_HOOKS_ENABLED: "false"
+      # 0.9.5 logs a Crawl4AI Cloud banner at startup and on blocked crawls.
+      CRAWL4AI_NO_CLOUD_NOTICE: "1"
       # MAX_CONCURRENT_TASKS was here and did nothing: crawl4ai 0.9.2 reads it
       # nowhere. The real concurrency bound is crawler.pool.max_pages, set in
       # the config below.
