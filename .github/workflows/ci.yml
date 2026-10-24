@@ -55,6 +55,12 @@ jobs:
       - name: go vet (make vet)
         run: make vet
 
+      # go fix runs the modernizer analyzers (min/max, range-over-int,
+      # slices/maps helpers, any, ...). A pending rewrite means new code
+      # regressed to an older idiom; run `make fix` locally.
+      - name: go fix drift (make fix-check)
+        run: make fix-check
+
       # Install golangci-lint via the action (handles caching + binary
       # download). Then run via `make lint` to keep the contract local.
       - name: Install golangci-lint

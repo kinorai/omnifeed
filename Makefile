@@ -58,6 +58,19 @@ fmt-check: ## Fail if any .go file is not gofmt-clean (non-mutating, used by CI 
 	  exit 1; \
 	fi
 
+.PHONY: fix
+fix: ## Apply the go fix modernizers (mutates files)
+	$(GO) fix ./...
+
+.PHONY: fix-check
+fix-check: ## Fail if `go fix` would rewrite anything (non-mutating, used by CI)
+	@out=$$($(GO) fix -diff ./... 2>&1); rc=$$?; \
+	if [ $$rc -ne 0 ] || [ -n "$$out" ]; then \
+	  echo "go fix has pending modernizations or failed (run 'make fix' and commit the diff):"; \
+	  echo "$$out"; \
+	  exit 1; \
+	fi
+
 .PHONY: lint
 lint: ## Run golangci-lint (install via `make install-tools`)
 	golangci-lint run ./...
