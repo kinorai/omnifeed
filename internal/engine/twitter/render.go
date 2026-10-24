@@ -319,8 +319,8 @@ func plural(n int, word string) string {
 	if n == 1 {
 		return "1 " + word
 	}
-	if strings.HasSuffix(word, "y") {
-		return strconv.Itoa(n) + " " + strings.TrimSuffix(word, "y") + "ies"
+	if stem, ok := strings.CutSuffix(word, "y"); ok {
+		return strconv.Itoa(n) + " " + stem + "ies"
 	}
 	return strconv.Itoa(n) + " " + word + "s"
 }
@@ -329,7 +329,7 @@ func plural(n int, word string) string {
 // list item.
 func compactLines(s string) string {
 	var out []string
-	for _, l := range strings.Split(s, "\n") {
+	for l := range strings.SplitSeq(s, "\n") {
 		if strings.TrimSpace(l) != "" {
 			out = append(out, l)
 		}

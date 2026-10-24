@@ -162,7 +162,7 @@ func TestCrawlIssuePaginatesComments(t *testing.T) {
 func TestCrawlIssueCapsComments(t *testing.T) {
 	var page strings.Builder
 	page.WriteString("[")
-	for i := 0; i < maxComments+10; i++ {
+	for i := range maxComments + 10 {
 		if i > 0 {
 			page.WriteString(",")
 		}

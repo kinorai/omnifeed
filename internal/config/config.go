@@ -502,7 +502,7 @@ func Load() (Config, error) {
 	if c.RedditMethodCooldown, err = envDuration("OMNIFEED_REDDIT_METHOD_COOLDOWN", 10*time.Minute); err != nil {
 		return c, err
 	}
-	for _, m := range strings.Split(env("OMNIFEED_REDDIT_METHODS", "client_id,session,browser"), ",") {
+	for m := range strings.SplitSeq(env("OMNIFEED_REDDIT_METHODS", "client_id,session,browser"), ",") {
 		m = strings.ToLower(strings.TrimSpace(m))
 		switch m {
 		case "":
@@ -761,7 +761,7 @@ func isLoopbackHost(host string) bool {
 // lowercasing, and dropping empty entries. Returns nil for an empty list.
 func splitHosts(s string) []string {
 	var out []string
-	for _, h := range strings.Split(s, ",") {
+	for h := range strings.SplitSeq(s, ",") {
 		if h = strings.ToLower(strings.TrimSpace(h)); h != "" {
 			out = append(out, h)
 		}

@@ -247,9 +247,9 @@ func (e *Engine) headers() map[string]string {
 // --- crawl4ai wire types ---
 
 type crawlRequest struct {
-	URLs          []string               `json:"urls"`
-	BrowserConfig map[string]interface{} `json:"browser_config,omitempty"`
-	CrawlerConfig map[string]interface{} `json:"crawler_config,omitempty"`
+	URLs          []string       `json:"urls"`
+	BrowserConfig map[string]any `json:"browser_config,omitempty"`
+	CrawlerConfig map[string]any `json:"crawler_config,omitempty"`
 }
 
 // challengeTitle matches the whole <title> of a self-clearing bot challenge:
@@ -487,7 +487,7 @@ func silentFailure(content, scan string) (domain.FailureKind, string) {
 	// with it; an article that has a "Page not found" section (MDN's 404
 	// reference) reaches it only after prose, so scanning stops there.
 	seen := 0
-	for _, l := range strings.Split(content, "\n") {
+	for l := range strings.SplitSeq(content, "\n") {
 		l = proseText(l)
 		if l == "" {
 			continue
@@ -508,7 +508,7 @@ func silentFailure(content, scan string) (domain.FailureKind, string) {
 		return domain.KindBotBlock, "country picker interstitial"
 	}
 	lines, loading := 0, 0
-	for _, l := range strings.Split(content, "\n") {
+	for l := range strings.SplitSeq(content, "\n") {
 		l = strings.ToLower(strings.Trim(strings.TrimSpace(l), ".…#* "))
 		if l == "" {
 			continue
@@ -547,8 +547,8 @@ func isRescuable(err error) bool {
 // default while Akamai-fronted ones reject the modern UA (measured
 // 2026-10-08: lequipe, boulanger, lesechos), so a block on one identity is
 // retried once on the other.
-func (e *Engine) browserParams(altFingerprint bool) map[string]interface{} {
-	bp := map[string]interface{}{}
+func (e *Engine) browserParams(altFingerprint bool) map[string]any {
+	bp := map[string]any{}
 	if e.userAgent != "" && !altFingerprint {
 		bp["user_agent"] = e.userAgent
 	}
@@ -604,7 +604,7 @@ func (e *Engine) crawlRung(ctx context.Context, rawURL string, o crawlOpts) (dom
 	ignoreLinks := !e.keepLinks
 	excludeExternalLinks := !e.keepLinks
 
-	params := map[string]interface{}{
+	params := map[string]any{
 		"word_count_threshold":     10,
 		"wait_until":               waitUntil,
 		"delay_before_return_html": e.delayBeforeHTML,
@@ -624,12 +624,12 @@ func (e *Engine) crawlRung(ctx context.Context, rawURL string, o crawlOpts) (dom
 		"exclude_external_links":     excludeExternalLinks,
 		"exclude_social_media_links": true,
 		"exclude_external_images":    true,
-		"markdown_generator": map[string]interface{}{
+		"markdown_generator": map[string]any{
 			"type": "DefaultMarkdownGenerator",
-			"params": map[string]interface{}{
-				"content_filter": map[string]interface{}{
+			"params": map[string]any{
+				"content_filter": map[string]any{
 					"type": "PruningContentFilter",
-					"params": map[string]interface{}{
+					"params": map[string]any{
 						"threshold":      e.pruneThreshold,
 						"threshold_type": "fixed",
 						// Syntax highlighters wrap code tokens in <span>s that the
@@ -646,7 +646,7 @@ func (e *Engine) crawlRung(ctx context.Context, rawURL string, o crawlOpts) (dom
 						"preserve_classes": []string{"highlight", "chroma", "highlighter-rouge", "codehilite"},
 					},
 				},
-				"options": map[string]interface{}{
+				"options": map[string]any{
 					"ignore_links": ignoreLinks,
 				},
 			},
@@ -679,9 +679,9 @@ func (e *Engine) crawlRung(ctx context.Context, rawURL string, o crawlOpts) (dom
 	// filter and the browser-only knobs mean nothing there, and pruning drops
 	// most of a paper's paragraphs, so only the strategy and timeout go out.
 	if pdf {
-		params = map[string]interface{}{
+		params = map[string]any{
 			"page_timeout":      maxPageTimeoutMS,
-			"scraping_strategy": map[string]interface{}{"type": "PDFContentScrapingStrategy", "params": map[string]interface{}{}},
+			"scraping_strategy": map[string]any{"type": "PDFContentScrapingStrategy", "params": map[string]any{}},
 		}
 	}
 	if e.challengeWait > 0 && !pdf {
@@ -691,13 +691,13 @@ func (e *Engine) crawlRung(ctx context.Context, rawURL string, o crawlOpts) (dom
 
 	req := crawlRequest{
 		URLs:          []string{rawURL},
-		CrawlerConfig: map[string]interface{}{"type": "CrawlerRunConfig", "params": params},
+		CrawlerConfig: map[string]any{"type": "CrawlerRunConfig", "params": params},
 	}
 	// Both keys are on crawl4ai's untrusted-body allowlist (cookies/headers
 	// are not — they 400). An identical browser_config on every call keeps
 	// crawl4ai's pool on one warm browser.
 	if bp := e.browserParams(o.altFingerprint); len(bp) > 0 && !pdf {
-		req.BrowserConfig = map[string]interface{}{"type": "BrowserConfig", "params": bp}
+		req.BrowserConfig = map[string]any{"type": "BrowserConfig", "params": bp}
 	}
 
 	body, err := json.Marshal(req)
@@ -889,7 +889,7 @@ func rawPath(rawURL string) string {
 // firstLines returns the first n non-empty lines of s.
 func firstLines(s string, n int) string {
 	var out []string
-	for _, l := range strings.Split(s, "\n") {
+	for l := range strings.SplitSeq(s, "\n") {
 		if strings.TrimSpace(l) == "" {
 			continue
 		}

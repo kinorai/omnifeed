@@ -23,6 +23,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"maps"
 	"net"
 	"net/url"
 	"strings"
@@ -386,9 +387,7 @@ func mark(doc domain.Document, result string, cachedAt time.Time) domain.Documen
 
 func copyDoc(doc domain.Document) domain.Document {
 	meta := make(map[string]string, len(doc.Metadata)+2)
-	for k, v := range doc.Metadata {
-		meta[k] = v
-	}
+	maps.Copy(meta, doc.Metadata)
 	doc.Metadata = meta
 	return doc
 }

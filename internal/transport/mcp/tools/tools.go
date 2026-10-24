@@ -7,6 +7,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"maps"
 	"strconv"
 	"time"
 
@@ -248,9 +249,7 @@ func sized(doc domain.Document, maxChars, startChar int) mcp.ToolResult {
 	}
 
 	meta := make(map[string]string, len(doc.Metadata)+3)
-	for k, v := range doc.Metadata {
-		meta[k] = v
-	}
+	maps.Copy(meta, doc.Metadata)
 	meta["truncated"] = strconv.FormatBool(t.Truncated())
 	meta["total_chars"] = strconv.Itoa(t.TotalChars)
 	meta["next_start_char"] = strconv.Itoa(t.NextStartChar)
