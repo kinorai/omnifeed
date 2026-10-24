@@ -130,8 +130,7 @@ func TestDoRetryRespectsRetryableStatus(t *testing.T) {
 				_ = resp.Body.Close()
 			}
 
-			var se *StatusError
-			if !errors.As(err, &se) {
+			if _, ok := errors.AsType[*StatusError](err); !ok {
 				t.Fatalf("want *StatusError, got %T: %v", err, err)
 			}
 			if attempts != tc.wantAttempts {

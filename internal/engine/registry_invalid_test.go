@@ -17,8 +17,7 @@ func TestRegistryCrawl_RejectedURLIsInvalidRequest(t *testing.T) {
 	for _, rawURL := range []string{"http://127.0.0.1/", "file:///etc/passwd", "http:///nohost"} {
 		stub := &stubEngine{}
 		_, err := New().Fallback(stub).BlockPrivateIPs(true).Crawl(context.Background(), rawURL, domain.EngineOptions{})
-		var ire *domain.InvalidRequestError
-		if !errors.As(err, &ire) {
+		if _, ok := errors.AsType[*domain.InvalidRequestError](err); !ok {
 			t.Errorf("Crawl(%q) err = %v, want a *domain.InvalidRequestError", rawURL, err)
 		}
 		if stub.called {

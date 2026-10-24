@@ -71,8 +71,7 @@ func Classify(err error) Failure {
 	if err == nil {
 		return Failure{}
 	}
-	var ire *domain.InvalidRequestError
-	if errors.As(err, &ire) {
+	if _, ok := errors.AsType[*domain.InvalidRequestError](err); ok {
 		return Failure{Code: CodeInvalidRequest}
 	}
 	m, known := codeFor[domain.FailureKind(Reason(err))]
@@ -80,8 +79,7 @@ func Classify(err error) Failure {
 		m = codeFor[domain.KindError]
 	}
 	f := Failure{Code: m.code, Retryable: m.retryable}
-	var fe *domain.FetchError
-	if errors.As(err, &fe) {
+	if fe, ok := errors.AsType[*domain.FetchError](err); ok {
 		f.RetryAfter = fe.RetryAfter
 		f.UpstreamStatus = fe.StatusCode
 	}
