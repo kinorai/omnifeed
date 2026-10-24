@@ -41,8 +41,7 @@ func init() {
 // returned. Callers that recover themselves (middleware that must also write a
 // 500) use this; everyone else defers Recover.
 func ObservePanic(where string, v any) {
-	known := slices.Contains(panicSites, where)
-	if !known {
+	if !slices.Contains(panicSites, where) {
 		where = panicWhereUnchecked
 	}
 	panicsTotal.WithLabelValues(where).Inc()
