@@ -11,7 +11,7 @@ Guide for coding agents (and humans) working in this repo. Keep changes small, t
 The Makefile is the single source of truth — CI and pre-commit run the same targets.
 
 ```bash
-make check        # vet + lint + test — the gate. Run before every commit.
+make check        # vet + fix-check + lint + test — the gate. Run before every commit.
 make test         # go test ./...
 make test-cover   # tests with coverage
 make lint         # golangci-lint
@@ -100,7 +100,7 @@ cmd/omnifeed/    entry point + wiring
 
 ## Definition of done
 
-1. `make check` is green (vet + lint + test).
+1. `make check` is green (vet + fix-check + lint + test).
 2. New behavior has a test.
 3. Conventional Commit message.
 4. README/docs updated if user-visible behavior changed.
