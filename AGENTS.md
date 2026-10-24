@@ -16,6 +16,7 @@ make test         # go test ./...
 make test-cover   # tests with coverage
 make lint         # golangci-lint
 make fmt          # gofmt + goimports
+make fix          # go fix modernizers (CI fails on drift via make fix-check)
 make tidy         # go mod tidy
 make run          # go run ./cmd/omnifeed
 make compose-up   # full local stack (omnifeed + searxng + crawl4ai)
