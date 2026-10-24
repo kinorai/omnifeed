@@ -6,10 +6,11 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"regexp"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/kinorai/omnifeed/internal/domain"
 	"github.com/kinorai/omnifeed/internal/httpx"
@@ -338,23 +339,43 @@ func TestPDFURLServingHTMLFallsBackToBrowser(t *testing.T) {
 	}
 }
 
-func TestChallengeTitleMatchesOnlyChallenges(t *testing.T) {
-	// The constant is a JS regex literal; its body and flags are valid RE2.
-	body := strings.TrimSuffix(strings.TrimPrefix(challengeTitle, "/"), "/i")
-	re := regexp.MustCompile("(?i)" + body)
-	for title, want := range map[string]bool{
-		"Just a moment...":                 true,
-		"Un instant…":                      true,
-		"Einen Moment…":                    true,
-		"Attention Required! | Cloudflare": true,
-		"Please Wait... | Cloudflare":      true,
-		"Please wait for our autumn sale":  false,
-		"Un instant de bonheur - Le Monde": false,
-		"Just a moment of silence":         false,
-	} {
-		if re.MatchString(title) != want {
-			t.Errorf("challengeTitle(%q) = %v, want %v", title, !want, want)
+// crawl4ai 0.9.5 refuses a JavaScript wait_for from a request body with HTTP
+// 400 (GHSA-qj46-wp7m-rgj8), so the challenge wait must go out as a CSS
+// selector, bounded by ChallengeWait, and never on the PDF strategy.
+func TestChallengeWaitIsACSSSelector(t *testing.T) {
+	var mu sync.Mutex
+	var wait, timeout any
+	e, _ := fakeCrawl(t, func(_ int32, req map[string]any) map[string]any {
+		params := req["crawler_config"].(map[string]any)["params"].(map[string]any)
+		mu.Lock()
+		defer mu.Unlock()
+		wait, timeout = params["wait_for"], params["wait_for_timeout"]
+		return page(200, "# Page\n"+realProse)
+	})
+	crawl := func(path string) (any, any) {
+		t.Helper()
+		if _, err := e.Crawl(context.Background(), deadTargetURL+path, domain.EngineOptions{}); err != nil {
+			t.Fatalf("Crawl(%s) = %v", path, err)
 		}
+		mu.Lock()
+		defer mu.Unlock()
+		return wait, timeout
+	}
+
+	e.challengeWait = 8 * time.Second
+	w, to := crawl("/x")
+	if s, _ := w.(string); !strings.HasPrefix(s, "css:") || strings.Contains(s, "=>") || strings.Contains(s, "function") {
+		t.Errorf("wait_for = %v, want a css: selector (0.9.5 refuses JavaScript)", w)
+	}
+	if to != float64(8000) {
+		t.Errorf("wait_for_timeout = %v, want 8000", to)
+	}
+	if w, _ := crawl("/paper.pdf"); w != nil {
+		t.Errorf("PDF strategy wait_for = %v, want none", w)
+	}
+	e.challengeWait = 0
+	if w, _ := crawl("/x"); w != nil {
+		t.Errorf("ChallengeWait 0: wait_for = %v, want none", w)
 	}
 }
 
