@@ -50,6 +50,13 @@ repos:
         types_or: [go]
         pass_filenames: false
 
+      - id: go-fix
+        name: make fix-check
+        entry: make fix-check
+        language: system
+        types_or: [go]
+        pass_filenames: false
+
       - id: golangci-lint
         name: make lint
         entry: make lint
