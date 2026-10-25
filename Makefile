@@ -1,6 +1,12 @@
 .DEFAULT_GOAL := help
 
 GO            := go
+# Go-built dev tools are pinned in tools/go.mod (`tool` directives), a module
+# of its own so their dependencies never enter omnifeed's go.mod or go.sum.
+# govulncheck only: gomarkdoc v1.1.0 depends on go-git v5.3.0 and viper 1.7,
+# whose CVEs Trivy reports on any go.mod in the repo; it stays a pinned
+# `go install` (here and in docs.yml).
+GOTOOL        := $(GO) tool -modfile=tools/go.mod
 GOFLAGS       := -trimpath
 BIN_DIR       := bin
 BINARY        := $(BIN_DIR)/omnifeed
@@ -87,12 +93,17 @@ vet: ## Run go vet
 tidy: ## Run go mod tidy (mutates go.mod / go.sum)
 	$(GO) mod tidy
 
+.PHONY: tools-tidy
+tools-tidy: ## Tidy tools/go.mod after bumping a tool (go get -modfile=tools/go.mod -tool <pkg>@<v>)
+	cd tools && $(GO) mod tidy
+
 .PHONY: tidy-check
-tidy-check: ## Fail if go.mod or go.sum would change after `go mod tidy` (non-mutating)
+tidy-check: ## Fail if go.mod/go.sum or tools/go.mod/go.sum would change after `go mod tidy` (non-mutating)
 	@$(GO) mod tidy
-	@if ! git diff --quiet go.mod go.sum; then \
-	  echo "go.mod or go.sum are not tidy. Run 'make tidy' and commit the diff:"; \
-	  git --no-pager diff go.mod go.sum; \
+	@cd tools && $(GO) mod tidy
+	@if ! git diff --quiet go.mod go.sum tools/go.mod tools/go.sum; then \
+	  echo "go.mod or go.sum are not tidy. Run 'make tidy tools-tidy' and commit the diff:"; \
+	  git --no-pager diff go.mod go.sum tools/go.mod tools/go.sum; \
 	  exit 1; \
 	fi
 
@@ -150,7 +161,7 @@ release-check: ## Validate .goreleaser.yaml without releasing
 ## --- Tools ---
 
 .PHONY: install-tools
-install-tools: ## Install development tools (golangci-lint, govulncheck, gomarkdoc)
+install-tools: ## Install the tools tools/go.mod does not pin (golangci-lint, goreleaser, gomarkdoc)
 	# .golangci.yml declares `version: "2"`, so the v2 module path is required.
 	# The unversioned path resolves to the last v1 release, which then refuses
 	# the config with "you are using a configuration file for golangci-lint v2
@@ -158,9 +169,12 @@ install-tools: ## Install development tools (golangci-lint, govulncheck, gomarkd
 	# Upstream does not recommend `go install` at all (the binary depends on the
 	# local Go version); CI uses golangci-lint-action, which downloads a build.
 	$(GO) install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
-	$(GO) install golang.org/x/vuln/cmd/govulncheck@latest
-	$(GO) install github.com/princjef/gomarkdoc/cmd/gomarkdoc@latest
+	# goreleaser stays a binary too: CI runs goreleaser-action, and its module
+	# graph (every cloud SDK it publishes to) would dwarf the rest of tools/.
 	$(GO) install github.com/goreleaser/goreleaser/v2@latest
+	# Same version as GOMARKDOC_VERSION in .github/workflows/docs.yml.
+	$(GO) install github.com/princjef/gomarkdoc/cmd/gomarkdoc@v1.1.0
+	# govulncheck needs no install: `go tool` builds it from tools/go.mod.
 
 .PHONY: pre-commit-install
 pre-commit-install: ## Install git hooks (gofmt/vet/golangci-lint) — run once per clone
@@ -173,7 +187,7 @@ pre-commit-run: ## Run all pre-commit hooks against every file (CI parity check)
 
 .PHONY: govulncheck
 govulncheck: ## Scan for known vulnerabilities
-	govulncheck ./...
+	$(GOTOOL) govulncheck ./...
 
 ## --- Cleanup ---
 
