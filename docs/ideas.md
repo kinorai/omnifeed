@@ -13,6 +13,35 @@ ref, nobody can recover the code.
 
 ---
 
+## Recognize the challenge wait's timeout by its selector
+
+**Status.** To do, noted 2026-10-25 (review of the crawl4ai 0.9.5 upgrade).
+**Code.** None yet. Today's check is `challengeTimeoutPattern` in
+`internal/engine/crawl4ai/verdict.go`.
+
+### The idea
+
+When crawl4ai's `wait_for` runs out, the generic engine reads it as the challenge wait
+(`challengeWaitFor`), marks the error `errChallengeWaitTimeout`, crawls once more without
+the wait, and lets the returned page decide whether it is a Cloudflare challenge
+(`captcha`). It recognizes the timeout by crawl4ai's "Wait condition failed: Timeout"
+alone. That holds only while `challengeWaitFor` is the only `wait_for` the engine sends.
+crawl4ai 0.9.5 quotes the selector in the message ("Timeout after 8000ms waiting for
+selector ':root:not(:has(script[src*=\"/cdn-cgi/challenge-platform/\"]..."), so the check
+can match the selector's text instead.
+
+### Evidence
+
+- For: a second `wait_for` (a caller's, or a per-site one) would otherwise read as the
+  challenge wait, crawl the page again and skip the retry under crawl4ai's default identity.
+- Against: the message is crawl4ai's free text (`smart_wait` in
+  `async_crawler_strategy.py`), and nothing sends a second `wait_for` today.
+
+### What would justify doing it
+
+Any change that sends another `wait_for`, or a crawl4ai release that rewords the message.
+Do it in the same change.
+
 ## Fetch Reddit's `.json` from inside a logged-out browser
 
 **Status.** Shipped as the only Reddit path. Removed 2026-10-15.
