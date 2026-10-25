@@ -267,9 +267,42 @@ type crawlRequest struct {
 // visible element, not <html> itself, which has zero height on a page whose
 // content is all fixed or absolute. `:root`, not `html`: a URL that renders as
 // a bare SVG document has no <html>, and `html` would hold it for the whole
-// wait and then fail it as a challenge. A timeout means the challenge never
-// cleared: see challengeTimeoutPattern.
+// wait and then fail it as a challenge. A timeout doesn't mean the challenge
+// never cleared: a page with no visible element (an empty 200, a slow SPA, an
+// XML feed) times out too. Crawl crawls such a URL again without the wait and
+// lets cloudflareChallenge read the page.
 const challengeWaitFor = `css::root:not(:has(script[src*="/cdn-cgi/challenge-platform/"][src*="/orchestrate/"])) :visible`
+
+// cloudflareChallengeMarker is the Marker of a captcha that cloudflareChallenge
+// found.
+const cloudflareChallengeMarker = "cloudflare challenge"
+
+var (
+	// challengeScript is the solver a Cloudflare challenge page loads, the
+	// script challengeWaitFor waits to see gone.
+	challengeScript = regexp.MustCompile(`(?i)/cdn-cgi/challenge-platform/[^"'\s>]*/orchestrate/`)
+	// challengeTitle is the whole <title> of a Cloudflare challenge: "Just a
+	// moment..." and its localized forms, and the older "Attention Required! |
+	// Cloudflare" / "Please Wait... | Cloudflare". Anchored to the whole title,
+	// so a page titled "Just a moment of silence" is not one.
+	challengeTitle = regexp.MustCompile(`(?i)<title[^>]*>\s*(?:just a moment|un instant|einen moment|un momento|um momento|attention required! \| cloudflare|please wait\.\.\. \| cloudflare)\s*(?:\.\.\.|…)?\s*</title>`) //nolint:misspell // Spanish/Portuguese "un/um momento", not "memento"
+)
+
+// cloudflareChallenge reports a rendered page that is still Cloudflare's
+// challenge: it loads the challenge solver or carries a challenge title. Both
+// sit in the <head>, near the top.
+func cloudflareChallenge(html string) bool {
+	if len(html) > 64<<10 {
+		html = html[:64<<10]
+	}
+	return challengeScript.MatchString(html) || challengeTitle.MatchString(html)
+}
+
+// isCloudflareChallenge reports a captcha that cloudflareChallenge found.
+func isCloudflareChallenge(err error) bool {
+	var fe *domain.FetchError
+	return errors.As(err, &fe) && fe.Kind == domain.KindCaptcha && fe.Marker == cloudflareChallengeMarker
+}
 
 type crawlResponse struct {
 	Success bool          `json:"success"`
@@ -281,6 +314,9 @@ type crawlResult struct {
 	URL         string        `json:"url"`
 	Markdown    crawlMarkdown `json:"markdown"`
 	CleanedHTML string        `json:"cleaned_html"`
+	// HTML is the page as rendered, <head> and scripts included, which
+	// cleaned_html drops; read only for cloudflareChallenge.
+	HTML string `json:"html"`
 	// Success is a pointer so a result that omits the field (older fixtures,
 	// pre-0.9.3 shapes) is not read as a failure — only an explicit false is.
 	Success       *bool  `json:"success"`
@@ -345,6 +381,17 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, opts domain.EngineOpt
 
 	base := crawlOpts{excludedSelector: e.excludedSelector, scanFullPage: scan, rung: "base"}
 	doc, err := step(base)
+	// The challenge wait ran out. The page still ran Cloudflare's challenge, or
+	// it never showed a visible element (an empty 200, a slow SPA, an XML feed),
+	// and crawl4ai returns no page with that error to tell which. Crawl once
+	// more without the wait: the page that comes back is classified as any
+	// other (a challenge is a captcha, an empty page can still be rescued), and
+	// the rest of the ladder skips the wait too.
+	if err != nil && errors.Is(err, errChallengeWaitTimeout) && ctx.Err() == nil {
+		base.noWait = true
+		base.rung = "no_wait"
+		doc, err = step(base)
+	}
 	// Playwright's "page is navigating" race: a JS challenge or client redirect
 	// reloaded the page between load and extraction. One retry that waits for
 	// the network to settle is the upstream-recommended remedy.
@@ -356,8 +403,10 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, opts domain.EngineOpt
 	}
 	// A bot wall on the modern identity: retry once on crawl4ai's default
 	// one (see browserParams). Only blocks qualify — a 404 or a thin page
-	// would come back the same.
-	if err != nil && e.userAgent != "" && isBlock(err) && ctx.Err() == nil {
+	// would come back the same. A Cloudflare challenge doesn't either:
+	// Cloudflare rejects that identity, so the retry would only add a second
+	// challenge wait.
+	if err != nil && e.userAgent != "" && isBlock(err) && !isCloudflareChallenge(err) && ctx.Err() == nil {
 		alt := base
 		alt.altFingerprint = true
 		alt.rung = "alt_fingerprint"
@@ -366,7 +415,7 @@ func (e *Engine) Crawl(ctx context.Context, rawURL string, opts domain.EngineOpt
 		}
 	}
 	if err != nil && e.excludedSelector != "" && isThinContent(err) && ctx.Err() == nil {
-		doc, err = step(crawlOpts{scanFullPage: scan, rung: "no_selector"})
+		doc, err = step(crawlOpts{scanFullPage: scan, noWait: base.noWait, rung: "no_selector"})
 	}
 	// Last resort: crawl4ai's content gate rejects a body it cannot render as a
 	// page — which is every JSON/plain-text API response served from a path with
@@ -577,6 +626,7 @@ type crawlOpts struct {
 	waitUntil        string // "" = the engine's configured wait_until
 	pdf              bool   // browserless PDF strategy instead of a page render
 	altFingerprint   bool   // crawl4ai's default user agent (see browserParams)
+	noWait           bool   // no challenge wait: it already ran out on this URL
 	rung             string // which step of Crawl's ladder this is; the trace span names it
 }
 
@@ -695,7 +745,7 @@ func (e *Engine) crawlRung(ctx context.Context, rawURL string, o crawlOpts) (dom
 			"scraping_strategy": map[string]any{"type": "PDFContentScrapingStrategy", "params": map[string]any{}},
 		}
 	}
-	if e.challengeWait > 0 && !pdf {
+	if e.challengeWait > 0 && !pdf && !o.noWait {
 		params["wait_for"] = challengeWaitFor
 		params["wait_for_timeout"] = int(e.challengeWait / time.Millisecond)
 	}
@@ -764,6 +814,11 @@ func (e *Engine) crawlRung(ctx context.Context, rawURL string, o crawlOpts) (dom
 	}
 
 	result := cr.Results[0]
+	// Still Cloudflare's challenge, whether crawl4ai's own detector failed the
+	// result or not (see cloudflareChallenge).
+	if cloudflareChallenge(result.HTML) {
+		return domain.Document{}, &domain.FetchError{Kind: domain.KindCaptcha, StatusCode: result.StatusCode, Marker: cloudflareChallengeMarker}
+	}
 	// crawl4ai 0.9.3+ (PR #2134) answers HTTP 200 with a top-level
 	// success:true even when every URL failed: the verdict lives in the
 	// result's own success/error_message. Without this check a blocked page's
@@ -945,8 +1000,16 @@ func verdictError(msg string, pageStatus int) *domain.FetchError {
 	if detail == "" {
 		detail = "no error message"
 	}
-	return &domain.FetchError{Kind: kind, StatusCode: pageStatus, Err: fmt.Errorf("crawl failed: %s", detail)}
+	err := fmt.Errorf("crawl failed: %s", detail)
+	if challengeTimeoutPattern.MatchString(msg) {
+		err = fmt.Errorf("crawl failed: %w: %s", errChallengeWaitTimeout, detail)
+	}
+	return &domain.FetchError{Kind: kind, StatusCode: pageStatus, Err: err}
 }
+
+// errChallengeWaitTimeout marks a crawl that failed because challengeWaitFor
+// ran out (see Crawl's no_wait rung).
+var errChallengeWaitTimeout = errors.New("challenge wait ran out")
 
 func truncate(s string, n int) string {
 	if len(s) <= n {
