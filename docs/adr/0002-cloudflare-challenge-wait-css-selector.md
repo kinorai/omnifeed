@@ -9,8 +9,9 @@
 ## Context
 
 A Cloudflare challenge page ("Just a moment...") often clears by itself after a few
-seconds, then navigates to the real page. So every non-PDF `/crawl` sent crawl4ai a
-`wait_for` that held extraction until the challenge was gone. The wait was JavaScript:
+seconds, then navigates to the real page. So with `OMNIFEED_CRAWL4AI_CHALLENGE_WAIT`
+set, every non-PDF `/crawl` sent crawl4ai a `wait_for` that held extraction until the
+challenge was gone. The wait was JavaScript:
 
 ```
 js:() => !/^\s*(just a moment|un instant|...)\s*$/i.test(document.title)
@@ -62,21 +63,23 @@ css::root:not(:has(script[src*="/cdn-cgi/challenge-platform/"][src*="/orchestrat
 - **A wait that runs out is not a verdict.** A page with no visible element (an empty
   200, a slow SPA, an extensionless XML feed) runs it out too, and crawl4ai returns no
   page with "Wait condition failed: Timeout". So the engine crawls once more without the
-  wait (the `no_wait` rung), and that page decides. Only a page that still loads the
+  wait (the `no_wait` rung), and that page decides. A page that still loads the
   `/orchestrate/` solver or carries a challenge title ("Just a moment...") is a
-  `captcha`. Anything else goes down the rest of the ladder without the wait, so an XML
+  `captcha` (crawl4ai's own error text can still read as one, as before). Anything
+  else goes down the rest of the ladder without the wait, so an XML
   feed still reaches the direct-GET rescue. The engine recognizes the timeout by
   crawl4ai's message alone, which holds while this is its only `wait_for`
   (`docs/ideas.md` has the follow-up).
-- **A Cloudflare challenge skips the retry under crawl4ai's default identity.**
-  Cloudflare rejects that identity, so the retry would only add a second wait. Other
-  walls (Akamai, AWS WAF) keep it.
+- **A Cloudflare challenge found in the page skips the retry under crawl4ai's default
+  identity.** Cloudflare rejects that identity, so the retry would only add a second
+  wait. Other walls (Akamai, AWS WAF) keep it.
 - **It also catches challenges with a site's own title** ("Security | Glassdoor"),
   which the title test missed.
 
 ### Rollout order
 
-The selector works on crawl4ai 0.9.4 as well as 0.9.5, so:
+The selector works on crawl4ai 0.9.4 as well as 0.9.5 (measured on both; older images
+were not tested, and the quickstart stacks pinned 0.9.2 until PR #72), so:
 
 1. Release omnifeed with the selector, on the crawl4ai you run today.
 2. Then move crawl4ai to 0.9.5.
@@ -99,7 +102,7 @@ image (`DefaultCrawl4AIUserAgent` in `internal/config/config.go`).
 | Turn on crawl4ai's JavaScript hooks (`CRAWL4AI_HOOKS_ENABLED`) | A far bigger surface than one wait: any caller could run code in the browser |
 | Set `crawler.base_config.wait_for` in the crawl4ai server config | It works and is trusted, but every consumer of that crawl4ai server gets the wait, and a request cannot turn it off |
 | Detect the challenge in the returned page and crawl again, instead of waiting | Each retry starts a fresh challenge, so it rarely clears, and each try costs a full page load. The `no_wait` rung crawls again only to read the page, not to clear the challenge |
-| Stay on crawl4ai 0.9.4 | Keeps the token-holder-runs-JavaScript hole open |
+| Stay on crawl4ai 0.9.4 | Misses the other Docker-server fixes in 0.9.5 (six advisories in all). The JavaScript hole itself matters less here: omnifeed's stacks turn on `/execute_js` for the Reddit engine (`CRAWL4AI_EXECUTE_JS_ENABLED`), so its token holder can already run JavaScript in a page. It matters to a crawl4ai that leaves `/execute_js` off |
 
 ## Measurements
 
