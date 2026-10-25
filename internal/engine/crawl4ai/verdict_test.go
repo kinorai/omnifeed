@@ -77,9 +77,10 @@ func TestCrawl094ResultFailureFamilies(t *testing.T) {
 		{"timeout", "Failed on navigating ACS-GOTO:\nPage.goto: Timeout 60000ms exceeded.", 0, domain.KindTimeout, "Timeout 60000ms"},
 		{"net err timed out", "Failed on navigating ACS-GOTO: net::ERR_TIMED_OUT at https://example.com/page", 0, domain.KindTimeout, "ERR_TIMED_OUT"},
 		{"time limit", "Crawl exceeded the time limit", 0, domain.KindTimeout, "time limit"},
-		// crawl4ai 0.9.5's message when challengeWaitFor runs out: the page was
-		// still a challenge, so it is a wall, not a slow page.
-		{"challenge wait ran out", "Unexpected error in _crawl_web at line 1025 in _crawl_web (../usr/local/lib/python3.12/site-packages/crawl4ai/async_crawler_strategy.py):\nError: Wait condition failed: Timeout after 8000ms waiting for selector ':root:not(:has(script[src*=\"/cdn-cgi/challenge-platform/\"][src*=\"/orchestrate/\"])) :visibl", 0, domain.KindCaptcha, "Wait condition failed"},
+		// crawl4ai 0.9.5's message when challengeWaitFor runs out. It says
+		// nothing of the page (an empty page times out too), so it is a
+		// timeout; Crawl's no_wait rung reads the page.
+		{"challenge wait ran out", "Unexpected error in _crawl_web at line 1025 in _crawl_web (../usr/local/lib/python3.12/site-packages/crawl4ai/async_crawler_strategy.py):\nError: Wait condition failed: Timeout after 8000ms waiting for selector ':root:not(:has(script[src*=\"/cdn-cgi/challenge-platform/\"][src*=\"/orchestrate/\"])) :visibl", 0, domain.KindTimeout, "Wait condition failed"},
 		{"structural content-gate", "Blocked by anti-bot protection: Structural: minimal_text on small page (224 bytes)", 200, domain.KindThinContent, "minimal_text"},
 		{"http 5xx", "Failed on navigating ACS-GOTO: HTTP 503 Service Unavailable", 503, domain.KindUpstreamError, "HTTP 503"},
 		{"net err other", "Failed on navigating ACS-GOTO: net::ERR_NAME_NOT_RESOLVED", 0, domain.KindUpstreamError, "ERR_NAME_NOT_RESOLVED"},

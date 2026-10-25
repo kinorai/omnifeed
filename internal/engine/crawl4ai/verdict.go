@@ -25,8 +25,9 @@ var (
 	status403Pattern = regexp.MustCompile(`(?i)\b(?:http|status(?: code)?)\s*:?\s*403\b|\b403 forbidden\b`)
 	status429Pattern = regexp.MustCompile(`(?i)\b(?:http|status(?: code)?)\s*:?\s*429\b|\btoo many requests\b|\brate[- ]limit`)
 	// challengeTimeoutPattern is crawl4ai's message when wait_for times out.
-	// challengeWaitFor is the only wait_for this engine sends, so the page was
-	// still a challenge when the wait ran out.
+	// challengeWaitFor is the only wait_for this engine sends. The wait running
+	// out says nothing of the page, so it stays a timeout, marked with
+	// errChallengeWaitTimeout for Crawl's no_wait rung.
 	challengeTimeoutPattern = regexp.MustCompile(`(?i)wait condition failed:\s*timeout`)
 	timeoutPattern          = regexp.MustCompile(`(?i)exceeded the time limit|\btime(?:d)?[ -]?out\b|net::err_timed_out|net::err_connection_timed_out`)
 	captchaPattern          = regexp.MustCompile(`(?i)captcha|just a moment|turnstile|verify(?:ing)? (?:you are|you're) (?:a )?human`)
@@ -43,14 +44,14 @@ var (
 //  1. structural content-gate (minimal_text, no <body>, …) → thin_content —
 //     checked first because crawl4ai stamps it "Blocked by anti-bot
 //     protection: Structural: …", which would otherwise read as a wall;
-//  2. the challenge wait ran out (challengeTimeoutPattern) → captcha;
-//  3. time limit / timeout / net::ERR_TIMED_OUT → timeout;
-//  4. CAPTCHA / Cloudflare "just a moment" / Turnstile → captcha (a bare
+//  2. time limit / timeout / net::ERR_TIMED_OUT, the challenge wait running
+//     out included → timeout;
+//  3. CAPTCHA / Cloudflare "just a moment" / Turnstile → captcha (a bare
 //     "Cloudflare JS challenge" stays bot_block, as on the 5xx path);
-//  5. HTTP 429 / too many requests → http_429;
-//  6. HTTP 403 / forbidden → http_403;
-//  7. anti-bot / blocked / named WAF vendor → bot_block;
-//  8. anything else (HTTP 5xx, net::ERR_*, crashes) → upstream_error.
+//  4. HTTP 429 / too many requests → http_429;
+//  5. HTTP 403 / forbidden → http_403;
+//  6. anti-bot / blocked / named WAF vendor → bot_block;
+//  7. anything else (HTTP 5xx, net::ERR_*, crashes) → upstream_error.
 //
 // pageStatus is the result's own status_code (0 when unknown): it breaks the
 // tie when the message names nothing but the page itself answered 403/429.
@@ -59,8 +60,6 @@ func classifyVerdict(msg string, pageStatus int) domain.FailureKind {
 	switch {
 	case antibot.IsStructuralBlock(msg):
 		return domain.KindThinContent
-	case challengeTimeoutPattern.MatchString(msg):
-		return domain.KindCaptcha
 	case timeoutPattern.MatchString(msg):
 		return domain.KindTimeout
 	case captchaPattern.MatchString(msg):
