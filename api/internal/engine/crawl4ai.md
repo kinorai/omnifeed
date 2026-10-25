@@ -95,8 +95,8 @@ type Config struct {
     Stealth bool
     // ChallengeWait waits up to this long for an interstitial bot challenge
     // ("Just a moment…") to clear by itself before extraction; 0 disables it
-    // (OMNIFEED_CRAWL4AI_CHALLENGE_WAIT). Pages without a challenge title pay
-    // nothing: the wait_for predicate is true on the first poll.
+    // (OMNIFEED_CRAWL4AI_CHALLENGE_WAIT). Pages without a challenge pay
+    // nothing: challengeWaitFor matches on the first poll.
     ChallengeWait time.Duration
     // MinProseChars rejects a rendered page whose human-readable text (link
     // targets, URLs and markdown syntax removed) is shorter than this, as
