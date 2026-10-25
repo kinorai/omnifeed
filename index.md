@@ -30,3 +30,10 @@ Install and quick start are in the [README](https://github.com/kinorai/omnifeed#
 - [ADR 0001: Reading Reddit after the logged-out JSON shutdown](adr/0001-reddit-access.md):
   why the Reddit engine uses a `client_id → session → browser` method chain, with every
   option measured or rejected, and how to refresh the session cookie.
+- [ADR 0002: Waiting out Cloudflare challenges with a CSS selector](adr/0002-cloudflare-challenge-wait-css-selector.md):
+  why the challenge wait is a selector since crawl4ai 0.9.5, the options rejected, and
+  the order to roll it out in.
+- [ADR 0003: `go fix` modernizers are enforced in CI](adr/0003-go-fix-modernizers-in-ci.md):
+  `make fix-check`, and what a new Go release means for it.
+- [ADR 0004: Releases are signed keylessly with cosign](adr/0004-keyless-cosign-release-signing.md):
+  what is signed, with which identity, and how to verify it.
