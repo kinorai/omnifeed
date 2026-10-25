@@ -5,7 +5,7 @@
 ```bash
 git clone https://github.com/kinorai/omnifeed.git
 cd omnifeed
-make install-tools        # golangci-lint, govulncheck, gomarkdoc
+make install-tools        # golangci-lint, goreleaser, gomarkdoc (govulncheck: tools/go.mod)
 make pre-commit-install   # git hooks that mirror CI, once per clone
 make check                # vet + fix-check + lint + test, the targets CI runs
 ```
