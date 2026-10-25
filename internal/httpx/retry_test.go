@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/kinorai/omnifeed/internal/domain"
@@ -343,45 +344,50 @@ func TestDoRetryReportsRetryAfter(t *testing.T) {
 			maxAttempts: 3, veto: func(int, string) bool { return false }, wantCalls: 1, wantWait: 10 * time.Second},
 	}
 
+	// The retry honors Retry-After (capped at MaxDelay, 4s), so the 3-attempt
+	// case sleeps for seconds. synctest's fake clock skips those sleeps; the
+	// transport is in-memory because a real socket never counts as durably
+	// blocked, so the bubble's clock could not advance past it.
+	const rawURL = "http://upstream.test/item"
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				if tt.retryAfter != "" {
-					w.Header().Set("Retry-After", tt.retryAfter)
+			synctest.Test(t, func(t *testing.T) {
+				var calls []call
+				c := New(&http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+					h := http.Header{}
+					if tt.retryAfter != "" {
+						h.Set("Retry-After", tt.retryAfter)
+					}
+					return &http.Response{StatusCode: tt.status, Header: h, Body: http.NoBody, Request: r}, nil
+				})}).WithUpstream("hackernews", "api")
+				c.OnRetryAfter = func(upstream, rawURL string, wait time.Duration) {
+					calls = append(calls, call{upstream, rawURL, wait})
 				}
-				w.WriteHeader(tt.status)
-			}))
-			defer srv.Close()
+				resp, err := c.DoRetry(context.Background(), http.MethodGet, rawURL, nil, nil,
+					RetryConfig{MaxAttempts: tt.maxAttempts, BaseDelay: time.Microsecond,
+						RetryableStatus: tt.veto})
+				if resp != nil {
+					_ = resp.Body.Close()
+				}
+				if err == nil {
+					t.Fatalf("DoRetry() error = nil, want a %d failure", tt.status)
+				}
 
-			var calls []call
-			c := New(nil).WithUpstream("hackernews", "api")
-			c.OnRetryAfter = func(upstream, rawURL string, wait time.Duration) {
-				calls = append(calls, call{upstream, rawURL, wait})
-			}
-			resp, err := c.DoRetry(context.Background(), http.MethodGet, srv.URL, nil, nil,
-				RetryConfig{MaxAttempts: tt.maxAttempts, BaseDelay: time.Microsecond,
-					RetryableStatus: tt.veto})
-			if resp != nil {
-				_ = resp.Body.Close()
-			}
-			if err == nil {
-				t.Fatalf("DoRetry() error = nil, want a %d failure", tt.status)
-			}
-
-			if len(calls) != tt.wantCalls {
-				t.Fatalf("OnRetryAfter fired %d times, want %d (%v)", len(calls), tt.wantCalls, calls)
-			}
-			for _, got := range calls {
-				if got.wait != tt.wantWait {
-					t.Fatalf("wait = %v, want %v", got.wait, tt.wantWait)
+				if len(calls) != tt.wantCalls {
+					t.Fatalf("OnRetryAfter fired %d times, want %d (%v)", len(calls), tt.wantCalls, calls)
 				}
-				if got.upstream != "hackernews" {
-					t.Fatalf("upstream = %q, want hackernews", got.upstream)
+				for _, got := range calls {
+					if got.wait != tt.wantWait {
+						t.Fatalf("wait = %v, want %v", got.wait, tt.wantWait)
+					}
+					if got.upstream != "hackernews" {
+						t.Fatalf("upstream = %q, want hackernews", got.upstream)
+					}
+					if got.rawURL != rawURL {
+						t.Fatalf("rawURL = %q, want %q", got.rawURL, rawURL)
+					}
 				}
-				if got.rawURL != srv.URL {
-					t.Fatalf("rawURL = %q, want %q", got.rawURL, srv.URL)
-				}
-			}
+			})
 		})
 	}
 }
