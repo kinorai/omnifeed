@@ -59,10 +59,18 @@ css::root:not(:has(script[src*="/cdn-cgi/challenge-platform/"][src*="/orchestrat
   fixed or absolute) waits out the whole timeout. Reproduced before the fix.
 - **`:root`, not `html`:** a URL that renders as a bare SVG document has no `<html>`.
   With `html`, it would wait out the timeout and then fail as a challenge.
-- **A wait that runs out is a `captcha`**, not a `timeout`. This engine sends no other
-  `wait_for`, so crawl4ai's "Wait condition failed: Timeout" means the page was still a
-  challenge. As a `captcha`, the page gets the block retry under crawl4ai's default
-  identity.
+- **A wait that runs out is not a verdict.** A page with no visible element (an empty
+  200, a slow SPA, an extensionless XML feed) runs it out too, and crawl4ai returns no
+  page with "Wait condition failed: Timeout". So the engine crawls once more without the
+  wait (the `no_wait` rung), and that page decides. Only a page that still loads the
+  `/orchestrate/` solver or carries a challenge title ("Just a moment...") is a
+  `captcha`. Anything else goes down the rest of the ladder without the wait, so an XML
+  feed still reaches the direct-GET rescue. The engine recognizes the timeout by
+  crawl4ai's message alone, which holds while this is its only `wait_for`
+  (`docs/ideas.md` has the follow-up).
+- **A Cloudflare challenge skips the retry under crawl4ai's default identity.**
+  Cloudflare rejects that identity, so the retry would only add a second wait. Other
+  walls (Akamai, AWS WAF) keep it.
 - **It also catches challenges with a site's own title** ("Security | Glassdoor"),
   which the title test missed.
 
@@ -90,7 +98,7 @@ image (`DefaultCrawl4AIUserAgent` in `internal/config/config.go`).
 |---|---|
 | Turn on crawl4ai's JavaScript hooks (`CRAWL4AI_HOOKS_ENABLED`) | A far bigger surface than one wait: any caller could run code in the browser |
 | Set `crawler.base_config.wait_for` in the crawl4ai server config | It works and is trusted, but every consumer of that crawl4ai server gets the wait, and a request cannot turn it off |
-| Detect the challenge in the returned page and crawl again | Each retry starts a fresh challenge, so it rarely clears, and each try costs a full page load |
+| Detect the challenge in the returned page and crawl again, instead of waiting | Each retry starts a fresh challenge, so it rarely clears, and each try costs a full page load. The `no_wait` rung crawls again only to read the page, not to clear the challenge |
 | Stay on crawl4ai 0.9.4 | Keeps the token-holder-runs-JavaScript hole open |
 
 ## Measurements
@@ -103,7 +111,7 @@ On 2026-10-25, against `unclecode/crawl4ai:0.9.5` and `0.9.4`, with the repo's
 | The old JavaScript wait | HTTP 400 on 0.9.5 |
 | go.dev, Wikipedia, Hacker News, crunchbase (Cloudflare with `jsd`), upwork, indeed, glassdoor | success, the same latency as with no wait |
 | A simulated challenge that navigates away after 2.5 s | waits, then returns the real page (about 3 s) |
-| A simulated challenge that never clears | `Wait condition failed: Timeout after ...`, classified `captcha` |
+| A simulated challenge that never clears | `Wait condition failed: Timeout after ...`. The `no_wait` rung and its `captcha` verdict came after this run, from review; unit tests cover them, not a live run |
 | A page with a zero-height `<html>` | success (it timed out without `:visible`) |
 
 ## Consequences
@@ -114,6 +122,10 @@ On 2026-10-25, against `unclecode/crawl4ai:0.9.5` and `0.9.4`, with the repo's
   `/orchestrate/` path, the selector matches at once on a challenge page, and the page
   comes back as a challenge without the wait: blocked, as it was before there was any
   wait. Other vendors' challenges were never covered by this wait.
+- **A challenge that never clears costs the wait plus one crawl without it**, and an
+  empty page or an XML feed costs the same before it is handled as usual. Before the
+  review fix, both cost two waits (the default-identity retry) and the empty page ended
+  as a `captcha`.
 - **The user agent must follow crawl4ai's Chromium.** Each crawl4ai bump that changes
   the bundled Chromium needs a matching bump of `DefaultCrawl4AIUserAgent`. Between
   step 1 and step 2 above, the default claims Chrome 156 on 0.9.4's Chromium 153. A
