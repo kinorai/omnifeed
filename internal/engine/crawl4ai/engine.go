@@ -279,8 +279,10 @@ const cloudflareChallengeMarker = "cloudflare challenge"
 
 var (
 	// challengeScript is the solver a Cloudflare challenge page loads, the
-	// script challengeWaitFor waits to see gone.
-	challengeScript = regexp.MustCompile(`(?i)/cdn-cgi/challenge-platform/[^"'\s>]*/orchestrate/`)
+	// script challengeWaitFor waits to see gone. Like the selector, it
+	// matches a <script src> only, so a page that quotes the path in its text
+	// or in an inline script (an article about Cloudflare) is not a challenge.
+	challengeScript = regexp.MustCompile(`(?i)<script\b[^>]*\ssrc\s*=\s*["']?[^"'\s>]*/cdn-cgi/challenge-platform/[^"'\s>]*/orchestrate/`)
 	// challengeTitle is the whole <title> of a Cloudflare challenge: "Just a
 	// moment..." and its localized forms, and the older "Attention Required! |
 	// Cloudflare" / "Please Wait... | Cloudflare". Anchored to the whole title,
@@ -814,6 +816,11 @@ func (e *Engine) crawlRung(ctx context.Context, rawURL string, o crawlOpts) (dom
 	}
 
 	result := cr.Results[0]
+	// The SSRF guard first: a redirect into a private address must stay final
+	// (NoFallback), whatever the page it landed on looks like.
+	if err := e.checkFinalURL(ctx, rawURL, result.RedirectedURL); err != nil {
+		return domain.Document{}, err
+	}
 	// Still Cloudflare's challenge, whether crawl4ai's own detector failed the
 	// result or not (see cloudflareChallenge).
 	if cloudflareChallenge(result.HTML) {
@@ -825,9 +832,6 @@ func (e *Engine) crawlRung(ctx context.Context, rawURL string, o crawlOpts) (dom
 	// own markdown would be served as content.
 	if result.Success != nil && !*result.Success {
 		return domain.Document{}, verdictError(result.ErrorMessage, result.StatusCode)
-	}
-	if err := e.checkFinalURL(ctx, rawURL, result.RedirectedURL); err != nil {
-		return domain.Document{}, err
 	}
 	// Whitespace-only counts as empty here: a fit_markdown of "\n" must fall
 	// back to raw_markdown, not win the pick and defeat the fallback chain.

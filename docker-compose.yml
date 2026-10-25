@@ -53,9 +53,9 @@ services:
       CRAWL4AI_HOOKS_ENABLED: "false"
       # 0.9.5 logs a Crawl4AI Cloud banner at startup and on blocked crawls.
       CRAWL4AI_NO_CLOUD_NOTICE: "1"
-      # MAX_CONCURRENT_TASKS was here and did nothing: crawl4ai 0.9.2 reads it
-      # nowhere. The real concurrency bound is crawler.pool.max_pages, set in
-      # the config below.
+      # MAX_CONCURRENT_TASKS was here and did nothing: crawl4ai reads it
+      # nowhere (0.9.2, checked again on 0.9.5). The real concurrency bound is
+      # crawler.pool.max_pages, set in the config below.
     volumes:
       # Partial config, deep-merged onto crawl4ai's DEFAULT_CONFIG and NOT onto
       # the config.yml it ships — read the file's header before editing it, the
