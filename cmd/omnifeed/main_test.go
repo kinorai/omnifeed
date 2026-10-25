@@ -5,6 +5,7 @@ import (
 	"io"
 	"log/slog"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/kinorai/omnifeed/internal/config"
@@ -236,31 +237,33 @@ func gaugeVecSeries(t *testing.T, v *prometheus.GaugeVec) map[string]float64 {
 // limiter is checked by behaviour rather than by type, since both modes are a
 // *httpx.DomainLimiter.
 func TestSearxngLocalLimiterHonorsConcurrencyWithoutRedis(t *testing.T) {
-	cfg := config.Config{SearXNGDelay: time.Second, SearXNGConcurrency: 3}
-	limiter := searxngLocalLimiter(cfg, nil)
+	synctest.Test(t, func(t *testing.T) {
+		cfg := config.Config{SearXNGDelay: time.Second, SearXNGConcurrency: 3}
+		limiter := searxngLocalLimiter(cfg, nil)
 
-	// Three callers arrive together and none releases. All three must be
-	// admitted, and the delay must space them rather than serialize them: the
-	// completion-spaced limiter would cap this at one.
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	t.Cleanup(cancel)
+		// Three callers arrive together and none releases. All three must be
+		// admitted, and the delay must space them rather than serialize them: the
+		// completion-spaced limiter would cap this at one.
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		t.Cleanup(cancel)
 
-	admitted := make(chan struct{}, 3)
-	for range 3 {
-		go func() {
-			if _, err := limiter.Acquire(ctx, "searxng", "https://searxng.test/search"); err != nil {
-				return
-			}
-			admitted <- struct{}{}
-		}()
-	}
-	for i := range 3 {
-		select {
-		case <-admitted:
-		case <-ctx.Done():
-			t.Fatalf("only %d of 3 callers admitted before the deadline", i)
+		admitted := make(chan struct{}, 3)
+		for range 3 {
+			go func() {
+				if _, err := limiter.Acquire(ctx, "searxng", "https://searxng.test/search"); err != nil {
+					return
+				}
+				admitted <- struct{}{}
+			}()
 		}
-	}
+		for i := range 3 {
+			select {
+			case <-admitted:
+			case <-ctx.Done():
+				t.Fatalf("only %d of 3 callers admitted before the deadline", i)
+			}
+		}
+	})
 }
 
 // With Redis on, the local limiter is the degraded-mode fallback and stays at

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -13,77 +14,81 @@ import (
 // outcome, and the time spent blocked — ~0 when uncontended, and at least the
 // politeness delay when a second request follows the first on the same domain.
 func TestDomainLimiterReportsWait(t *testing.T) {
-	const minDelay = 20 * time.Millisecond
+	synctest.Test(t, func(t *testing.T) {
+		const minDelay = 20 * time.Millisecond
 
-	var engines, outcomes []string
-	var waits []time.Duration
-	d := NewDomainLimiter(1, minDelay)
-	d.OnWait = func(engine, outcome string, waited time.Duration) {
-		engines = append(engines, engine)
-		outcomes = append(outcomes, outcome)
-		waits = append(waits, waited)
-	}
+		var engines, outcomes []string
+		var waits []time.Duration
+		d := NewDomainLimiter(1, minDelay)
+		d.OnWait = func(engine, outcome string, waited time.Duration) {
+			engines = append(engines, engine)
+			outcomes = append(outcomes, outcome)
+			waits = append(waits, waited)
+		}
 
-	release, err := d.Acquire(context.Background(), "reddit", "https://www.reddit.com/")
-	if err != nil {
-		t.Fatalf("Acquire: %v", err)
-	}
-	release()
+		release, err := d.Acquire(context.Background(), "reddit", "https://www.reddit.com/")
+		if err != nil {
+			t.Fatalf("Acquire: %v", err)
+		}
+		release()
 
-	// Second acquire on the same domain must sit out the politeness delay.
-	release, err = d.Acquire(context.Background(), "reddit", "https://www.reddit.com/r/golang")
-	if err != nil {
-		t.Fatalf("Acquire: %v", err)
-	}
-	release()
+		// Second acquire on the same domain must sit out the politeness delay.
+		release, err = d.Acquire(context.Background(), "reddit", "https://www.reddit.com/r/golang")
+		if err != nil {
+			t.Fatalf("Acquire: %v", err)
+		}
+		release()
 
-	if len(engines) != 2 || engines[0] != "reddit" || engines[1] != "reddit" {
-		t.Fatalf("engines = %v, want two 'reddit' observations", engines)
-	}
-	if outcomes[0] != "acquired" || outcomes[1] != "acquired" {
-		t.Fatalf("outcomes = %v, want two 'acquired'", outcomes)
-	}
-	if waits[0] > minDelay {
-		t.Fatalf("uncontended wait = %v, want < %v", waits[0], minDelay)
-	}
-	// The exact wait is minDelay minus the (tiny) gap since release, plus random
-	// jitter — assert against half the delay to stay robust.
-	if waits[1] < minDelay/2 {
-		t.Fatalf("contended wait = %v, want >= %v (politeness delay)", waits[1], minDelay/2)
-	}
+		if len(engines) != 2 || engines[0] != "reddit" || engines[1] != "reddit" {
+			t.Fatalf("engines = %v, want two 'reddit' observations", engines)
+		}
+		if outcomes[0] != "acquired" || outcomes[1] != "acquired" {
+			t.Fatalf("outcomes = %v, want two 'acquired'", outcomes)
+		}
+		if waits[0] > minDelay {
+			t.Fatalf("uncontended wait = %v, want < %v", waits[0], minDelay)
+		}
+		// The exact wait is minDelay minus the (tiny) gap since release, plus random
+		// jitter — assert against half the delay to stay robust.
+		if waits[1] < minDelay/2 {
+			t.Fatalf("contended wait = %v, want >= %v (politeness delay)", waits[1], minDelay/2)
+		}
+	})
 }
 
 // A wait that dies in the queue (caller ctx canceled while blocked on the
 // semaphore) must still be observed, as outcome="canceled" — those are the
 // worst waits, and success-only observation would hide them entirely.
 func TestDomainLimiterReportsCanceledWait(t *testing.T) {
-	var outcomes []string
-	d := NewDomainLimiter(1, 0)
-	d.OnWait = func(_, outcome string, _ time.Duration) {
-		outcomes = append(outcomes, outcome)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		var outcomes []string
+		d := NewDomainLimiter(1, 0)
+		d.OnWait = func(_, outcome string, _ time.Duration) {
+			outcomes = append(outcomes, outcome)
+		}
 
-	release, err := d.Acquire(context.Background(), "reddit", "https://www.reddit.com/")
-	if err != nil {
-		t.Fatalf("Acquire: %v", err)
-	}
+		release, err := d.Acquire(context.Background(), "reddit", "https://www.reddit.com/")
+		if err != nil {
+			t.Fatalf("Acquire: %v", err)
+		}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan error, 1)
-	go func() {
-		_, err := d.Acquire(ctx, "reddit", "https://www.reddit.com/r/golang")
-		done <- err
-	}()
-	time.Sleep(10 * time.Millisecond) // let the goroutine queue on the held slot
-	cancel()
-	if err := <-done; err == nil {
-		t.Fatal("Acquire on canceled ctx: want error, got nil")
-	}
-	release()
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan error, 1)
+		go func() {
+			_, err := d.Acquire(ctx, "reddit", "https://www.reddit.com/r/golang")
+			done <- err
+		}()
+		synctest.Wait() // the goroutine is queued on the held slot
+		cancel()
+		if err := <-done; err == nil {
+			t.Fatal("Acquire on canceled ctx: want error, got nil")
+		}
+		release()
 
-	if len(outcomes) != 2 || outcomes[0] != "acquired" || outcomes[1] != "canceled" {
-		t.Fatalf("outcomes = %v, want [acquired canceled]", outcomes)
-	}
+		if len(outcomes) != 2 || outcomes[0] != "acquired" || outcomes[1] != "canceled" {
+			t.Fatalf("outcomes = %v, want [acquired canceled]", outcomes)
+		}
+	})
 }
 
 // The rolling window is the control that bounds a burst. Driving quotaWindow
@@ -164,20 +169,22 @@ func TestQuotaWindowZeroValueAdmitsEverything(t *testing.T) {
 // End-to-end through Acquire: with a quota of 1 the second caller is made to
 // wait, and a canceled wait does not consume the quota.
 func TestDomainQuotaLimiterDelaysBeyondTheQuota(t *testing.T) {
-	d := NewDomainQuotaLimiter(4, 0, 1, time.Hour)
+	synctest.Test(t, func(t *testing.T) {
+		d := NewDomainQuotaLimiter(4, 0, 1, time.Hour)
 
-	release, err := d.Acquire(context.Background(), "searxng", "http://searxng:8080/search")
-	if err != nil {
-		t.Fatalf("Acquire: %v", err)
-	}
-	release()
+		release, err := d.Acquire(context.Background(), "searxng", "http://searxng:8080/search")
+		if err != nil {
+			t.Fatalf("Acquire: %v", err)
+		}
+		release()
 
-	// The quota is spent, so the next caller must block until its ctx dies.
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
-	defer cancel()
-	if _, err := d.Acquire(ctx, "searxng", "http://searxng:8080/search"); err == nil {
-		t.Fatal("second Acquire: want a deadline error, got nil")
-	}
+		// The quota is spent, so the next caller must block until its ctx dies.
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+		defer cancel()
+		if _, err := d.Acquire(ctx, "searxng", "http://searxng:8080/search"); err == nil {
+			t.Fatal("second Acquire: want a deadline error, got nil")
+		}
+	})
 }
 
 // Booked instants must stay ordered oldest-first: both evict (a prefix scan)
@@ -294,115 +301,121 @@ func TestAcquireUnaffectedWithoutPenalty(t *testing.T) {
 // the booking it made is handed back — a request that never sent must not
 // consume the window's quota.
 func TestAcquireFailsFastWhenWaitExceedsTheBudget(t *testing.T) {
-	const url = "https://www.reddit.com/"
-	var outcomes []string
-	var waits []time.Duration
-	d := NewDomainQuotaLimiter(1, 0, 2, time.Hour)
-	d.OnWait = func(_, outcome string, waited time.Duration) {
-		outcomes = append(outcomes, outcome)
-		waits = append(waits, waited)
-	}
-
-	// Spend the whole window: the next admission is an hour out.
-	for range 2 {
-		release, err := d.Acquire(context.Background(), "reddit", url)
-		if err != nil {
-			t.Fatalf("Acquire: %v", err)
+	synctest.Test(t, func(t *testing.T) {
+		const url = "https://www.reddit.com/"
+		var outcomes []string
+		var waits []time.Duration
+		d := NewDomainQuotaLimiter(1, 0, 2, time.Hour)
+		d.OnWait = func(_, outcome string, waited time.Duration) {
+			outcomes = append(outcomes, outcome)
+			waits = append(waits, waited)
 		}
-		release()
-	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-	defer cancel()
-	start := time.Now()
-	release, err := d.Acquire(ctx, "reddit", url)
-	if err == nil {
-		release()
-		t.Fatal("Acquire: want a WaitBudgetError, got nil")
-	}
-	var wbe *WaitBudgetError
-	if !errors.As(err, &wbe) {
-		t.Fatalf("Acquire err = %T (%v), want *WaitBudgetError", err, err)
-	}
-	if wbe.RetryAfter < 50*time.Minute {
-		t.Fatalf("RetryAfter = %v, want ~1h (the next window opening)", wbe.RetryAfter)
-	}
-	if elapsed := time.Since(start); elapsed > 40*time.Millisecond {
-		t.Fatalf("Acquire blocked for %v, want an immediate refusal", elapsed)
-	}
-	if len(outcomes) != 3 || outcomes[2] != "budget_exceeded" {
-		t.Fatalf("outcomes = %v, want the third to be budget_exceeded", outcomes)
-	}
-	if waits[2] > 40*time.Millisecond {
-		t.Fatalf("budget_exceeded wait = %v, want ~0 (nothing was queued)", waits[2])
-	}
+		// Spend the whole window: the next admission is an hour out.
+		for range 2 {
+			release, err := d.Acquire(context.Background(), "reddit", url)
+			if err != nil {
+				t.Fatalf("Acquire: %v", err)
+			}
+			release()
+		}
 
-	// The refused caller's booking must be gone: two admissions were made, so
-	// two bookings stand. A leaked third would push every later caller out by a
-	// slot for nothing.
-	s := d.slotFor(url)
-	s.mu.Lock()
-	booked := len(s.window.sent)
-	s.mu.Unlock()
-	if booked != 2 {
-		t.Fatalf("window bookings = %d, want 2 (the refused caller's slot handed back)", booked)
-	}
+		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		defer cancel()
+		start := time.Now()
+		release, err := d.Acquire(ctx, "reddit", url)
+		if err == nil {
+			release()
+			t.Fatal("Acquire: want a WaitBudgetError, got nil")
+		}
+		var wbe *WaitBudgetError
+		if !errors.As(err, &wbe) {
+			t.Fatalf("Acquire err = %T (%v), want *WaitBudgetError", err, err)
+		}
+		if wbe.RetryAfter < 50*time.Minute {
+			t.Fatalf("RetryAfter = %v, want ~1h (the next window opening)", wbe.RetryAfter)
+		}
+		if elapsed := time.Since(start); elapsed > 40*time.Millisecond {
+			t.Fatalf("Acquire blocked for %v, want an immediate refusal", elapsed)
+		}
+		if len(outcomes) != 3 || outcomes[2] != "budget_exceeded" {
+			t.Fatalf("outcomes = %v, want the third to be budget_exceeded", outcomes)
+		}
+		if waits[2] > 40*time.Millisecond {
+			t.Fatalf("budget_exceeded wait = %v, want ~0 (nothing was queued)", waits[2])
+		}
+
+		// The refused caller's booking must be gone: two admissions were made, so
+		// two bookings stand. A leaked third would push every later caller out by a
+		// slot for nothing.
+		s := d.slotFor(url)
+		s.mu.Lock()
+		booked := len(s.window.sent)
+		s.mu.Unlock()
+		if booked != 2 {
+			t.Fatalf("window bookings = %d, want 2 (the refused caller's slot handed back)", booked)
+		}
+	})
 }
 
 // A deadline the wait DOES fit in is not a fast-fail: the caller waits and is
 // admitted, as before.
 func TestAcquireQueuesWhenTheWaitFitsTheBudget(t *testing.T) {
-	const minDelay = 20 * time.Millisecond
-	var outcomes []string
-	d := NewDomainLimiter(1, minDelay)
-	d.OnWait = func(_, outcome string, _ time.Duration) { outcomes = append(outcomes, outcome) }
+	synctest.Test(t, func(t *testing.T) {
+		const minDelay = 20 * time.Millisecond
+		var outcomes []string
+		d := NewDomainLimiter(1, minDelay)
+		d.OnWait = func(_, outcome string, _ time.Duration) { outcomes = append(outcomes, outcome) }
 
-	release, err := d.Acquire(context.Background(), "reddit", "https://www.reddit.com/")
-	if err != nil {
-		t.Fatalf("Acquire: %v", err)
-	}
-	release()
+		release, err := d.Acquire(context.Background(), "reddit", "https://www.reddit.com/")
+		if err != nil {
+			t.Fatalf("Acquire: %v", err)
+		}
+		release()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	release, err = d.Acquire(ctx, "reddit", "https://www.reddit.com/")
-	if err != nil {
-		t.Fatalf("second Acquire: %v", err)
-	}
-	release()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		release, err = d.Acquire(ctx, "reddit", "https://www.reddit.com/")
+		if err != nil {
+			t.Fatalf("second Acquire: %v", err)
+		}
+		release()
 
-	if len(outcomes) != 2 || outcomes[1] != "acquired" {
-		t.Fatalf("outcomes = %v, want [acquired acquired]", outcomes)
-	}
+		if len(outcomes) != 2 || outcomes[1] != "acquired" {
+			t.Fatalf("outcomes = %v, want [acquired acquired]", outcomes)
+		}
+	})
 }
 
 // A caller with NO deadline has no budget to exceed, so it queues exactly as
 // before — the fast-fail must not turn an unbounded caller into an error.
 func TestAcquireWithoutADeadlineStillQueues(t *testing.T) {
-	const url = "https://www.reddit.com/"
-	const minDelay = 30 * time.Millisecond
-	var outcomes []string
-	d := NewDomainLimiter(1, minDelay)
-	d.OnWait = func(_, outcome string, _ time.Duration) { outcomes = append(outcomes, outcome) }
+	synctest.Test(t, func(t *testing.T) {
+		const url = "https://www.reddit.com/"
+		const minDelay = 30 * time.Millisecond
+		var outcomes []string
+		d := NewDomainLimiter(1, minDelay)
+		d.OnWait = func(_, outcome string, _ time.Duration) { outcomes = append(outcomes, outcome) }
 
-	release, err := d.Acquire(context.Background(), "reddit", url)
-	if err != nil {
-		t.Fatalf("Acquire: %v", err)
-	}
-	release()
+		release, err := d.Acquire(context.Background(), "reddit", url)
+		if err != nil {
+			t.Fatalf("Acquire: %v", err)
+		}
+		release()
 
-	start := time.Now()
-	release, err = d.Acquire(context.Background(), "reddit", url)
-	if err != nil {
-		t.Fatalf("second Acquire: %v", err)
-	}
-	release()
-	if elapsed := time.Since(start); elapsed < minDelay/2 {
-		t.Fatalf("second Acquire returned after %v, want it to sit out the politeness delay", elapsed)
-	}
-	if len(outcomes) != 2 || outcomes[1] != "acquired" {
-		t.Fatalf("outcomes = %v, want [acquired acquired]", outcomes)
-	}
+		start := time.Now()
+		release, err = d.Acquire(context.Background(), "reddit", url)
+		if err != nil {
+			t.Fatalf("second Acquire: %v", err)
+		}
+		release()
+		if elapsed := time.Since(start); elapsed < minDelay/2 {
+			t.Fatalf("second Acquire returned after %v, want it to sit out the politeness delay", elapsed)
+		}
+		if len(outcomes) != 2 || outcomes[1] != "acquired" {
+			t.Fatalf("outcomes = %v, want [acquired acquired]", outcomes)
+		}
+	})
 }
 
 // Send-spaced mode is the whole reason NewSpacedDomainQuotaLimiter exists:
@@ -596,32 +609,34 @@ func TestSpacedUnbookClearsAnAbandonedFanOut(t *testing.T) {
 // the property the cluster cap buys and the completion-spaced limiter at
 // concurrency 1 cannot offer.
 func TestSpacedLimiterRunsCallersConcurrently(t *testing.T) {
-	d := NewSpacedDomainQuotaLimiter(4, 0, 0, 0)
+	synctest.Test(t, func(t *testing.T) {
+		d := NewSpacedDomainQuotaLimiter(4, 0, 0, 0)
 
-	var releases []func()
-	for i := range 4 {
-		release, err := d.Acquire(context.Background(), "searxng", "https://searxng.test/search")
-		if err != nil {
-			t.Fatalf("Acquire %d: %v", i, err)
+		var releases []func()
+		for i := range 4 {
+			release, err := d.Acquire(context.Background(), "searxng", "https://searxng.test/search")
+			if err != nil {
+				t.Fatalf("Acquire %d: %v", i, err)
+			}
+			releases = append(releases, release)
 		}
-		releases = append(releases, release)
-	}
 
-	// A fifth must block: the cap is 4, and nothing has been released.
-	blocked := make(chan struct{})
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-		defer cancel()
-		if _, err := d.Acquire(ctx, "searxng", "https://searxng.test/search"); err == nil {
-			t.Error("fifth Acquire succeeded, want it held by the concurrency cap")
+		// A fifth must block: the cap is 4, and nothing has been released.
+		blocked := make(chan struct{})
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+			defer cancel()
+			if _, err := d.Acquire(ctx, "searxng", "https://searxng.test/search"); err == nil {
+				t.Error("fifth Acquire succeeded, want it held by the concurrency cap")
+			}
+			close(blocked)
+		}()
+		<-blocked
+
+		for _, release := range releases {
+			release()
 		}
-		close(blocked)
-	}()
-	<-blocked
-
-	for _, release := range releases {
-		release()
-	}
+	})
 }
 
 // Spellings of one host share one slot: case, a trailing dot and the port do
