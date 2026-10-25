@@ -39,8 +39,8 @@ enabled in `.golangci.yml`.
 
 | Option | For | Against |
 |---|---|---|
-| (a) Run `make fix` in the PR that bumps `GO_VERSION` (recommended) | One place holds the Go version (`GO_VERSION` in the workflows). The rewrites land with the toolchain that proposes them | A contributor on a newer Go than CI can see `fix-check` fail locally until CI catches up. The fix is to run `make fix`, or to use CI's version |
-| (b) Pin `GOTOOLCHAIN` in the Makefile | The check gives the same answer on every machine | The Go version then lives in a second place next to CI's `GO_VERSION`, and the two can drift apart |
+| (a) Run `make fix` in the PR that bumps `GO_VERSION` (recommended) | No new place holds the Go version. The rewrites land with the toolchain that proposes them | A contributor on a newer Go than CI can see `fix-check` fail locally until CI catches up. The fix is to run `make fix`, or to use CI's version |
+| (b) Pin `GOTOOLCHAIN` in the Makefile | The check gives the same answer on every machine | One more place holds the Go version, next to `GO_VERSION` in `ci.yml`, `docs.yml` and `security.yml`, `ARG GO_VERSION` in the `Dockerfile` and `go` in `go.mod`, and they can drift apart |
 
 A `toolchain` line in `go.mod` does not help: Go never downgrades to an older toolchain
 than the one installed, so it cannot hold a newer local Go back to CI's.
@@ -57,7 +57,8 @@ on both go1.26.10 and go1.27.
 - A modernizer commit is a `refactor:`, so under `cliff.toml` it cuts no release.
 - Each `GO_VERSION` bump may carry a `go fix` diff. Review it like any other
   refactor: the analyzers do not change behaviour, but a rename by hand on top of the
-  tool's output (as PR #71 did for `before, ok0`) is still a human choice.
+  tool's output is still a human choice (PR #71 renamed the tool's `before, ok0` to
+  `stem, ok`).
 
 ## Sources
 

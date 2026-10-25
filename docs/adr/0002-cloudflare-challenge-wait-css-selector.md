@@ -54,9 +54,9 @@ css::root:not(:has(script[src*="/cdn-cgi/challenge-platform/"][src*="/orchestrat
   pays nothing. Once the challenge clears, Cloudflare navigates away and the script is
   gone.
 - **`:visible`:** crawl4ai hands the selector to Playwright, which waits for the *first*
-  match to be visible. Without `:visible` the first match is `<html>` itself, and a page
-  whose `<html>` has zero height (all its content fixed or absolute) waits out the whole
-  timeout. Reproduced before the fix.
+  match to be visible. Without the trailing ` :visible` (`:root:not(...)` alone), the
+  match is `<html>` itself, and a page whose `<html>` has zero height (all its content
+  fixed or absolute) waits out the whole timeout. Reproduced before the fix.
 - **`:root`, not `html`:** a URL that renders as a bare SVG document has no `<html>`.
   With `html`, it would wait out the timeout and then fail as a challenge.
 - **A wait that runs out is a `captcha`**, not a `timeout`. This engine sends no other
