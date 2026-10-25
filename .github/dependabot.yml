@@ -21,6 +21,20 @@ updates:
       go-modules:
         patterns: ["*"]
 
+  # The dev tools pinned in tools/go.mod (govulncheck). They never ship in
+  # the binary or the image, so chore(tools) does not cut a release.
+  - package-ecosystem: "gomod"
+    directory: "/tools"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: "chore(tools)"
+    groups:
+      go-tools:
+        patterns: ["*"]
+
   - package-ecosystem: "docker"
     directory: "/"
     schedule:
