@@ -1,6 +1,6 @@
 # ADR 0004: Releases are signed keylessly with cosign
 
-- **Status:** proposed (PR #72, not merged)
+- **Status:** accepted (PR #72)
 - **Date:** 2026-10-25
 - **Scope:** the release job (`.github/workflows/ci.yml`) and `.goreleaser.yaml`
 
