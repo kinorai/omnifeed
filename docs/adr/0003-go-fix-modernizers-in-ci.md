@@ -1,7 +1,7 @@
 # ADR 0003: `go fix` modernizers are enforced in CI
 
-- **Status:** proposed (PR #71, not merged). The new-Go-release policy below is
-  decided: option (a), chosen 2026-10-25.
+- **Status:** accepted (PR #71). The new-Go-release policy below: option (a), chosen
+  2026-10-25.
 - **Date:** 2026-10-24
 - **Scope:** the Go code style, `make fix` / `make fix-check`, the CI Lint job and the
   pre-commit hooks
@@ -29,18 +29,17 @@ enabled in `.golangci.yml`.
      only: a `go: downloading ...` line on stderr does not fail a clean tree.
    - The CI Lint job runs `make fix-check` right after `go vet`. A pre-commit hook runs
      the same target, and `make check` includes it.
-3. **New Go releases (decided 2026-10-25: option (a)):** each Go release can add rewrites. go1.27's
-   `go fix` adds `errors.As` to `errors.AsType`, which go1.26.10 does not propose. The
-   gate then passes in CI and fails on a contributor's newer toolchain. We chose
-   option (a) below: when a PR bumps `GO_VERSION`, it also runs `make fix` and
-   commits the result.
+3. **New Go releases:** each Go release can add rewrites. go1.27's `go fix` adds
+   `errors.As` to `errors.AsType`, which go1.26.10 does not propose. The gate then
+   passes in CI and fails on a contributor's newer toolchain. We chose option (a)
+   below: when a PR bumps `GO_VERSION`, it also runs `make fix` and commits the result.
 
 ### Options for new Go releases
 
 | Option | For | Against |
 |---|---|---|
 | (a) Run `make fix` in the PR that bumps `GO_VERSION` (chosen) | No new place holds the Go version. The rewrites land with the toolchain that proposes them | A contributor on a newer Go than CI can see `fix-check` fail locally until CI catches up. The fix is to run `make fix`, or to use CI's version |
-| (b) Pin `GOTOOLCHAIN` in the Makefile | The check gives the same answer on every machine | One more place holds the Go version, next to `GO_VERSION` in `ci.yml`, `docs.yml` and `security.yml`, `ARG GO_VERSION` in the `Dockerfile` and `go` in `go.mod`, and they can drift apart |
+| (b) Pin `GOTOOLCHAIN` in the Makefile | The check gives the same answer on every machine | One more place holds the Go version, next to `GO_VERSION` in `ci.yml`, `docs.yml` and `security.yml`, `ARG GO_VERSION` in the `Dockerfile`, `run.go` in `.golangci.yml` and `go` in `go.mod`, and they can drift apart |
 
 A `toolchain` line in `go.mod` does not help: Go never downgrades to an older toolchain
 than the one installed, so it cannot hold a newer local Go back to CI's.
