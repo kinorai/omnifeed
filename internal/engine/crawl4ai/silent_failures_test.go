@@ -523,6 +523,8 @@ func TestCloudflareChallengeReadsTheHead(t *testing.T) {
 		`<script src="/cdn-cgi/challenge-platform/scripts/jsd/main.js"></script>`: false,
 		`<title>Just a moment of silence</title>`:                                 false,
 		`<title>News</title><p>Just a moment...</p>`:                              false,
+		`<p>It loads /cdn-cgi/challenge-platform/h/b/orchestrate/chl_page/v1</p>`: false,
+		`<script>a.src='/cdn-cgi/challenge-platform/h/b/orchestrate/x'</script>`:  false,
 		``: false,
 	} {
 		if got := cloudflareChallenge(html); got != want {
