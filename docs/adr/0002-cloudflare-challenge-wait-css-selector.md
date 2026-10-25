@@ -1,6 +1,6 @@
 # ADR 0002: Waiting out Cloudflare challenges with a CSS selector
 
-- **Status:** proposed (PR #72, not merged)
+- **Status:** accepted (PR #72)
 - **Date:** 2026-10-25
 - **Scope:** the generic crawl4ai engine (`internal/engine/crawl4ai`), its challenge
   wait (`OMNIFEED_CRAWL4AI_CHALLENGE_WAIT`) and default user agent
