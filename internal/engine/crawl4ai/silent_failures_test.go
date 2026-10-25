@@ -379,6 +379,158 @@ func TestChallengeWaitIsACSSSelector(t *testing.T) {
 	}
 }
 
+// waitTimedOut is crawl4ai 0.9.5's result when challengeWaitFor runs out:
+// the error, and no page.
+func waitTimedOut() map[string]any {
+	return map[string]any{"success": true, "results": []any{map[string]any{
+		"success": false, "html": "",
+		"error_message": "Unexpected error in _crawl_web at line 1025 in _crawl_web (crawl4ai/async_crawler_strategy.py):\nError: Wait condition failed: Timeout after 8000ms waiting for selector ':root:not(:has(script[src*=\"/cdn-cgi/challenge-platform/\"][src*=\"/orchestrate/\"])) :visible'",
+	}}}
+}
+
+// sentCrawl is what one crawl4ai request asked for.
+type sentCrawl struct{ wait, ua any }
+
+// challengeWaitFake is a crawl4ai whose challenge wait always runs out: a
+// crawl that waits gets waitTimedOut, one that doesn't gets noWait. sent
+// lists the requests.
+func challengeWaitFake(t *testing.T, noWait map[string]any) (e *Engine, sent func() []sentCrawl) {
+	t.Helper()
+	var mu sync.Mutex
+	var got []sentCrawl
+	e, _ = fakeCrawlCfg(t, Config{ChallengeWait: 8 * time.Second, UserAgent: "Mozilla/5.0 Chrome/156"}, func(_ int32, req map[string]any) map[string]any {
+		wait := req["crawler_config"].(map[string]any)["params"].(map[string]any)["wait_for"]
+		var ua any
+		if bc, ok := req["browser_config"].(map[string]any); ok {
+			ua = bc["params"].(map[string]any)["user_agent"]
+		}
+		mu.Lock()
+		got = append(got, sentCrawl{wait, ua})
+		mu.Unlock()
+		if wait != nil {
+			return waitTimedOut()
+		}
+		return noWait
+	})
+	return e, func() []sentCrawl {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]sentCrawl(nil), got...)
+	}
+}
+
+// checkNoWaitLadder checks that only the first request waited and that none
+// went out under crawl4ai's default identity.
+func checkNoWaitLadder(t *testing.T, sent []sentCrawl, want int) {
+	t.Helper()
+	if len(sent) != want {
+		t.Fatalf("requests = %v, want %d", sent, want)
+	}
+	for i, s := range sent {
+		if (i == 0) != (s.wait != nil) {
+			t.Errorf("request %d wait_for = %v, want it on the first request only", i+1, s.wait)
+		}
+		if s.ua == nil {
+			t.Errorf("request %d went out on crawl4ai's default identity", i+1)
+		}
+	}
+}
+
+// An empty page has no visible element, so the challenge wait runs out on it.
+// That is not a challenge: the page is crawled again without the wait, and
+// fails as the thin page it is, after the direct-GET rescue had its try.
+func TestChallengeWaitTimeoutOnEmptyPageIsNotCaptcha(t *testing.T) {
+	var direct atomic.Int32
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		direct.Add(1)
+		w.Header().Set("Content-Type", "text/html")
+	}))
+	t.Cleanup(target.Close)
+	e, sent := challengeWaitFake(t, page(200, ""))
+	_, err := e.Crawl(context.Background(), target.URL+"/empty", domain.EngineOptions{})
+	if kindOf(err) != domain.KindThinContent {
+		t.Fatalf("Crawl() = %v, want thin_content", err)
+	}
+	if direct.Load() == 0 {
+		t.Error("the direct-GET rescue never ran")
+	}
+	checkNoWaitLadder(t, sent(), 3) // base, no_wait, no_selector
+}
+
+// An extensionless XML feed renders with no visible element either. Without
+// the wait, crawl4ai's content gate rejects it, and the direct GET serves it.
+func TestChallengeWaitTimeoutOnXMLFeedIsRescued(t *testing.T) {
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/rss+xml")
+		_, _ = w.Write([]byte(`<?xml version="1.0"?><rss version="2.0"><channel><title>Feed</title><item><title>Item one</title></item></channel></rss>`))
+	}))
+	t.Cleanup(target.Close)
+	gate := map[string]any{"success": true, "results": []any{map[string]any{
+		"success": false, "error_message": "Blocked by anti-bot protection: Structural: minimal_text on small page (180 bytes)",
+	}}}
+	e, sent := challengeWaitFake(t, gate)
+	doc, err := e.Crawl(context.Background(), target.URL+"/feed", domain.EngineOptions{})
+	if err != nil || !strings.Contains(doc.PageContent, "Item one") {
+		t.Fatalf("Crawl() = %q, %v, want the feed from the direct GET", doc.PageContent, err)
+	}
+	checkNoWaitLadder(t, sent(), 3) // base, no_wait, no_selector
+}
+
+// A challenge that never clears: the page crawled without the wait still runs
+// Cloudflare's challenge, so it is a captcha. It is not retried under
+// crawl4ai's default identity, which Cloudflare rejects too.
+func TestChallengeWaitTimeoutOnChallengeIsCaptcha(t *testing.T) {
+	challenge := page(403, "Just a moment...\n\nVerifying you are human. This may take a few seconds.")
+	challenge["results"].([]any)[0].(map[string]any)["html"] = `<html><head><title>Just a moment...</title>` +
+		`<script src="/cdn-cgi/challenge-platform/h/g/orchestrate/chl_page/v1?ray=1"></script></head><body></body></html>`
+	e, sent := challengeWaitFake(t, challenge)
+	_, err := e.Crawl(context.Background(), deadTargetURL+"/x", domain.EngineOptions{})
+	if !isCloudflareChallenge(err) {
+		t.Fatalf("Crawl() = %v, want a captcha marked %q", err, cloudflareChallengeMarker)
+	}
+	checkNoWaitLadder(t, sent(), 2) // base, no_wait
+}
+
+// Other walls still get the retry under crawl4ai's default identity, which
+// some vendors (Akamai) let through.
+func TestOtherCaptchaKeepsDefaultIdentityRetry(t *testing.T) {
+	var uas []any
+	e, _ := fakeCrawlCfg(t, Config{UserAgent: "Mozilla/5.0 Chrome/156"}, func(_ int32, req map[string]any) map[string]any {
+		var ua any
+		if bc, ok := req["browser_config"].(map[string]any); ok {
+			ua = bc["params"].(map[string]any)["user_agent"]
+		}
+		uas = append(uas, ua)
+		if ua != nil {
+			return page(200, "Let's confirm you are human")
+		}
+		return page(200, "# Page\n"+realProse)
+	})
+	if _, err := e.Crawl(context.Background(), deadTargetURL+"/x", domain.EngineOptions{}); err != nil {
+		t.Fatalf("Crawl() = %v, want the default-identity retry to succeed", err)
+	}
+	if len(uas) != 2 || uas[1] != nil {
+		t.Errorf("user agents sent = %v, want [modern, default]", uas)
+	}
+}
+
+func TestCloudflareChallengeReadsTheHead(t *testing.T) {
+	for html, want := range map[string]bool{
+		`<script src="/cdn-cgi/challenge-platform/h/b/orchestrate/chl_page/v1?ray=1"></script>`: true,
+		`<title>Just a moment...</title>`:                                         true,
+		`<TITLE> Un instant… </TITLE>`:                                            true,
+		`<title>Attention Required! | Cloudflare</title>`:                         true,
+		`<script src="/cdn-cgi/challenge-platform/scripts/jsd/main.js"></script>`: false,
+		`<title>Just a moment of silence</title>`:                                 false,
+		`<title>News</title><p>Just a moment...</p>`:                              false,
+		``: false,
+	} {
+		if got := cloudflareChallenge(html); got != want {
+			t.Errorf("cloudflareChallenge(%q) = %v, want %v", html, got, want)
+		}
+	}
+}
+
 // A browser redirect into a private address is caught on the final URL
 // crawl4ai reports, and the page is not returned. Same-host redirects are not
 // looked up again.
