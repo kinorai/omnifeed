@@ -19,8 +19,8 @@
 #
 # (Up to 0.9.4 the Python defaults also gave the browser
 # --ignore-certificate-errors and --allow-insecure-localhost. 0.9.5 deleted
-# them from both, GHSA-j2qh-f73r-mg3q, so crawler.browser no longer needs
-# restating.)
+# them from both, GHSA-j2qh-f73r-mg3q. crawler.browser below still restates
+# the safe flags, for an older image.)
 #
 # So this file restates the shipped values for all of them, and only then makes
 # its own three changes. Re-run the comparison after every crawl4ai bump — a new
@@ -51,6 +51,16 @@ limits:
 
 # ---- our changes ------------------------------------------------------------
 crawler:
+  browser:
+    # Restated for an image older than 0.9.5 (CRAWL4AI_IMAGE can pin one):
+    # omitting it there hands the browser --allow-insecure-localhost and
+    # --ignore-certificate-errors, which disable TLS verification for every
+    # crawl (MITM, SSRF to internal TLS). On 0.9.5 it equals the default.
+    extra_args:
+      - "--no-sandbox"
+      - "--disable-dev-shm-usage"
+      - "--disable-gpu"
+      - "--disable-software-rasterizer"
   # 25, not the image's 40. Each page is a Chromium tab, and this stack gives
   # the container 4G by default (OMNIFEED_CRAWL4AI_MEMORY) where 40 tabs can
   # exhaust it mid-crawl. 25 is the figure a 6G production deployment settled
