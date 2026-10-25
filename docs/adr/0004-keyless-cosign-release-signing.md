@@ -30,11 +30,15 @@ goreleaser signs every release with **keyless cosign** (Sigstore):
   action. The config follows goreleaser's own `.goreleaser.yaml` and its cosign v3
   guide.
 
+The identity is the release workflow on `main`: the versioning and release jobs run
+only on `main`. A looser match, such as a regexp on the repo URL, would also accept a
+signature made by any workflow on any branch of the repo.
+
 To verify an archive:
 
 ```sh
 cosign verify-blob --bundle checksums.txt.sigstore.json \
-  --certificate-identity-regexp '^https://github.com/kinorai/omnifeed/' \
+  --certificate-identity https://github.com/kinorai/omnifeed/.github/workflows/ci.yml@refs/heads/main \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   checksums.txt
 sha256sum --ignore-missing -c checksums.txt
@@ -44,7 +48,7 @@ To verify an image:
 
 ```sh
 cosign verify kinorai/omnifeed:<version> \
-  --certificate-identity-regexp '^https://github.com/kinorai/omnifeed/' \
+  --certificate-identity https://github.com/kinorai/omnifeed/.github/workflows/ci.yml@refs/heads/main \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
 
@@ -65,8 +69,10 @@ cosign verify kinorai/omnifeed:<version> \
 - Signatures are public: the Rekor transparency log records each one with the workflow
   identity.
 - The signing steps run only on a real release, so PR CI does not exercise them. The
-  first tag after the merge is the first test: check that the `.sigstore.json` asset
-  and the image signature exist, and that both commands above pass.
+  first release after the merge is the first test, and PR #72's own `fix:` commit cuts
+  one. If a signing step fails, the tag is already pushed and the GitHub Release is
+  incomplete. Check that the `.sigstore.json` asset and the image signature exist, and
+  that both commands above pass.
 
 ## Sources
 
