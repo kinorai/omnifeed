@@ -79,12 +79,16 @@ dockers_v2:
       org.opencontainers.image.licenses: "MIT"
 
 # Keyless cosign signatures (Sigstore): the release job's GitHub OIDC token
-# is the identity, so there is no key to store or rotate. Config from
+# is the identity, so there is no key to store or rotate. The certificate
+# names the workflow file and the ref of the run (job_workflow_ref), not the
+# tag the job checks out: the release job only runs on main, so the identity
+# is ci.yml@refs/heads/main. Pin it exactly; a regexp on the repo URL also
+# accepts a signature from any workflow on any branch. Config from
 # goreleaser's own .goreleaser.yaml and its cosign v3 guide
 # (https://goreleaser.com/blog/cosign-v3/). checksums.txt covers every
 # archive, so signing it signs them all. Verify with:
 #   cosign verify-blob --bundle checksums.txt.sigstore.json \
-#     --certificate-identity-regexp '^https://github.com/kinorai/omnifeed/' \
+#     --certificate-identity https://github.com/kinorai/omnifeed/.github/workflows/ci.yml@refs/heads/main \
 #     --certificate-oidc-issuer https://token.actions.githubusercontent.com \
 #     checksums.txt
 signs:
@@ -100,7 +104,7 @@ signs:
 # Signs each multi-arch manifest by digest and pushes the signature next to it
 # on Docker Hub. Verify with:
 #   cosign verify kinorai/omnifeed:<version> \
-#     --certificate-identity-regexp '^https://github.com/kinorai/omnifeed/' \
+#     --certificate-identity https://github.com/kinorai/omnifeed/.github/workflows/ci.yml@refs/heads/main \
 #     --certificate-oidc-issuer https://token.actions.githubusercontent.com
 docker_signs:
   - cmd: cosign
@@ -185,4 +189,20 @@ release:
 
     ## Verify
 
-    The `checksums.txt` file contains SHA-256 hashes for every artifact in this release.
+    The `checksums.txt` file contains SHA-256 hashes for every artifact in this release. Check its signature, then the archives:
+
+    ```
+    cosign verify-blob --bundle checksums.txt.sigstore.json \
+      --certificate-identity https://github.com/kinorai/omnifeed/.github/workflows/ci.yml@refs/heads/main \
+      --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+      checksums.txt
+    sha256sum --ignore-missing -c checksums.txt
+    ```
+
+    Check the image signature:
+
+    ```
+    cosign verify kinorai/omnifeed:{{ .Version }} \
+      --certificate-identity https://github.com/kinorai/omnifeed/.github/workflows/ci.yml@refs/heads/main \
+      --certificate-oidc-issuer https://token.actions.githubusercontent.com
+    ```
