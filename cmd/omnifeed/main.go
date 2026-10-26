@@ -59,6 +59,8 @@ func main() {
 
 	logger := observability.NewLogger(cfg.LogLevel, cfg.LogFormat)
 	slog.SetDefault(logger)
+	// go-redis logs through its own stdlib logger otherwise: plain text with no level.
+	redis.SetLogger(observability.NewPrintfLogger(logger, "go-redis"))
 
 	if err := run(cfg, logger); err != nil && !errors.Is(err, context.Canceled) {
 		logger.Error("fatal", "err", err)
