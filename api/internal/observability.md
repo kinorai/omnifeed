@@ -79,6 +79,9 @@ Package observability wires structured logging, Prometheus metrics, and Kubernet
   - [func \(m \*Metrics\) SetCacheBytes\(n int\)](<#Metrics.SetCacheBytes>)
   - [func \(m \*Metrics\) SetDependencyUp\(dependency string, up bool\)](<#Metrics.SetDependencyUp>)
   - [func \(m \*Metrics\) SetRatelimitDegraded\(scope string, down bool\)](<#Metrics.SetRatelimitDegraded>)
+- [type PrintfLogger](<#PrintfLogger>)
+  - [func NewPrintfLogger\(l \*slog.Logger, component string\) \*PrintfLogger](<#NewPrintfLogger>)
+  - [func \(p \*PrintfLogger\) Printf\(ctx context.Context, format string, v ...any\)](<#PrintfLogger.Printf>)
 - [type ReadyCheck](<#ReadyCheck>)
 - [type TracingConfig](<#TracingConfig>)
 
@@ -842,6 +845,35 @@ func (m *Metrics) SetRatelimitDegraded(scope string, down bool)
 SetRatelimitDegraded records whether pacing is currently degraded to per\-pod limits because the Redis backend is unreachable. Wired as the FallbackLimiter's OnDegraded hook, which fires on transitions only.
 
 Keyed by scope \("domain" or "searxng"\): each scope has its own FallbackLimiter and degrades on its own, so one recovering must not zero the other's signal.
+
+<a name="PrintfLogger"></a>
+## type PrintfLogger
+
+PrintfLogger routes a library's Printf\-style logger into slog, so its lines share the app's format \(JSON in production\) and carry a level. go\-redis is the case: without redis.SetLogger it prints "redis: 2026/10/26 ... pool.go:" text lines to stderr, which log collectors store with no level. Its Printf\(ctx, format, v...\) signature matches go\-redis's Logging interface, so this package does not import go\-redis.
+
+```go
+type PrintfLogger struct {
+    // contains filtered or unexported fields
+}
+```
+
+<a name="NewPrintfLogger"></a>
+### func NewPrintfLogger
+
+```go
+func NewPrintfLogger(l *slog.Logger, component string) *PrintfLogger
+```
+
+NewPrintfLogger logs through l, tagged with component.
+
+<a name="PrintfLogger.Printf"></a>
+### func \(\*PrintfLogger\) Printf
+
+```go
+func (p *PrintfLogger) Printf(ctx context.Context, format string, v ...any)
+```
+
+Printf logs at warn. go\-redis passes no level: most calls are errors it retries or recovers from \(dial failures, pool and push\-notification errors, recovered panics\), a few are state changes \(sentinel failover, ring shards\).
 
 <a name="ReadyCheck"></a>
 ## type ReadyCheck
