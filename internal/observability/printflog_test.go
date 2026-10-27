@@ -30,3 +30,19 @@ func TestPrintfLogger_JSONLineWithLevelAndComponent(t *testing.T) {
 		t.Errorf("msg: got %q, want %q", line["msg"], want)
 	}
 }
+
+func TestPrintfLogger_CarriesContextFields(t *testing.T) {
+	var buf bytes.Buffer
+	l := slog.New(NewContextHandler(slog.NewJSONHandler(&buf, nil)))
+
+	ctx := WithRequestID(context.Background(), "req-1")
+	NewPrintfLogger(l, "go-redis").Printf(ctx, "redis: connection pool: failed to dial")
+
+	var line map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &line); err != nil {
+		t.Fatalf("not one JSON line: %v: %q", err, buf.String())
+	}
+	if line["request_id"] != "req-1" {
+		t.Errorf("request_id: got %v, want req-1", line["request_id"])
+	}
+}

@@ -22,8 +22,9 @@ func NewPrintfLogger(l *slog.Logger, component string) *PrintfLogger {
 	return &PrintfLogger{logger: l.With("component", component)}
 }
 
-// Printf logs at warn: go-redis calls it only for errors it retries or
-// recovers from (dial failures, pool and push-notification errors).
+// Printf logs at warn. go-redis passes no level: most calls are errors it
+// retries or recovers from (dial failures, pool and push-notification errors,
+// recovered panics), a few are state changes (sentinel failover, ring shards).
 func (p *PrintfLogger) Printf(ctx context.Context, format string, v ...any) {
 	p.logger.WarnContext(ctx, strings.TrimSuffix(fmt.Sprintf(format, v...), "\n"))
 }
