@@ -305,8 +305,8 @@ func (p *penalizingStub) Penalize(rawURL string, d time.Duration) {
 // the moment the circuit opens, which is exactly when the upstream that asked
 // for it is still refusing traffic.
 func TestFallbackLimiterPenalizesBothBackends(t *testing.T) {
-	primary := &penalizingStub{stubLimiter: stubLimiter{name: "primary"}}
-	fallback := &penalizingStub{stubLimiter: stubLimiter{name: "fallback"}}
+	primary := &penalizingStub{name: "primary"}
+	fallback := &penalizingStub{name: "fallback"}
 	f := &FallbackLimiter{Primary: primary, Fallback: fallback}
 
 	f.Penalize("https://news.ycombinator.com/item?id=1", 42*time.Second)
@@ -325,7 +325,7 @@ func TestFallbackLimiterPenalizesBothBackends(t *testing.T) {
 // interface does not carry Penalize, so a stub or a future implementation
 // without it must still compose.
 func TestFallbackLimiterPenalizeSkipsBackendsWithoutIt(t *testing.T) {
-	primary := &penalizingStub{stubLimiter: stubLimiter{name: "primary"}}
+	primary := &penalizingStub{name: "primary"}
 	f := &FallbackLimiter{Primary: primary, Fallback: &stubLimiter{name: "fallback"}}
 
 	f.Penalize("https://example.com/a", time.Second)
@@ -340,8 +340,8 @@ func TestFallbackLimiterPenalizeSkipsBackendsWithoutIt(t *testing.T) {
 // for a key nothing is reading. The fallback is the one doing the pacing, and
 // it must still get the hold.
 func TestFallbackLimiterPenalizeSkipsThePrimaryWhileDegraded(t *testing.T) {
-	primary := &penalizingStub{stubLimiter: stubLimiter{name: "primary", err: ErrLimiterUnavailable}}
-	fallback := &penalizingStub{stubLimiter: stubLimiter{name: "fallback"}}
+	primary := &penalizingStub{name: "primary", err: ErrLimiterUnavailable}
+	fallback := &penalizingStub{name: "fallback"}
 	f := &FallbackLimiter{Primary: primary, Fallback: fallback, Cooldown: time.Hour}
 
 	// Open the circuit.
