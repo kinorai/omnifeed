@@ -51,33 +51,36 @@ func TestMatches(t *testing.T) {
 	}
 
 	fallThrough := []string{
-		"https://github.com/some.owner/repo/issues/1",                  // dot in an owner name
-		"https://github.com/kinorai",                                   // owner
-		"https://github.com/kinorai/omnifeed/issues",                   // issue list
-		"https://github.com/kinorai/omnifeed/pulls",                    // PR list
-		"https://github.com/kinorai/omnifeed/issues/abc",               // non-numeric
-		"https://github.com/kinorai/omnifeed/pull/3/files",             // sub-page
-		"https://github.com/kinorai/omnifeed/blob/main",                // blob without a path
-		"https://github.com/kinorai/omnifeed/actions",                  // actions
-		"https://github.com/kinorai/omnifeed/actions/runs/1",           // actions run
-		"https://github.com/kinorai/omnifeed/wiki",                     // wiki
-		"https://github.com/kinorai/omnifeed/compare/v1...v2",          // compare
-		"https://github.com/kinorai/omnifeed/settings",                 // settings
-		"https://github.com/kinorai/omnifeed/commits/main",             // commit list
-		"https://github.com/kinorai/omnifeed/commit/xyz",               // not a sha
-		"https://github.com/kinorai/omnifeed/discussions/7",            // discussions need a token
-		"https://github.com/kinorai/omnifeed/discussions",              // discussion list
-		"https://github.com/search",                                    // site page
-		"https://github.com/topics/go",                                 // reserved owner
-		"https://github.com/orgs/kinorai",                              // reserved owner
-		"https://github.com/orgs/kinorai/discussions/1",                // org discussion, not a repo
-		"https://github.com/settings/profile",                          // reserved owner
-		"https://gist.github.com/kinorai",                              // gist user page
-		"https://gist.github.com/abc",                                  // short bare segment
-		"https://docs.github.com/en/rest/repos",                        // other subdomain
-		"https://example.com/kinorai/omnifeed/issues/12",               // not GitHub
-		"https://github.com.evil.com/kinorai/omnifeed/issues/12",       // lookalike host
-		"https://raw.githubusercontent.com/kinorai/omnifeed/issues/12", // not github.com
+		"https://github.com/some.owner/repo/issues/1",                       // dot in an owner name
+		"https://github.com/kinorai",                                        // owner
+		"https://github.com/kinorai/omnifeed/issues",                        // issue list
+		"https://github.com/kinorai/omnifeed/pulls",                         // PR list
+		"https://github.com/kinorai/omnifeed/issues/abc",                    // non-numeric
+		"https://github.com/kinorai/omnifeed/pull/3/files",                  // sub-page
+		"https://github.com/kinorai/omnifeed/blob/main",                     // blob without a path
+		"https://github.com/kinorai/omnifeed/blob/main/../../x/y/README.md", // dot segments leave the repo
+		"https://github.com/kinorai/omnifeed/tree/main/%2e%2e/%2e%2e/x/y",   // encoded dot segments
+		"https://github.com/kinorai/omnifeed/blob/main/./README.md",         // dot segment
+		"https://github.com/kinorai/omnifeed/actions",                       // actions
+		"https://github.com/kinorai/omnifeed/actions/runs/1",                // actions run
+		"https://github.com/kinorai/omnifeed/wiki",                          // wiki
+		"https://github.com/kinorai/omnifeed/compare/v1...v2",               // compare
+		"https://github.com/kinorai/omnifeed/settings",                      // settings
+		"https://github.com/kinorai/omnifeed/commits/main",                  // commit list
+		"https://github.com/kinorai/omnifeed/commit/xyz",                    // not a sha
+		"https://github.com/kinorai/omnifeed/discussions/7",                 // discussions need a token
+		"https://github.com/kinorai/omnifeed/discussions",                   // discussion list
+		"https://github.com/search",                                         // site page
+		"https://github.com/topics/go",                                      // reserved owner
+		"https://github.com/orgs/kinorai",                                   // reserved owner
+		"https://github.com/orgs/kinorai/discussions/1",                     // org discussion, not a repo
+		"https://github.com/settings/profile",                               // reserved owner
+		"https://gist.github.com/kinorai",                                   // gist user page
+		"https://gist.github.com/abc",                                       // short bare segment
+		"https://docs.github.com/en/rest/repos",                             // other subdomain
+		"https://example.com/kinorai/omnifeed/issues/12",                    // not GitHub
+		"https://github.com.evil.com/kinorai/omnifeed/issues/12",            // lookalike host
+		"https://raw.githubusercontent.com/kinorai/omnifeed/issues/12",      // not github.com
 	}
 	for _, u := range fallThrough {
 		if e.Matches(u) {

@@ -117,6 +117,12 @@ func parseTarget(rawURL string) (target, bool) {
 		return target{kind: kindRepo, owner: m[1], repo: m[2]}, true
 	}
 	if m := blobTreeRE.FindStringSubmatch(p); m != nil {
+		// The ref and path go into a contents API URL that carries the
+		// operator's token: a "." or ".." segment could point that request
+		// at another repository the token can read.
+		if hasDotSegment(m[4]) {
+			return target{}, false
+		}
 		k := kindBlob
 		if m[3] == "tree" {
 			k = kindTree
@@ -167,6 +173,16 @@ func refSplits(rest string, needPath bool) []refPath {
 		out = append(out, rp)
 	}
 	return out
+}
+
+// hasDotSegment reports whether a "/"-separated path has a "." or ".." segment.
+func hasDotSegment(p string) bool {
+	for _, s := range strings.Split(p, "/") {
+		if s == "." || s == ".." {
+			return true
+		}
+	}
+	return false
 }
 
 // escapePath escapes each segment of a repository path for an API URL.
