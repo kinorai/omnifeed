@@ -115,7 +115,7 @@ services:
   #   docker compose --profile redis up
   # and uncomment OMNIFEED_REDIS_URL on the proxy service above.
   redis:
-    image: redis:8.10.1-alpine
+    image: redis:8.10.3-alpine
     container_name: omnifeed-redis
     profiles: ["redis"]
     # No password: this listens on the compose network only, and no omnifeed
