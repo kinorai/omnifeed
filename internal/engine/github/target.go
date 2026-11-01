@@ -105,6 +105,13 @@ func parseTarget(rawURL string) (target, bool) {
 	if owner, _, _ := strings.Cut(strings.TrimPrefix(p, "/"), "/"); reservedOwners[strings.ToLower(owner)] {
 		return target{}, false
 	}
+	// The repository name, ref, path and tag go into API URLs that carry the
+	// operator's token: a "." or ".." segment anywhere could point a request
+	// at another repository the token can read. GitHub's own links never
+	// have one.
+	if hasDotSegment(p) {
+		return target{}, false
+	}
 
 	if m := issuePullRE.FindStringSubmatch(p); m != nil {
 		t := target{kind: kindIssue, owner: m[1], repo: m[2], number: m[4], pull: m[3] == "pull"}
@@ -117,12 +124,6 @@ func parseTarget(rawURL string) (target, bool) {
 		return target{kind: kindRepo, owner: m[1], repo: m[2]}, true
 	}
 	if m := blobTreeRE.FindStringSubmatch(p); m != nil {
-		// The ref and path go into a contents API URL that carries the
-		// operator's token: a "." or ".." segment could point that request
-		// at another repository the token can read.
-		if hasDotSegment(m[4]) {
-			return target{}, false
-		}
 		k := kindBlob
 		if m[3] == "tree" {
 			k = kindTree
@@ -177,7 +178,7 @@ func refSplits(rest string, needPath bool) []refPath {
 
 // hasDotSegment reports whether a "/"-separated path has a "." or ".." segment.
 func hasDotSegment(p string) bool {
-	for _, s := range strings.Split(p, "/") {
+	for s := range strings.SplitSeq(p, "/") {
 		if s == "." || s == ".." {
 			return true
 		}

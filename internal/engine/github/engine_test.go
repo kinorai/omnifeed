@@ -61,6 +61,9 @@ func TestMatches(t *testing.T) {
 		"https://github.com/kinorai/omnifeed/blob/main/../../x/y/README.md", // dot segments leave the repo
 		"https://github.com/kinorai/omnifeed/tree/main/%2e%2e/%2e%2e/x/y",   // encoded dot segments
 		"https://github.com/kinorai/omnifeed/blob/main/./README.md",         // dot segment
+		"https://github.com/kinorai/../tree/main/x",                         // dot-dot repository name
+		"https://github.com/kinorai/./issues/1",                             // dot repository name
+		"https://github.com/kinorai/omnifeed/releases/tag/..",               // dot-dot tag
 		"https://github.com/kinorai/omnifeed/actions",                       // actions
 		"https://github.com/kinorai/omnifeed/actions/runs/1",                // actions run
 		"https://github.com/kinorai/omnifeed/wiki",                          // wiki
