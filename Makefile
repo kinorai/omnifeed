@@ -168,10 +168,11 @@ install-tools: ## Install the tools tools/go.mod does not pin (golangci-lint, go
 	# with golangci-lint v1" — a confusing failure a long way from its cause.
 	# Upstream does not recommend `go install` at all (the binary depends on the
 	# local Go version); CI uses golangci-lint-action, which downloads a build.
-	$(GO) install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
+	# Same versions as the golangci-lint and goreleaser steps in .github/workflows/ci.yml.
+	$(GO) install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0
 	# goreleaser stays a binary too: CI runs goreleaser-action, and its module
 	# graph (every cloud SDK it publishes to) would dwarf the rest of tools/.
-	$(GO) install github.com/goreleaser/goreleaser/v2@latest
+	$(GO) install github.com/goreleaser/goreleaser/v2@v2.19.0
 	# Same version as GOMARKDOC_VERSION in .github/workflows/docs.yml.
 	$(GO) install github.com/princjef/gomarkdoc/cmd/gomarkdoc@v1.1.0
 	# govulncheck needs no install: `go tool` builds it from tools/go.mod.
