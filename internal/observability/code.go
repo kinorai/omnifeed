@@ -25,6 +25,7 @@ const (
 	CodeUpstreamError  ErrorCode = "upstream_error"
 	CodeQuotaExhausted ErrorCode = "quota_exhausted"
 	CodeInvalidRequest ErrorCode = "invalid_request"
+	CodeDNSBlocked     ErrorCode = "dns_blocked"
 )
 
 // Failure is the caller-facing classification of a failed call.
@@ -60,6 +61,7 @@ var codeFor = map[domain.FailureKind]struct {
 	domain.KindBadResponse:      {CodeUpstreamError, true},
 	domain.KindLayout:           {CodeUpstreamError, false},
 	domain.KindQuotaExhausted:   {CodeQuotaExhausted, true},
+	domain.KindDNSBlocked:       {CodeDNSBlocked, false},
 	domain.KindError:            {CodeUpstreamError, false},
 }
 

@@ -108,6 +108,7 @@ func TestToolsCall_ToolErrorCodes(t *testing.T) {
 		{&domain.FetchError{Kind: domain.KindUpstreamRejected}, "upstream_error", false},
 		{&domain.FetchError{Kind: domain.KindBadResponse}, "upstream_error", true},
 		{&domain.FetchError{Kind: domain.KindQuotaExhausted, RetryAfter: 3 * time.Second}, "quota_exhausted", true},
+		{&domain.FetchError{Kind: domain.KindDNSBlocked}, "dns_blocked", false},
 		{fmt.Errorf("url rejected: %w", &domain.InvalidRequestError{Err: errors.New(`scheme "file" not allowed`)}), "invalid_request", false},
 	}
 	for _, tc := range cases {

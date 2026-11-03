@@ -17,6 +17,7 @@ message is for humans and changes wording between releases.
 | `upstream_error` | crawl4ai, SearXNG or a source API failed, or the failure could not be classified. | see the `retryable` flag | Retry when `retryable` is true. |
 | `quota_exhausted` | omnifeed's own per-host pacing quota is spent; nothing was sent. | yes | Wait `retry_after_s`, then retry. |
 | `invalid_request` | The request itself is wrong: a malformed URL, a non-http(s) scheme, or a private address. | no | Fix the request. |
+| `dns_blocked` | omnifeed's DNS resolver answered `0.0.0.0` (or `::`) for the host: a DNS filter (Blocky, Pi-hole, AdGuard) blocks the name. Nothing was fetched. | no | Use another URL or source, or unblock the name in the filter. |
 
 ## Mapping from failure reasons
 
@@ -40,6 +41,7 @@ finer-grained than the codes. Each reason maps to exactly one code:
 | `layout` | `upstream_error` | no (the page rendered but its markup could not be read: the engine's extraction needs updating) |
 | `error` | `upstream_error` | no |
 | `quota_exhausted` | `quota_exhausted` | yes |
+| `dns_blocked` | `dns_blocked` | no (the URL is refused before any fetch, like a private address; only the reason differs) |
 | (URL rejected before any fetch) | `invalid_request` | no |
 
 ### How crawl4ai failures are classified

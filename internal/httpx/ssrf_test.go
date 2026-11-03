@@ -172,6 +172,52 @@ func TestIsReservedAddr(t *testing.T) {
 	}
 }
 
+// A DNS filter's sinkhole answer (every address 0.0.0.0 or ::) is refused as
+// a DNSBlockedError; a name that resolves to a real private or loopback
+// address, or to a sinkhole address next to a real one, keeps the
+// private/reserved error. Both are refused: only the type differs.
+func TestValidateURLDNSBlocked(t *testing.T) {
+	stubLookup(t, map[string][]string{
+		"umami.is":        {"0.0.0.0"},
+		"rybbit.com":      {"0.0.0.0", "::"},
+		"openpanel.dev":   {"::"},
+		"mapped.sinkhole": {"::ffff:0.0.0.0"},
+		"private.example": {"10.0.0.5"},
+		"loop.example":    {"127.0.0.1"},
+		"link.example":    {"169.254.169.254"},
+		"mixed.example":   {"0.0.0.0", "93.184.215.14"},
+	})
+	for host, wantAddr := range map[string]string{
+		"umami.is": "0.0.0.0", "rybbit.com": "0.0.0.0", "openpanel.dev": "::", "mapped.sinkhole": "0.0.0.0",
+	} {
+		err := ValidateURL("https://"+host+"/", true)
+		var dbe *DNSBlockedError
+		if !errors.As(err, &dbe) || dbe.Host != host || dbe.Addr.String() != wantAddr {
+			t.Errorf("%s: err = %v, want DNSBlockedError{%s, %s}", host, err, host, wantAddr)
+			continue
+		}
+		if want := "the resolver answered " + wantAddr + " for " + host + ": a DNS filter blocks this name"; err.Error() != want {
+			t.Errorf("%s: message = %q, want %q", host, err.Error(), want)
+		}
+	}
+	for _, host := range []string{"private.example", "loop.example", "link.example", "mixed.example"} {
+		err := ValidateURL("https://"+host+"/", true)
+		var dbe *DNSBlockedError
+		if err == nil || errors.As(err, &dbe) {
+			t.Errorf("%s: err = %v, want the private/reserved refusal", host, err)
+		}
+	}
+	// A literal 0.0.0.0 is the caller's own URL, not a resolver's answer.
+	var dbe *DNSBlockedError
+	if err := ValidateURL("http://0.0.0.0/", true); err == nil || errors.As(err, &dbe) {
+		t.Errorf("literal 0.0.0.0: err = %v, want the private/reserved refusal", err)
+	}
+	// blockPrivate off never looks the name up.
+	if err := ValidateURL("https://umami.is/", false); err != nil {
+		t.Errorf("blockPrivate=false: err = %v", err)
+	}
+}
+
 // A name that does not exist is told apart from a resolver that failed, so
 // the caller can blame the URL only for the first; redirect hops skip DNS.
 func TestValidateURLResolveErrors(t *testing.T) {
