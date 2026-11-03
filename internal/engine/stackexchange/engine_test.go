@@ -46,6 +46,7 @@ func TestMatches(t *testing.T) {
 		"https://meta.stackoverflow.com/questions/1/x",
 		"https://meta.stackexchange.com/questions/1/x",
 		"https://meta.unix.stackexchange.com/questions/1/x",
+		"https://unix.meta.stackexchange.com/questions/1/x",
 	}
 	for _, u := range claim {
 		if !e.Matches(u) {
@@ -100,6 +101,7 @@ func TestParseTarget(t *testing.T) {
 		{"https://meta.stackoverflow.com/questions/6/x", "meta.stackoverflow", "6", ""},
 		{"https://meta.stackexchange.com/questions/7/x", "meta", "7", ""},
 		{"https://meta.unix.stackexchange.com/questions/8/x", "meta.unix", "8", ""},
+		{"https://unix.meta.stackexchange.com/questions/9/x", "unix.meta.stackexchange.com", "9", ""},
 	}
 	for _, tc := range cases {
 		got, ok := parseTarget(tc.url)

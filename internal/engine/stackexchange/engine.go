@@ -43,9 +43,10 @@ const (
 // form), and the share links /q/{id} and /a/{answerId}, each with the optional
 // trailing /{userId} the share button appends. Everything else on a Stack
 // Exchange host (/questions/tagged/…, /questions/ask, /users/…, /tags, /search)
-// falls through. Groups: 1 = question id, 2 = answer id from the permalink,
-// 3 = short-link kind (q|a), 4 = its id.
-var questionRE = regexp.MustCompile(`^/(?:questions/([0-9]+)(?:/[^/]*(?:/([0-9]+))?)?|(q|a)/([0-9]+)(?:/[0-9]+)?)/?$`)
+// falls through. Groups: 1 = question id, 2 = short-link kind (q|a), 3 = its
+// id. The permalink's answer id is matched but not captured: the question id
+// already names the thread.
+var questionRE = regexp.MustCompile(`^/(?:questions/([0-9]+)(?:/[^/]*(?:/[0-9]+)?)?|(q|a)/([0-9]+)(?:/[0-9]+)?)/?$`)
 
 // throttleWaitRE reads the wait out of a throttle_violation message ("too many
 // requests from this IP, more requests available in 79007 seconds").
@@ -148,10 +149,10 @@ func parseTarget(rawURL string) (target, bool) {
 	switch {
 	case m[1] != "":
 		t.questionID = m[1] // /questions/{id}[/{slug}[/{answerId}]]: the question is known
-	case m[3] == "q":
-		t.questionID = m[4]
+	case m[2] == "q":
+		t.questionID = m[3]
 	default:
-		t.answerID = m[4]
+		t.answerID = m[3]
 	}
 	return t, true
 }
@@ -159,10 +160,15 @@ func parseTarget(rawURL string) (target, bool) {
 // siteFor maps a host (www. already stripped) to its API site parameter. A
 // meta site takes the parameter of its parent prefixed with "meta."
 // (meta.stackoverflow.com → meta.stackoverflow, meta.unix.stackexchange.com →
-// meta.unix); meta.stackexchange.com is itself the {name} form, "meta".
+// meta.unix); meta.stackexchange.com is itself the {name} form, "meta". A
+// child meta's current host, {name}.meta.stackexchange.com, is passed as is:
+// the API also takes a site's full domain as its site parameter.
 func siteFor(host string) (string, bool) {
 	if s, ok := siteHosts[host]; ok {
 		return s, true
+	}
+	if name, ok := strings.CutSuffix(host, ".meta.stackexchange.com"); ok && isLabel(name) && !nonSiteSubdomains[name] {
+		return host, true
 	}
 	if rest, ok := strings.CutPrefix(host, "meta."); ok {
 		if s, ok := siteHosts[rest]; ok {
@@ -356,14 +362,18 @@ func get[T any](ctx context.Context, e *Engine, site, path string, params url.Va
 		}
 		return apiWrapper[T]{}, &domain.FetchError{Kind: domain.KindBadResponse, Err: fmt.Errorf("parse response: %w", jerr)}
 	}
-	if w.Backoff > 0 {
-		e.holdOff(ctx, apiURL, time.Duration(w.Backoff)*time.Second)
-	}
+	// One response is one penalty: a throttle_violation can carry both a
+	// backoff and its own wait, so hold off once, for the longer of the two.
+	wait := time.Duration(w.Backoff) * time.Second
+	var ferr *domain.FetchError
 	if w.ErrorID != 0 || resp.StatusCode != http.StatusOK {
-		ferr := classifyAPIError(resp.StatusCode, w.ErrorID, w.ErrorName, w.ErrorMessage)
-		if ferr.RetryAfter > 0 {
-			e.holdOff(ctx, apiURL, ferr.RetryAfter)
-		}
+		ferr = classifyAPIError(resp.StatusCode, w.ErrorID, w.ErrorName, w.ErrorMessage)
+		wait = max(wait, ferr.RetryAfter)
+	}
+	if wait > 0 {
+		e.holdOff(ctx, apiURL, wait)
+	}
+	if ferr != nil {
 		return apiWrapper[T]{}, ferr
 	}
 	return w, nil
