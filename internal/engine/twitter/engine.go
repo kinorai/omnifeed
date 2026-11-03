@@ -306,7 +306,7 @@ func (e *Engine) resolveShortLink(ctx context.Context, rawURL string) (string, e
 	if err := httpx.ValidateURLContext(ctx, dest, e.blockPrivate); err != nil {
 		// Final: the registry's fallback would hand the t.co URL to a browser
 		// that follows the redirect to the destination just rejected.
-		return "", domain.NoFallback(&domain.FetchError{Kind: domain.KindError, Err: fmt.Errorf("t.co destination rejected: %w", err)})
+		return "", domain.NoFallback(&domain.FetchError{Kind: httpx.RejectedKind(err), Err: fmt.Errorf("t.co destination rejected: %w", err)})
 	}
 	return dest, nil
 }

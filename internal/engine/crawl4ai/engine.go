@@ -944,7 +944,7 @@ func (e *Engine) checkFinalURL(ctx context.Context, rawURL, final string) error 
 		return nil
 	}
 	if err := httpx.ValidateURLContext(ctx, final, e.blockPrivate); err != nil {
-		return domain.NoFallback(&domain.FetchError{Kind: domain.KindError, Err: fmt.Errorf("redirect target rejected: %w", err)})
+		return domain.NoFallback(&domain.FetchError{Kind: httpx.RejectedKind(err), Err: fmt.Errorf("redirect target rejected: %w", err)})
 	}
 	return nil
 }
