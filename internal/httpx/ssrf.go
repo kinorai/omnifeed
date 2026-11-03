@@ -9,6 +9,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/kinorai/omnifeed/internal/domain"
 )
 
 // lookupTimeout bounds ValidateURL's DNS lookup.
@@ -77,6 +79,17 @@ type DNSBlockedError struct {
 
 func (e *DNSBlockedError) Error() string {
 	return fmt.Sprintf("the resolver answered %s for %s: a DNS filter blocks this name", e.Addr, e.Host)
+}
+
+// RejectedKind is the failure kind of a URL ValidateURL refused after a fetch
+// had already started (a redirect hop): dns_blocked for a DNS filter's
+// sinkhole answer, so a filtered host is not counted as a crawl error, and
+// error otherwise.
+func RejectedKind(err error) domain.FailureKind {
+	if _, ok := errors.AsType[*DNSBlockedError](err); ok {
+		return domain.KindDNSBlocked
+	}
+	return domain.KindError
 }
 
 // validateURL is ValidateURL; resolve=false skips the DNS step, for callers
