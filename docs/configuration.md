@@ -7,12 +7,13 @@ The **binary** reads every variable below. The Apple `container` launcher has a 
 `OMNIFEED_` variables of its own, for container names, host ports and images, which
 the binary never sees. They are in [apple-container.md](apple-container.md).
 
-**Egress.** Reddit and the generic fallback reach the web through crawl4ai. Five
+**Egress.** Reddit and the generic fallback reach the web through crawl4ai. Six
 engines call their upstream directly: Hacker News reads `hn.algolia.com`, GitHub reads
 `api.github.com`, Bluesky reads `public.api.bsky.app`, Discourse reads each host in
-`OMNIFEED_DISCOURSE_HOSTS`, and Twitter/X reads `api.fxtwitter.com` (or
-`OMNIFEED_TWITTER_FXTWITTER_URL`), `cdn.syndication.twimg.com`, `api.vxtwitter.com` and
-`t.co`. If outbound traffic may reach only crawl4ai, those five **break**; Twitter/X then
+`OMNIFEED_DISCOURSE_HOSTS`, Stack Exchange reads `api.stackexchange.com`, and Twitter/X
+reads `api.fxtwitter.com` (or `OMNIFEED_TWITTER_FXTWITTER_URL`), `cdn.syndication.twimg.com`,
+`api.vxtwitter.com` and `t.co`. If outbound traffic may reach only crawl4ai, those six
+**break**; Twitter/X then
 falls back to crawl4ai on the `x.com` URL. Restrict crawl4ai's own egress to public
 addresses with a network policy or firewall: its browser follows redirects that omnifeed
 cannot check before they are fetched ([SECURITY.md](../SECURITY.md)).
@@ -66,6 +67,7 @@ cannot check before they are fetched ([SECURITY.md](../SECURITY.md)).
 | `OMNIFEED_TINYFISH_MAX_WAIT` | `5s` | How long a TinyFish query may wait for a pacing slot before it fails with `quota_exhausted`. `0` means the 5s default, not unbounded. |
 | `OMNIFEED_FETCH_MAX_CHARS` | `120000` | Default cap on **markdown** returned by `fetch_url`. `0` is unlimited. Over the cap, the reply ends with a resumable truncation marker. TOON and JSON output from the dedicated engines is never cut; use their own limits. Doesn't apply to `/crawl`. See [Controlling fetched content size](#controlling-fetched-content-size). |
 | `OMNIFEED_GITHUB_TOKEN` | _(unset)_ | Personal access token for the GitHub engine. Anonymous access allows 60 requests per hour per IP. A token raises it to 5000. A repository root costs 3 requests, most other pages 1. Discussions need it: they are read through GraphQL, which refuses anonymous callers, so without a token discussion URLs go to the generic fallback. A fine-grained token with no extra permissions (public repositories, read-only) is enough. |
+| `OMNIFEED_STACKEXCHANGE_KEY` | _(unset)_ | App key for the Stack Exchange engine, registered on [Stack Apps](https://stackapps.com/apps/oauth/register). Keyless access allows 300 requests a day per IP, shared with every other keyless client on that IP. A key raises it to 10,000. A question costs 2 requests (question, then answers by votes), an `/a/{id}` short link 3. Stack Exchange does not treat the key as a secret: it travels in the query string, so it shows in traces of the outgoing call. |
 | `OMNIFEED_DISCOURSE_HOSTS` | `meta.discourse.org,discuss.python.org,users.rust-lang.org,internals.rust-lang.org,discuss.pytorch.org` | Hostnames where the Discourse engine claims `/t/…` topic URLs. Discourse runs on **arbitrary** domains and the engine can't detect it, so **list the forums you use**. Matching is exact and case-insensitive, with no subdomain wildcards. Unlisted forums go through the generic browser fallback, which returns less of the thread. An **empty string** disables the engine. |
 | `OMNIFEED_TWITTER_ENABLED` | `true` | Render X/Twitter post URLs (`x.com`, `twitter.com`, `fxtwitter.com`, `fixupx.com`, `vxtwitter.com`, `fixvx.com`, and `t.co` links that land on a post) with the Twitter engine. `false` sends them to the generic fallback, which loads `x.com` in crawl4ai. See [Twitter/X posts](#twitterx-posts). |
 | `OMNIFEED_TWITTER_FXTWITTER_URL` | `https://api.fxtwitter.com` | Base URL of the FxTwitter API the engine reads first. Point it at a **self-hosted [FxEmbed](https://github.com/FxEmbed/FxEmbed)** to stop depending on the public instance. |
@@ -98,7 +100,7 @@ cannot check before they are fetched ([SECURITY.md](../SECURITY.md)).
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | _(unset)_ | Turns on [tracing](#tracing): base URL of an OTLP/HTTP collector, e.g. `http://vtsingle-traces.monitoring.svc:10428/insert/opentelemetry`. The exporter appends `/v1/traces`. Unset means no tracing and no overhead. The standard OpenTelemetry name, so the exporter's other `OTEL_EXPORTER_OTLP_*` variables (headers, timeout) apply too. |
 | `OTEL_SERVICE_NAME` | `omnifeed` | `service.name` on every span |
 | `OMNIFEED_CACHE_ENABLED` | `true` | Cache successful `fetch_url` and `POST /crawl` results. See [Response cache](#response-cache). |
-| `OMNIFEED_CACHE_TTL_THREADS` | `10m` | How long a result from a dedicated engine (Reddit, Hacker News, Discourse, Bluesky, GitHub) stays cached. `0` turns caching off for them. |
+| `OMNIFEED_CACHE_TTL_THREADS` | `10m` | How long a result from a dedicated engine (Reddit, Hacker News, Discourse, Bluesky, GitHub, Stack Exchange) stays cached. `0` turns caching off for them. |
 | `OMNIFEED_CACHE_TTL_PAGES` | `30m` | How long a generic page (the crawl4ai engine) stays cached. `0` turns caching off for them. |
 | `OMNIFEED_CACHE_MAX_BYTES` | `67108864` (64 MiB) | Size of the in-process LRU, used when `OMNIFEED_REDIS_URL` is unset, or when Redis refuses the cache's keys (see [Response cache](#response-cache)). Approximate: content plus metadata plus a small per-entry overhead. Per pod. |
 | `OMNIFEED_CACHE_MAX_ITEM_BYTES` | `4194304` (4 MiB) | Largest single entry. In Redis it is the gzip-compressed size, in memory the raw size. A bigger result is still returned, just not cached. |
@@ -233,7 +235,7 @@ Caps never reorder output. Comments stay in HN's order, and breadth-first select
 
 ## Dedicated-engine fallback
 
-When a dedicated engine (Reddit, Hacker News, GitHub, Discourse, Bluesky) fails,
+When a dedicated engine (Reddit, Hacker News, GitHub, Discourse, Bluesky, Stack Exchange) fails,
 the generic browser engine renders the same URL instead, with three exceptions:
 
 - **The caller passed `format`** (`json` or `toon`, on `fetch_url` or
@@ -248,10 +250,12 @@ the generic browser engine renders the same URL instead, with three exceptions:
 - **The engine marked its error final** (`domain.NoFallback`): the Twitter/X
   engine already tried the generic render itself, so a second one is skipped.
 
-GitHub, Hacker News and Bluesky read a separate API host (`api.github.com`,
-`hn.algolia.com`, the Bluesky AppView). Their blocks and quota refusals are about
-that API host, not the page, so they still fall back: an anonymous GitHub
-deployment over its 60 requests per hour renders `github.com` instead. An engine
+GitHub, Hacker News, Bluesky and Stack Exchange read a separate API host
+(`api.github.com`, `hn.algolia.com`, the Bluesky AppView, `api.stackexchange.com`).
+Their blocks and quota refusals are about that API host, not the page, so they
+still fall back: an anonymous GitHub deployment over its 60 requests per hour
+renders `github.com` instead. (For Stack Exchange the render usually fails too:
+Cloudflare answers crawl4ai on the question pages with a 403.) An engine
 declares the page's host by implementing `domain.SameHostEngine`.
 
 A fallback result is marked. `_meta` (or the loader's `metadata`) carries
@@ -424,7 +428,7 @@ nothing.
 | Engine | Budget | Set by | Notes |
 |---|---|---|---|
 | Hacker News | 30 s per crawl | fixed (`internal/engine/hackernews`) | Wall clock for the whole crawl, including the pacing wait and retries against `hn.algolia.com`. |
-| GitHub, Discourse, Bluesky | 30 s per crawl | fixed, per engine | Same shape as Hacker News. |
+| GitHub, Discourse, Bluesky, Stack Exchange | 30 s per crawl | fixed, per engine | Same shape as Hacker News. |
 | Reddit | 4 min per crawl | `OMNIFEED_REDDIT_TIMEOUT` | Wall clock for the whole crawl: pacing wait, share-link resolve, thread fetch and every `morechildren` round. A round cut off by the deadline returns what was loaded, flagged [partial](#partial-reddit-threads). Each browser call inside it is also bounded by `OMNIFEED_CRAWL4AI_TIMEOUT`. |
 | Generic page (crawl4ai) | 90 s per crawl4ai call | `OMNIFEED_CRAWL4AI_TIMEOUT` | Inside each call, crawl4ai's own `page_timeout` is 60 s (the most crawl4ai accepts over REST), so crawl4ai normally answers before omnifeed's 90 s run out. There is no overall cap on a generic crawl: a transient failure is retried once, a Playwright navigation race once with `networkidle`, a blocked page once under the alternate browser identity, a thin page once without the excluded selector, and a page that turns out to be a PDF once through crawl4ai's PDF strategy, so the worst case is several 90 s calls. |
 | SearXNG search | 15 s per attempt | `OMNIFEED_SEARXNG_TIMEOUT` | Up to 3 attempts with backoff, after a pacing wait of up to `OMNIFEED_SEARXNG_MAX_WAIT` (15 s by default). |
@@ -436,7 +440,7 @@ Suggested client timeouts:
   client by the same amount.
 - **Generic pages: at least 200 s.** Most pages take seconds, but a slow page
   with a retry can take two crawl4ai calls.
-- **Hacker News, GitHub, Discourse, Bluesky: at least 45 s.**
+- **Hacker News, GitHub, Discourse, Bluesky, Stack Exchange: at least 45 s.**
 - **web_search / `POST /search`: at least 75 s.**
 
 The loader (`/crawl`, `/search`) and MCP listeners stop writing a response after
@@ -470,7 +474,7 @@ MCP log lines worth knowing:
 Off unless `OTEL_EXPORTER_OTLP_ENDPOINT` is set. Then omnifeed exports OpenTelemetry traces over OTLP/HTTP, sampling parent-based and always-on, and propagates W3C `traceparent`:
 
 - Incoming: a server span per request on the loader and MCP servers, continuing the caller's `traceparent`. Spans are named by route (`POST /mcp`); `/livez`, `/readyz` and `/metrics` are not traced.
-- Outgoing: every call on the shared client (crawl4ai, SearXNG, GitHub, Hacker News, Bluesky, Discourse, FxTwitter) is a client span and sends `traceparent`. Direct fetches of target sites (the raw-text bypass, Twitter redirects) use their own guarded client and are not traced.
+- Outgoing: every call on the shared client (crawl4ai, SearXNG, GitHub, Hacker News, Bluesky, Discourse, Stack Exchange, FxTwitter) is a client span and sends `traceparent`. Direct fetches of target sites (the raw-text bypass, Twitter redirects) use their own guarded client and are not traced.
 - Inside: `mcp.tool` (`mcp.tool`, `mcp.client`), `engine.dispatch` and `engine.fallback` (`engine`, `fallback.from`, `fallback.reason`, `error.reason`), `limiter.wait` (`limiter.scope`, `engine`, `limiter.outcome`), `crawl4ai.rung` (`rung`: `base`, `pdf`, `networkidle`, `alt_fingerprint`, `no_selector`, `pdf_retry`; `attempt`), `cache.get` and `cache.set` (`cache.result`).
 
 Spans never carry a URL, a query or a path. Hosts appear as `server.address`. Before export, `url.full`, `url.query`, `url.path` and caller addresses are dropped, and URLs inside error texts are cut to `scheme://host`. On shutdown, omnifeed flushes buffered spans after the servers drain.
@@ -492,13 +496,13 @@ Served at `/metrics` on `OMNIFEED_METRICS_ADDR`, default `:9090`, alongside the 
 | `omnifeed_requests_total` | counter | `engine, tenant, status, reason, cache` | Crawl requests, with a bounded failure `reason`, `ok` on success. `cache` is `hit`, `miss`, `bypass` (`no_cache`) or `off` (cache disabled). Errors are never served from the cache, so they carry `miss`, `bypass` or `off` |
 | `omnifeed_request_seconds` | histogram | `engine, status, reason` | End-to-end crawl latency. **Cache hits are excluded**: they never reach an engine, and their microseconds would drag the quantiles down as the hit rate rose |
 | `omnifeed_request_attempts_total` | counter | `upstream, attempt` | HTTP attempts by the retrying client, `first` or `retry` |
-| `omnifeed_upstream_seconds` | histogram | `upstream, op, status` | Upstream round-trip per attempt, from start until the body is read: `crawl4ai/crawl`, `crawl4ai/execute_js`, `searxng/search`, `searxng/config`, `github/api`, `hackernews/api`, `discourse/api` |
+| `omnifeed_upstream_seconds` | histogram | `upstream, op, status` | Upstream round-trip per attempt, from start until the body is read: `crawl4ai/crawl`, `crawl4ai/execute_js`, `searxng/search`, `searxng/config`, `github/api`, `hackernews/api`, `discourse/api`, `stackexchange/api` |
 | `omnifeed_domain_limiter_wait_seconds` | histogram | `engine, outcome` | Time blocked acquiring the per-domain limiter, semaphore plus delay. `outcome="canceled"`: the wait died in the queue. `outcome="budget_exceeded"`: the wait exceeded the caller's remaining deadline, so nothing queued; about 0 seconds, with `reason="quota_exhausted"` on the request metric |
 | `omnifeed_ratelimit_backend_errors_total` | counter | `op` | Failed Redis operations in the distributed limiter. On `acquire` the limiter paces in process. `release` and `penalize` failures cost only pacing accuracy. `reddit_method_read`, `reddit_method_hold` and `reddit_method_clear` are the Reddit method chain's shared holds: on a failure each pod keeps its holds in memory for 30s |
-| `omnifeed_ratelimit_penalties_total` | counter | `upstream` | Upstream `Retry-After` headers, on 429 or 503, turned into a hold on that host. `upstream="reddit"` counts Reddit's own back-off headers read inside the browser. This often precedes a CAPTCHA or block |
+| `omnifeed_ratelimit_penalties_total` | counter | `upstream` | Upstream `Retry-After` headers, on 429 or 503, turned into a hold on that host. `upstream="reddit"` counts Reddit's own back-off headers read inside the browser. `upstream="stackexchange"` counts the Stack Exchange API's `backoff` field and the wait a `throttle_violation` names, which it sends in the JSON body instead of a header. This often precedes a CAPTCHA or block |
 | `omnifeed_ratelimit_degraded` | gauge | `scope` | `1` while pacing falls back to per-pod limits because Redis is unreachable, `0` while shared. Exists only when `OMNIFEED_REDIS_URL` is set, published at `0` on startup. One series per limiter scope, `domain` for crawling, `searxng` for queries and `reddit` for the Reddit request quota when set, `reddit_methods` for the Reddit method chain's shared holds, each degrading and recovering on its own |
 | `omnifeed_response_chars` | histogram | `engine` | Engine output length before any `max_chars` truncation, successful crawls only |
-| `omnifeed_engine_fallbacks_total` | counter | `from_engine, reason` | Dedicated-engine failures re-crawled by the generic fallback. Block and rate reasons appear only for separate-host engines (GitHub, Hacker News, Bluesky), see [Dedicated-engine fallback](#dedicated-engine-fallback) |
+| `omnifeed_engine_fallbacks_total` | counter | `from_engine, reason` | Dedicated-engine failures re-crawled by the generic fallback. Block and rate reasons appear only for separate-host engines (GitHub, Hacker News, Bluesky, Stack Exchange), see [Dedicated-engine fallback](#dedicated-engine-fallback) |
 | `omnifeed_searxng_unresponsive_engines_total` | counter | `engine, error` | Engines SearXNG reported unresponsive, per search. `error` is one of `timeout`, `captcha`, `suspended`, `too_many_requests`, `access_denied`, `error`, `unknown` |
 | `omnifeed_searxng_engine_results_total` | counter | `engine` | Result rows per SearXNG engine. A blocked engine keeps answering 200 with zero results, so its series goes flat while the rest of the pool moves. Alert on that divergence. Starts at 0 at startup for known engines (see below). Pair it with `absent_over_time()` all the same: an engine nothing names at startup has no series until a response names it |
 | `omnifeed_searxng_queries_total` | counter | `scoped` | Queries **sent** to SearXNG after the limiter, the rate the engines see. Compare with `omnifeed_search_requests_total` to see what pacing refused |

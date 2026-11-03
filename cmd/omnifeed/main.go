@@ -29,6 +29,7 @@ import (
 	"github.com/kinorai/omnifeed/internal/engine/hackernews"
 	"github.com/kinorai/omnifeed/internal/engine/reddit"
 	"github.com/kinorai/omnifeed/internal/engine/reddit/redisstate"
+	"github.com/kinorai/omnifeed/internal/engine/stackexchange"
 	"github.com/kinorai/omnifeed/internal/engine/twitter"
 	"github.com/kinorai/omnifeed/internal/fetchcache"
 	"github.com/kinorai/omnifeed/internal/httpx"
@@ -269,11 +270,11 @@ func run(cfg config.Config, logger *slog.Logger) error {
 		BlockPrivateIPs:  cfg.BlockPrivateIPs,
 	})
 
-	// The Hacker News, GitHub, Discourse and Bluesky engines read their public
-	// JSON APIs directly (none is bot-walled, unlike Reddit), so — exceptionally
-	// — they do NOT go through crawl4ai. They need outbound access to
-	// hn.algolia.com, api.github.com, the configured Discourse hosts, and
-	// public.api.bsky.app respectively.
+	// The Hacker News, GitHub, Discourse, Bluesky and Stack Exchange engines
+	// read their public JSON APIs directly (none is bot-walled, unlike Reddit),
+	// so — exceptionally — they do NOT go through crawl4ai. They need outbound
+	// access to hn.algolia.com, api.github.com, the configured Discourse hosts,
+	// public.api.bsky.app and api.stackexchange.com respectively.
 	hackerNewsEngine := hackernews.New(hackernews.Config{
 		Client:  httpClient,
 		Limiter: limiter,
@@ -305,19 +306,30 @@ func run(cfg config.Config, logger *slog.Logger) error {
 		Logger:  logger,
 	})
 
+	// Stack Exchange question pages sit behind Cloudflare, which answers
+	// crawl4ai with a 403; the API serves the same content keyless (300
+	// requests/day/IP), and OMNIFEED_STACKEXCHANGE_KEY raises it to 10,000/day.
+	stackExchangeEngine := stackexchange.New(stackexchange.Config{
+		Client:  httpClient,
+		Limiter: limiter,
+		Key:     cfg.StackExchangeKey,
+		Logger:  logger,
+	})
+
 	registry := engine.New().
 		Register(redditEngine).
 		Register(hackerNewsEngine).
 		Register(gitHubEngine).
 		Register(discourseEngine).
-		Register(blueskyEngine)
+		Register(blueskyEngine).
+		Register(stackExchangeEngine)
 
 	// x.com walls headless browsers and twitter.com links fail in crawl4ai, so
 	// post URLs read public JSON mirrors directly (FxTwitter, then the embed
 	// syndication endpoint and vxTwitter), with crawl4ai on the x.com URL last.
 	// Needs outbound access to api.fxtwitter.com (or the configured FxEmbed),
 	// cdn.syndication.twimg.com, api.vxtwitter.com and t.co.
-	threadEngines := []domain.Engine{redditEngine, hackerNewsEngine, gitHubEngine, discourseEngine, blueskyEngine}
+	threadEngines := []domain.Engine{redditEngine, hackerNewsEngine, gitHubEngine, discourseEngine, blueskyEngine, stackExchangeEngine}
 	if cfg.TwitterEnabled {
 		twitterEngine := twitter.New(twitter.Config{
 			Client:          httpClient,
