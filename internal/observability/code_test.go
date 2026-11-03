@@ -17,7 +17,7 @@ func TestClassify_EveryKindMapped(t *testing.T) {
 		domain.KindCaptcha, domain.KindHTTP403, domain.KindHTTP429, domain.KindBotBlock,
 		domain.KindThinContent, domain.KindTimeout, domain.KindCanceled, domain.KindUpstreamError,
 		domain.KindUpstreamRejected, domain.KindQuotaExhausted, domain.KindBadResponse, domain.KindLayout,
-		domain.KindError,
+		domain.KindDNSBlocked, domain.KindError,
 	}
 	for _, k := range kinds {
 		if _, ok := codeFor[k]; !ok {
@@ -38,6 +38,7 @@ func TestClassify(t *testing.T) {
 		{"captcha", &domain.FetchError{Kind: domain.KindCaptcha, StatusCode: 403}, Failure{Code: CodeCaptcha, UpstreamStatus: 403}},
 		{"bare deadline", context.DeadlineExceeded, Failure{Code: CodeTimeout, Retryable: true}},
 		{"plain error", errors.New("boom"), Failure{Code: CodeUpstreamError}},
+		{"dns blocked", &domain.FetchError{Kind: domain.KindDNSBlocked}, Failure{Code: CodeDNSBlocked}},
 		{"invalid request wins over kind", fmt.Errorf("url rejected: %w", &domain.InvalidRequestError{Err: errors.New("empty hostname")}),
 			Failure{Code: CodeInvalidRequest}},
 	}

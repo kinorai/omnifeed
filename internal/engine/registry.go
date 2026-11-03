@@ -84,13 +84,7 @@ func (r *Registry) Resolve(rawURL string) domain.Engine {
 // transport — guarantees every inbound path is covered.
 func (r *Registry) Crawl(ctx context.Context, rawURL string, opts domain.EngineOptions) (domain.Document, error) {
 	if err := httpx.ValidateURLContext(ctx, rawURL, r.blockPrivate); err != nil {
-		// A resolver that failed or timed out is our fault, not the caller's:
-		// classify it as an upstream error so it is not reported as a bad URL.
-		var re *httpx.ResolveError
-		if errors.As(err, &re) && !re.NotFound {
-			return domain.Document{}, &domain.FetchError{Kind: domain.KindUpstreamError, Err: fmt.Errorf("url check: %w", err)}
-		}
-		return domain.Document{}, fmt.Errorf("url rejected: %w", &domain.InvalidRequestError{Err: err})
+		return domain.Document{}, rejected(err)
 	}
 	for _, e := range r.engines {
 		if !e.Matches(rawURL) {
@@ -134,6 +128,25 @@ func (r *Registry) Crawl(ctx context.Context, rawURL string, opts domain.EngineO
 	err = classifyPacing(err)
 	r.observeChars(r.fallback, doc, err)
 	return doc, err
+}
+
+// rejected classifies a URL the SSRF choke point refused. Most refusals are
+// the caller's mistake (invalid_request); two are not:
+//
+//   - a resolver that failed or timed out is our fault: an upstream error, so
+//     it is not reported as a bad URL;
+//   - a name a DNS filter sinkholes to 0.0.0.0 (or ::) is still refused, but
+//     as dns_blocked, so a filtered tracker or ad host is neither blamed on the
+//     caller nor counted as a crawl error.
+func rejected(err error) error {
+	var re *httpx.ResolveError
+	if errors.As(err, &re) && !re.NotFound {
+		return &domain.FetchError{Kind: domain.KindUpstreamError, Err: fmt.Errorf("url check: %w", err)}
+	}
+	if _, ok := errors.AsType[*httpx.DNSBlockedError](err); ok {
+		return &domain.FetchError{Kind: domain.KindDNSBlocked, Err: err}
+	}
+	return fmt.Errorf("url rejected: %w", &domain.InvalidRequestError{Err: err})
 }
 
 // traceCrawl runs one engine's Crawl inside a span. Attributes are bounded:

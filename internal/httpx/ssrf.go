@@ -65,6 +65,20 @@ type ResolveError struct {
 func (e *ResolveError) Error() string { return fmt.Sprintf("cannot resolve %q: %v", e.Host, e.Err) }
 func (e *ResolveError) Unwrap() error { return e.Err }
 
+// DNSBlockedError is ValidateURL refusing a host whose every resolved address
+// is the unspecified address (0.0.0.0 or ::): the answer a DNS filter (Blocky,
+// Pi-hole, AdGuard) gives for a blocked name. The URL is refused exactly as a
+// private target is; the distinct type only lets callers say why, instead of
+// reporting a filtered name as the caller's bad request.
+type DNSBlockedError struct {
+	Host string
+	Addr netip.Addr // the unspecified address the resolver answered
+}
+
+func (e *DNSBlockedError) Error() string {
+	return fmt.Sprintf("the resolver answered %s for %s: a DNS filter blocks this name", e.Addr, e.Host)
+}
+
 // validateURL is ValidateURL; resolve=false skips the DNS step, for callers
 // whose dial guard already checks every resolved address (NewGuardedClient).
 func validateURL(ctx context.Context, rawURL string, blockPrivate, resolve bool) error {
@@ -114,12 +128,27 @@ func validateURL(ctx context.Context, rawURL string, blockPrivate, resolve bool)
 	if len(ips) == 0 {
 		return &ResolveError{Host: host, NotFound: true, Err: errors.New("no addresses")}
 	}
+	if allUnspecified(ips) {
+		return &DNSBlockedError{Host: host, Addr: ips[0].Unmap()}
+	}
 	for _, ip := range ips {
 		if IsReservedAddr(ip.Unmap()) {
 			return fmt.Errorf("private/reserved IP %s not allowed", ip)
 		}
 	}
 	return nil
+}
+
+// allUnspecified reports whether every address is 0.0.0.0 or :: (a DNS
+// filter's sinkhole answer). Any other address in the set — private or public
+// — leaves the answer to the reserved-address check.
+func allUnspecified(ips []netip.Addr) bool {
+	for _, ip := range ips {
+		if !ip.Unmap().IsUnspecified() {
+			return false
+		}
+	}
+	return true
 }
 
 // looksLikeIPv4 reports whether a browser would parse host as an IPv4 address:
