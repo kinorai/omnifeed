@@ -249,6 +249,10 @@ type Config struct {
     // (60 requests/hour/IP); a token raises it to 5000/hour.
     GitHubToken string
 
+    // StackExchangeKey is the optional Stack Exchange API app key. Empty =
+    // keyless (300 requests/day/IP); a key raises the quota to 10,000/day.
+    StackExchangeKey string
+
     // DiscourseHosts is the exact-hostname allowlist the Discourse engine claims
     // topic URLs on. Discourse is self-hosted on arbitrary domains and Matches is
     // a pure predicate (it can't probe), so the list has to be explicit. Empty
@@ -326,7 +330,7 @@ type Config struct {
     // fetch_url response cache (internal/fetchcache). Stored in Redis when
     // RedisURL is set (shared by every replica), else in an in-process LRU of
     // CacheMaxBytes. CacheTTLThreads applies to the dedicated engines (Reddit,
-    // Hacker News, Discourse, Bluesky, GitHub), CacheTTLPages to the generic
+    // Hacker News, Discourse, Bluesky, GitHub, Stack Exchange), CacheTTLPages to the generic
     // page fallback; a TTL of 0 disables caching for that class.
     CacheEnabled      bool
     CacheTTLThreads   time.Duration

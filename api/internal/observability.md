@@ -449,6 +449,7 @@ const (
     CodeUpstreamError  ErrorCode = "upstream_error"
     CodeQuotaExhausted ErrorCode = "quota_exhausted"
     CodeInvalidRequest ErrorCode = "invalid_request"
+    CodeDNSBlocked     ErrorCode = "dns_blocked"
 )
 ```
 

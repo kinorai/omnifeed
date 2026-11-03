@@ -289,7 +289,12 @@ const (
     // interstitial it does not know. Not a block and not the content's fault,
     // so it is not retried elsewhere: the engine's extraction needs updating.
     KindLayout FailureKind = "layout"
-    KindError  FailureKind = "error" // anything else
+    // KindDNSBlocked is a URL refused before any fetch because the resolver
+    // answered the unspecified address (0.0.0.0 or ::) for its host: a DNS
+    // filter blocks the name. Not the caller's mistake and not an upstream
+    // fault, and retrying cannot help while the filter lists it.
+    KindDNSBlocked FailureKind = "dns_blocked"
+    KindError      FailureKind = "error" // anything else
 )
 ```
 

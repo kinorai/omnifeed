@@ -17,6 +17,7 @@ Package httpx provides HTTP utilities shared across engines: a retrying HTTP cli
 - [func LimiterHost\(rawURL string\) string](<#LimiterHost>)
 - [func NewGuardedClient\(blockPrivate bool, timeout time.Duration\) \*http.Client](<#NewGuardedClient>)
 - [func NewTransport\(\) \*http.Transport](<#NewTransport>)
+- [func RejectedKind\(err error\) domain.FailureKind](<#RejectedKind>)
 - [func RemainingBudget\(ctx context.Context\) \(time.Duration, bool\)](<#RemainingBudget>)
 - [func ValidateURL\(rawURL string, blockPrivate bool\) error](<#ValidateURL>)
 - [func ValidateURLContext\(ctx context.Context, rawURL string, blockPrivate bool\) error](<#ValidateURLContext>)
@@ -24,6 +25,8 @@ Package httpx provides HTTP utilities shared across engines: a retrying HTTP cli
   - [func New\(c \*http.Client\) \*Client](<#New>)
   - [func \(c \*Client\) DoRetry\(ctx context.Context, method, url string, body \[\]byte, headers map\[string\]string, cfg RetryConfig\) \(\*http.Response, error\)](<#Client.DoRetry>)
   - [func \(c \*Client\) WithUpstream\(upstream, op string\) \*Client](<#Client.WithUpstream>)
+- [type DNSBlockedError](<#DNSBlockedError>)
+  - [func \(e \*DNSBlockedError\) Error\(\) string](<#DNSBlockedError.Error>)
 - [type DomainLimiter](<#DomainLimiter>)
   - [func NewDomainLimiter\(maxConcurrent int, minDelay time.Duration\) \*DomainLimiter](<#NewDomainLimiter>)
   - [func NewDomainQuotaLimiter\(maxConcurrent int, minDelay time.Duration, quota int, window time.Duration\) \*DomainLimiter](<#NewDomainQuotaLimiter>)
@@ -111,6 +114,15 @@ func NewTransport() *http.Transport
 ```
 
 NewTransport returns the outbound transport shared by omnifeed's HTTP clients: DefaultTransport's dial/TLS/proxy behavior with a per\-host idle pool sized for this proxy's traffic. Go's DefaultTransport keeps only 2 idle connections per host, so concurrent requests to the same upstream \(crawl4ai, SearXNG, api.github.com\) evict each other's connections and re\-handshake TCP \+ TLS on the next call.
+
+<a name="RejectedKind"></a>
+## func RejectedKind
+
+```go
+func RejectedKind(err error) domain.FailureKind
+```
+
+RejectedKind is the failure kind of a URL ValidateURL refused after a fetch had already started \(a redirect hop\): dns\_blocked for a DNS filter's sinkhole answer, so a filtered host is not counted as a crawl error, and error otherwise.
 
 <a name="RemainingBudget"></a>
 ## func RemainingBudget
@@ -215,6 +227,27 @@ func (c *Client) WithUpstream(upstream, op string) *Client
 ```
 
 WithUpstream returns a shallow copy of c whose attempts are labeled with the given upstream/op pair \(e.g. "crawl4ai"/"crawl"\). The copy shares the underlying http.Client and hooks, so adapters declare their identity once at construction. Returns nil when c is nil \(engines built without a client\).
+
+<a name="DNSBlockedError"></a>
+## type DNSBlockedError
+
+DNSBlockedError is ValidateURL refusing a host whose every resolved address is the unspecified address \(0.0.0.0 or ::\): the answer a DNS filter \(Blocky, Pi\-hole, AdGuard\) gives for a blocked name. The URL is refused exactly as a private target is; the distinct type only lets callers say why, instead of reporting a filtered name as the caller's bad request.
+
+```go
+type DNSBlockedError struct {
+    Host string
+    Addr netip.Addr // the unspecified address the resolver answered
+}
+```
+
+<a name="DNSBlockedError.Error"></a>
+### func \(\*DNSBlockedError\) Error
+
+```go
+func (e *DNSBlockedError) Error() string
+```
+
+
 
 <a name="DomainLimiter"></a>
 ## type DomainLimiter
