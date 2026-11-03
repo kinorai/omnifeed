@@ -3,7 +3,7 @@
 # Multi-stage build for omnifeed.
 # Final image is distroless/static (~3-4MB layer + 16MB binary), runs as nonroot.
 
-ARG GO_VERSION=1.26
+ARG GO_VERSION=1.27
 ARG DISTROLESS_TAG=nonroot
 
 # Pin the builder to the native build platform and cross-compile via GOARCH —
