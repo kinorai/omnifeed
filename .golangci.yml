@@ -20,7 +20,8 @@ linters:
     - unconvert
     # gosec runs here, not as its own job: golangci-lint is built with the
     # repo's Go, while the securego/gosec action runs the previous release's
-    # image (one Go version behind) and pulls AI-SDK modules into tools/go.mod.
+    # image (one Go version behind), and pinning gosec in tools/go.mod would
+    # pull its AI-SDK modules in.
     - gosec
 
   settings:
