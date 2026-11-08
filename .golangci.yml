@@ -38,9 +38,12 @@ linters:
       - path: _test\.go$
         linters:
           - errcheck
-          # Test fixtures read testdata through variable paths (G304) and
-          # carry fake credentials (G101).
+      # Test fixtures read testdata through variable paths (G304) and
+      # carry fake credentials (G101).
+      - path: _test\.go$
+        linters:
           - gosec
+        text: "G(101|304)"
 
 issues:
   max-issues-per-linter: 0
