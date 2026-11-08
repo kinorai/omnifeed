@@ -481,7 +481,7 @@ Spans never carry a URL, a query or a path. Hosts appear as `server.address`. Be
 
 ## Prometheus metrics
 
-Served at `/metrics` on `OMNIFEED_METRICS_ADDR`, default `:9090`, alongside the Go and process collectors. The Go collector adds the runtime GC, scheduler and GC-CPU series (`go_gc_*`, `go_sched_*`, `go_cpu_classes_gc_*`). Don't alert on `go_sched_latencies_seconds`: Go 1.26 misreports it ([golang/go#79391](https://github.com/golang/go/issues/79391)).
+Served at `/metrics` on `OMNIFEED_METRICS_ADDR`, default `:9090`, alongside the Go and process collectors. The Go collector adds the runtime GC, scheduler and GC-CPU series (`go_gc_*`, `go_sched_*`, `go_cpu_classes_gc_*`). Don't alert on `go_sched_latencies_seconds`: Go 1.26 and later misreport it ([golang/go#79391](https://github.com/golang/go/issues/79391)).
 
 | Metric | Type | Labels | What it measures |
 |---|---|---|---|
