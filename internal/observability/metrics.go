@@ -265,7 +265,7 @@ func NewMetrics() *Metrics {
 		// The default go_* set plus the runtime/metrics GC, scheduler and GC-CPU
 		// subset (go_gc_*, go_sched_*, go_cpu_classes_gc_*) — not MetricsAll,
 		// which adds ~100 series nobody reads. go_sched_latencies_seconds is
-		// exported for dashboards only: Go 1.26 misreports it (golang/go#79391),
+		// exported for dashboards only: Go 1.26+ misreports it (golang/go#79391),
 		// so nothing should alert on it.
 		collectors.NewGoCollector(collectors.WithGoCollectorRuntimeMetrics(
 			collectors.GoRuntimeMetricsRule{Matcher: goRuntimeMetrics},
