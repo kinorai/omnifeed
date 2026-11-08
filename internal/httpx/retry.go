@@ -129,7 +129,8 @@ func (c *Client) DoRetry(
 		if attempt > 0 {
 			// Full jitter: random delay in [0, current backoff).
 			// Better than fixed-multiplier on burst load (no thundering herd).
-			jittered := time.Duration(rand.Int63n(int64(delay) + 1)) //nolint:gosec // backoff jitter, not a secret
+			// #nosec G404 -- non-cryptographic backoff jitter
+			jittered := time.Duration(rand.Int63n(int64(delay) + 1))
 			select {
 			case <-ctx.Done():
 				return nil, ctx.Err()
