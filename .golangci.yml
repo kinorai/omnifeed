@@ -18,6 +18,10 @@ linters:
     - misspell
     - revive
     - unconvert
+    # gosec runs here, not as its own job: golangci-lint is built with the
+    # repo's Go, while the securego/gosec action runs the previous release's
+    # image (one Go version behind) and pulls AI-SDK modules into tools/go.mod.
+    - gosec
 
   settings:
     revive:
@@ -34,6 +38,9 @@ linters:
       - path: _test\.go$
         linters:
           - errcheck
+          # Test fixtures read testdata through variable paths (G304) and
+          # carry fake credentials (G101).
+          - gosec
 
 issues:
   max-issues-per-linter: 0

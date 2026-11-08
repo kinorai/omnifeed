@@ -34,27 +34,6 @@ jobs:
       - name: Run govulncheck (make govulncheck)
         run: make govulncheck
 
-  gosec:
-    name: gosec Static Analysis
-    runs-on: ubuntu-latest
-    if: github.actor != 'dependabot[bot]'
-    permissions:
-      security-events: write
-      actions: read
-      contents: read
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Run gosec
-        uses: securego/gosec@deb54465fea23d19a77f037e11e6589021f8501d # v2.29.0
-        with:
-          args: '-no-fail -fmt sarif -out gosec.sarif ./...'
-      - name: Upload SARIF
-        uses: github/codeql-action/upload-sarif@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
-        with:
-          sarif_file: gosec.sarif
-          wait-for-processing: true
-
   codeql:
     name: CodeQL Analysis
     runs-on: ubuntu-latest
