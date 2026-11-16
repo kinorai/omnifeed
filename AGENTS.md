@@ -45,6 +45,9 @@ internal/
   engine/        Registry + fallback ordering; Dispatcher (what transports use)
     reddit/      Engine: drives a browser.Browser, TOON comment trees
     bluesky/     Engine: public AT Protocol AppView, TOON reply trees
+    discourse/   Engine: public topic JSON of the OMNIFEED_DISCOURSE_HOSTS hosts
+    github/      Engine: GitHub REST API (+ GraphQL for discussions with a token)
+    hackernews/  Engine: Algolia HN API
     stackexchange/ Engine: Stack Exchange API v2.3, TOON question + answers by votes
     twitter/     Engine: X posts via FxTwitter → syndication/vxTwitter → crawl4ai, markdown
     crawl4ai/    Engine: generic markdown fallback (crawl4ai /crawl — not the browser port)
@@ -73,7 +76,7 @@ cmd/omnifeed/    entry point + wiring
 
 ## Adding things
 
-- **New engine**: create `internal/engine/<name>/engine.go` implementing `domain.Engine`; register it in `main.go` **before** the fallback; add a `*_test.go` with a fixture covering URL matching. `internal/engine/hackernews` is a worked example (it and `internal/engine/github` are the engines that fetch their upstream directly rather than through crawl4ai).
+- **New engine**: create `internal/engine/<name>/engine.go` implementing `domain.Engine`; register it in `main.go` **before** the fallback; add a `*_test.go` with a fixture covering URL matching. `internal/engine/hackernews` is a worked example of an engine that fetches its upstream API directly instead of through crawl4ai (see Gotchas for the others).
 - **New browser backend** (an engine that needs to clear a browser-only bot wall): implement `browser.Browser`/`browser.Session` under `internal/browser/<name>/`, keep the transport glue thin and testable, and wire it in `main.go`. Engines drive the port, never a specific backend.
 - **New searcher** (e.g. Brave): implement `domain.Searcher` (return a `SearchReport`; set `DegradedReason` only if the upstream can tell you it ran short), add its name to `config.ValidSearchers` and a case in `cmd/omnifeed/search.go`. The failover chain picks it up from `OMNIFEED_SEARCHERS`; the transports never change.
 - **New MCP tool**: add a constructor in `internal/transport/mcp/tools`; append it to `mcpTools` in `main.go`. The MCP server itself never changes.
