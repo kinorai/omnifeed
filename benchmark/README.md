@@ -70,6 +70,8 @@ container at a time, and remove containers and images when done.
 1. Start crawl4ai with production's `config.yml` (the block under `config.yml:`
    in the infrastructure repo's `clusters/home-prod/apps/omnifeed/values.yaml`)
    and the same image digest, with `--memory 5g --shm-size 1g` like the pod.
+   Name the container `c4a` (the `--container` below) and publish its port on
+   `127.0.0.1:11298`.
 2. Build omnifeed and start it with a clean environment, so no key or upstream
    from your shell leaks in:
 

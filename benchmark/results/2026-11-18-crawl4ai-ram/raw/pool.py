@@ -1,9 +1,13 @@
 """crawl4ai browser pool: how many Chromes, how much memory, per request kind.
 
-usage: python3 -I pool.py <container> <variant> <out.jsonl>
+usage: python3 -I pool.py <container> <variant> <out.jsonl> [label]
 variant "prod": omnifeed's body as shipped (user_agent + enable_stealth).
 variant "aligned": the body repeats config.yml's kwargs, so it can match the
 permanent browser.
+label (default: the variant) names the run in out.jsonl. The report's runs:
+"prod" and "aligned" on production's config.yml; "infra-only" and
+"infra-text-off" are variant "prod" on the two edited config.yml files
+("infra-text-off" is the matched config, raw/config.diff).
 """
 import json
 import subprocess
