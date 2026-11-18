@@ -6,7 +6,7 @@ content?
 
 **Answer:** crawl4ai runs a Chrome that omnifeed's crawls never use, and starts
 a second one for them. A `config.yml` change in the infrastructure repo makes
-the crawls use the first one: about 100–190 MiB less while crawls run, with
+the crawls use the first one: about 90–240 MiB less while crawls run, with
 identical content and latency, and no omnifeed change. A plain-HTTP first
 step would make 74% of pages about 17× faster, but after that change it saves
 almost no memory.
@@ -141,8 +141,9 @@ about 1.3 s on three pages in four.
    change in the same step, or the second Chrome silently returns. Comment
    both places. Check after the deploy: crawl4ai logs "Using permanent
    browser" for crawls, not "Creating new browser in cold pool".
-2. **Lower the pod's memory request only after a week of data.** A smaller
-   working set frees nothing on kube-01 until the request (1.5 GiB) drops.
+2. **Know that this frees no schedulable memory by itself.** kube-01 counts
+   the pod's request (1.5 GiB), not its working set, so the node gains room
+   only when that request is lowered to match the new usage.
 3. **Don't build the plain-HTTP step for memory.** Build it only if the speed
    matters; then it needs the redirect handling and a fallback when phrases go
    missing, and a re-run of this suite.

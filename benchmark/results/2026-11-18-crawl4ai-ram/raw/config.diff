@@ -1,5 +1,5 @@
---- /tmp/claude-1000/-home-max--t3-worktrees-omnifeed-t3-38e12477-5b679bfb27a98324/e2e52989-7ea5-4fcc-80ab-91c62f68d880/scratchpad/c4a/config.prod.yml	2026-11-18 22:15:34.687221513 +0000
-+++ /tmp/claude-1000/-home-max--t3-worktrees-omnifeed-t3-38e12477-5b679bfb27a98324/e2e52989-7ea5-4fcc-80ab-91c62f68d880/scratchpad/c4a/config.matched.yml	2026-11-18 22:47:11.284680795 +0000
+--- config.prod.yml
++++ config.matched.yml
 @@ -27,15 +27,10 @@
          # extraction — the field 0.9.x's reference config uses (it replaced
          # 0.8.x's light_mode). The Reddit path is unaffected: it renders via

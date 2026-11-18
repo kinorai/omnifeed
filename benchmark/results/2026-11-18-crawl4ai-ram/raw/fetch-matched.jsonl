@@ -1,76 +1,76 @@
-{"candidate": "omnifeed", "pass": 1, "url": "https://docs.netbird.io/how-to/getting-started", "cat": "docs", "s": 2.26, "chars": 14420, "tokens": 3605, "grade": "ok", "err": "", "engine": ""}
-{"candidate": "omnifeed", "pass": 1, "url": "https://cloudnative-pg.io/documentation/current/", "cat": "docs", "s": 1.16, "chars": 11615, "tokens": 2903, "grade": "ok", "err": "", "engine": ""}
-{"candidate": "omnifeed", "pass": 1, "url": "https://code.claude.com/docs/en/overview", "cat": "docs", "s": 2.24, "chars": 119962, "tokens": 29990, "grade": "ok", "err": "", "engine": ""}
-{"candidate": "omnifeed", "pass": 1, "url": "https://openrouter.ai/docs/quickstart", "cat": "docs", "s": 1.87, "chars": 144813, "tokens": 36203, "grade": "ok", "err": "", "engine": ""}
-{"candidate": "omnifeed", "pass": 1, "url": "https://www.home-assistant.io/integrations/mqtt/", "cat": "docs", "s": 1.66, "chars": 84513, "tokens": 21128, "grade": "ok", "err": "", "engine": ""}
-{"candidate": "omnifeed", "pass": 1, "url": "https://developers.cloudflare.com/workers/", "cat": "docs", "s": 2.06, "chars": 5046, "tokens": 1261, "grade": "ok", "err": "", "engine": ""}
-{"candidate": "omnifeed", "pass": 1, "url": "https://ubuntu.com/server/docs", "cat": "docs", "s": 2.38, "chars": 15986, "tokens": 3996, "grade": "ok", "err": "", "engine": ""}
-{"candidate": "omnifeed", "pass": 1, "url": "https://kubernetes.io/docs/concepts/workloads/pods/", "cat": "docs", "s": 1.24, "chars": 31075, "tokens": 7768, "grade": "ok", "err": "", "engine": ""}
-{"candidate": "omnifeed", "pass": 1, "url": "https://www.better-auth.com/docs/introduction", "cat": "docs", "s": 1.28, "chars": 1946, "tokens": 486, "grade": "ok", "err": "", "engine": ""}
-{"candidate": "omnifeed", "pass": 1, "url": "https://grafana.com/docs/grafana/latest/", "cat": "docs", "s": 2.3, "chars": 7598, "tokens": 1899, "grade": "ok", "err": "", "engine": ""}
-{"candidate": "omnifeed", "pass": 1, "url": "https://docs.victoriametrics.com/victoriametrics/single-server-victoriametrics/", "cat": "docs", "s": 4.36, "chars": 310715, "tokens": 77678, "grade": "ok", "err": "", "engine": ""}
-{"candidate": "omnifeed", "pass": 1, "url": "https://nextjs.org/docs", "cat": "docs", "s": 1.27, "chars": 5018, "tokens": 1254, "grade": "ok", "err": "", "engine": ""}
-{"candidate": "omnifeed", "pass": 1, "url": "https://docs.github.com/en/actions/get-started/understand-github-actions", "cat": "docs", "s": 1.26, "chars": 8693, "tokens": 2173, "grade": "ok", "err": "", "engine": ""}
-{"candidate": "omnifeed", "pass": 1, "url": "https://docs.k3s.io/", "cat": "docs", "s": 0.93, "chars": 1968, "tokens": 492, "grade": "ok", "err": "", "engine": ""}
-{"candidate": "omnifeed", "pass": 1, "url": "https://go.dev/doc/effective_go", "cat": "docs", "s": 1.73, "chars": 108094, "tokens": 27023, "grade": "ok", "err": "", "engine": ""}
-{"candidate": "omnifeed", "pass": 1, "url": "https://docs.python.org/3/library/asyncio-task.html", "cat": "docs", "s": 1.52, "chars": 68880, "tokens": 17220, "grade": "ok", "err": "", "engine": ""}
-{"candidate": "omnifeed", "pass": 1, "url": "https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Status/429", "cat": "docs", "s": 0.98, "chars": 3957, "tokens": 989, "grade": "ok", "err": "", "engine": ""}
-{"candidate": "omnifeed", "pass": 1, "url": "https://www.postgresql.org/docs/current/sql-select.html", "cat": "docs", "s": 1.4, "chars": 71073, "tokens": 17768, "grade": "ok", "err": "", "engine": ""}
-{"candidate": "omnifeed", "pass": 1, "url": "https://docs.rs/tokio/latest/tokio/", "cat": "docs", "s": 1.19, "chars": 23932, "tokens": 5983, "grade": "ok", "err": "", "engine": ""}
-{"candidate": "omnifeed", "pass": 1, "url": "https://en.wikipedia.org/wiki/Raspberry_Pi", "cat": "reference", "s": 4.76, "chars": 263966, "tokens": 65991, "grade": "ok", "err": "", "engine": ""}
-{"candidate": "omnifeed", "pass": 1, "url": "https://arxiv.org/abs/1706.03762", "cat": "reference", "s": 0.96, "chars": 7069, "tokens": 1767, "grade": "ok", "err": "", "engine": ""}
-{"candidate": "omnifeed", "pass": 1, "url": "https://arxiv.org/pdf/1706.03762", "cat": "pdf", "s": 4.06, "chars": 39925, "tokens": 9981, "grade": "ok", "err": "", "engine": ""}
-{"candidate": "omnifeed", "pass": 1, "url": "https://blog.cloudflare.com/", "cat": "listing", "s": 1.15, "chars": 9060, "tokens": 2265, "grade": "ok", "err": "", "engine": ""}
-{"candidate": "omnifeed", "pass": 1, "url": "https://lwn.net/", "cat": "listing", "s": 1.24, "chars": 27607, "tokens": 6901, "grade": "ok", "err": "", "engine": ""}
-{"candidate": "omnifeed", "pass": 1, "url": "https://www.githubstatus.com/", "cat": "listing", "s": 1.52, "chars": 1524, "tokens": 381, "grade": "ok", "err": "", "engine": ""}
-{"candidate": "omnifeed", "pass": 1, "url": "https://github.com/firecrawl/firecrawl", "cat": "app", "s": 0.42, "chars": 26142, "tokens": 6535, "grade": "ok", "err": "", "engine": "github"}
-{"candidate": "omnifeed", "pass": 1, "url": "https://react.dev/learn", "cat": "spa", "s": 1.44, "chars": 14977, "tokens": 3744, "grade": "ok", "err": "", "engine": ""}
-{"candidate": "omnifeed", "pass": 1, "url": "https://artificialanalysis.ai/", "cat": "spa", "s": 2.44, "chars": 51191, "tokens": 12797, "grade": "ok", "err": "", "engine": ""}
-{"candidate": "omnifeed", "pass": 1, "url": "https://vercel.com/blog", "cat": "spa", "s": 1.37, "chars": 11350, "tokens": 2837, "grade": "ok", "err": "", "engine": ""}
-{"candidate": "omnifeed", "pass": 1, "url": "https://quotes.toscrape.com/js/", "cat": "js-only", "s": 1.39, "chars": 1463, "tokens": 365, "grade": "ok", "err": "", "engine": ""}
-{"candidate": "omnifeed", "pass": 1, "url": "https://lafibre.info/", "cat": "forum", "s": 1.34, "chars": 68691, "tokens": 17172, "grade": "ok", "err": "", "engine": ""}
-{"candidate": "omnifeed", "pass": 1, "url": "https://stackoverflow.com/questions/11227809", "cat": "walled", "s": 0.41, "chars": 71248, "tokens": 17812, "grade": "ok", "err": "", "engine": "stackexchange"}
-{"candidate": "omnifeed", "pass": 1, "url": "https://www.npmjs.com/package/react", "cat": "walled", "s": 1.31, "chars": 1926, "tokens": 481, "grade": "ok", "err": "", "engine": ""}
-{"candidate": "omnifeed", "pass": 1, "url": "https://www.lequipe.fr/", "cat": "walled", "s": 3.0, "chars": 49239, "tokens": 12309, "grade": "ok", "err": "", "engine": ""}
-{"candidate": "omnifeed", "pass": 1, "url": "https://www.bbc.com/news", "cat": "news", "s": 1.39, "chars": 11148, "tokens": 2787, "grade": "ok", "err": "", "engine": ""}
-{"candidate": "omnifeed", "pass": 1, "url": "https://www.theverge.com/", "cat": "news", "s": 2.27, "chars": 54733, "tokens": 13683, "grade": "ok", "err": "", "engine": ""}
-{"candidate": "omnifeed", "pass": 1, "url": "https://pypi.org/project/requests/", "cat": "registry", "s": 1.83, "chars": 47090, "tokens": 11772, "grade": "ok", "err": "", "engine": ""}
-{"candidate": "omnifeed", "pass": 1, "url": "https://crates.io/crates/serde", "cat": "registry", "s": 1.27, "chars": 2629, "tokens": 657, "grade": "ok", "err": "", "engine": ""}
-{"candidate": "omnifeed", "pass": "c", "url": "https://docs.netbird.io/how-to/getting-started", "cat": "docs", "s": 2.81, "chars": 14420, "tokens": 3605, "grade": "ok", "err": "", "engine": ""}
-{"candidate": "omnifeed", "pass": "c", "url": "https://cloudnative-pg.io/documentation/current/", "cat": "docs", "s": 2.81, "chars": 11615, "tokens": 2903, "grade": "ok", "err": "", "engine": ""}
-{"candidate": "omnifeed", "pass": "c", "url": "https://code.claude.com/docs/en/overview", "cat": "docs", "s": 3.0, "chars": 119962, "tokens": 29990, "grade": "ok", "err": "", "engine": ""}
-{"candidate": "omnifeed", "pass": "c", "url": "https://openrouter.ai/docs/quickstart", "cat": "docs", "s": 3.48, "chars": 144813, "tokens": 36203, "grade": "ok", "err": "", "engine": ""}
-{"candidate": "omnifeed", "pass": "c", "url": "https://www.home-assistant.io/integrations/mqtt/", "cat": "docs", "s": 2.51, "chars": 84513, "tokens": 21128, "grade": "ok", "err": "", "engine": ""}
-{"candidate": "omnifeed", "pass": "c", "url": "https://developers.cloudflare.com/workers/", "cat": "docs", "s": 2.55, "chars": 5046, "tokens": 1261, "grade": "ok", "err": "", "engine": ""}
-{"candidate": "omnifeed", "pass": "c", "url": "https://ubuntu.com/server/docs", "cat": "docs", "s": 1.65, "chars": 15986, "tokens": 3996, "grade": "ok", "err": "", "engine": ""}
-{"candidate": "omnifeed", "pass": "c", "url": "https://kubernetes.io/docs/concepts/workloads/pods/", "cat": "docs", "s": 1.92, "chars": 31075, "tokens": 7768, "grade": "ok", "err": "", "engine": ""}
-{"candidate": "omnifeed", "pass": "c", "url": "https://www.better-auth.com/docs/introduction", "cat": "docs", "s": 2.65, "chars": 1946, "tokens": 486, "grade": "ok", "err": "", "engine": ""}
-{"candidate": "omnifeed", "pass": "c", "url": "https://grafana.com/docs/grafana/latest/", "cat": "docs", "s": 8.87, "chars": 7598, "tokens": 1899, "grade": "ok", "err": "", "engine": ""}
-{"candidate": "omnifeed", "pass": "c", "url": "https://docs.victoriametrics.com/victoriametrics/single-server-victoriametrics/", "cat": "docs", "s": 6.01, "chars": 310715, "tokens": 77678, "grade": "ok", "err": "", "engine": ""}
-{"candidate": "omnifeed", "pass": "c", "url": "https://nextjs.org/docs", "cat": "docs", "s": 2.76, "chars": 3666, "tokens": 916, "grade": "ok", "err": "", "engine": ""}
-{"candidate": "omnifeed", "pass": "c", "url": "https://docs.github.com/en/actions/get-started/understand-github-actions", "cat": "docs", "s": 2.97, "chars": 8693, "tokens": 2173, "grade": "ok", "err": "", "engine": ""}
-{"candidate": "omnifeed", "pass": "c", "url": "https://docs.k3s.io/", "cat": "docs", "s": 1.58, "chars": 1968, "tokens": 492, "grade": "ok", "err": "", "engine": ""}
-{"candidate": "omnifeed", "pass": "c", "url": "https://go.dev/doc/effective_go", "cat": "docs", "s": 2.57, "chars": 108094, "tokens": 27023, "grade": "ok", "err": "", "engine": ""}
-{"candidate": "omnifeed", "pass": "c", "url": "https://docs.python.org/3/library/asyncio-task.html", "cat": "docs", "s": 1.73, "chars": 68880, "tokens": 17220, "grade": "ok", "err": "", "engine": ""}
-{"candidate": "omnifeed", "pass": "c", "url": "https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Status/429", "cat": "docs", "s": 6.94, "chars": 3957, "tokens": 989, "grade": "ok", "err": "", "engine": ""}
-{"candidate": "omnifeed", "pass": "c", "url": "https://www.postgresql.org/docs/current/sql-select.html", "cat": "docs", "s": 7.51, "chars": 71073, "tokens": 17768, "grade": "ok", "err": "", "engine": ""}
-{"candidate": "omnifeed", "pass": "c", "url": "https://docs.rs/tokio/latest/tokio/", "cat": "docs", "s": 6.92, "chars": 23932, "tokens": 5983, "grade": "ok", "err": "", "engine": ""}
-{"candidate": "omnifeed", "pass": "c", "url": "https://en.wikipedia.org/wiki/Raspberry_Pi", "cat": "reference", "s": 9.67, "chars": 263966, "tokens": 65991, "grade": "ok", "err": "", "engine": ""}
-{"candidate": "omnifeed", "pass": "c", "url": "https://arxiv.org/abs/1706.03762", "cat": "reference", "s": 6.67, "chars": 7069, "tokens": 1767, "grade": "ok", "err": "", "engine": ""}
-{"candidate": "omnifeed", "pass": "c", "url": "https://arxiv.org/pdf/1706.03762", "cat": "pdf", "s": 4.74, "chars": 39925, "tokens": 9981, "grade": "ok", "err": "", "engine": ""}
-{"candidate": "omnifeed", "pass": "c", "url": "https://blog.cloudflare.com/", "cat": "listing", "s": 13.02, "chars": 0, "tokens": 0, "grade": "error", "err": "captcha", "engine": ""}
-{"candidate": "omnifeed", "pass": "c", "url": "https://lwn.net/", "cat": "listing", "s": 1.98, "chars": 27607, "tokens": 6901, "grade": "ok", "err": "", "engine": ""}
-{"candidate": "omnifeed", "pass": "c", "url": "https://www.githubstatus.com/", "cat": "listing", "s": 4.3, "chars": 1524, "tokens": 381, "grade": "ok", "err": "", "engine": ""}
-{"candidate": "omnifeed", "pass": "c", "url": "https://github.com/firecrawl/firecrawl", "cat": "app", "s": 0.28, "chars": 26142, "tokens": 6535, "grade": "ok", "err": "", "engine": "github"}
-{"candidate": "omnifeed", "pass": "c", "url": "https://react.dev/learn", "cat": "spa", "s": 4.92, "chars": 14866, "tokens": 3716, "grade": "ok", "err": "", "engine": ""}
-{"candidate": "omnifeed", "pass": "c", "url": "https://artificialanalysis.ai/", "cat": "spa", "s": 6.32, "chars": 51185, "tokens": 12796, "grade": "ok", "err": "", "engine": ""}
-{"candidate": "omnifeed", "pass": "c", "url": "https://vercel.com/blog", "cat": "spa", "s": 6.19, "chars": 11350, "tokens": 2837, "grade": "ok", "err": "", "engine": ""}
-{"candidate": "omnifeed", "pass": "c", "url": "https://quotes.toscrape.com/js/", "cat": "js-only", "s": 3.7, "chars": 1463, "tokens": 365, "grade": "ok", "err": "", "engine": ""}
-{"candidate": "omnifeed", "pass": "c", "url": "https://lafibre.info/", "cat": "forum", "s": 4.31, "chars": 53336, "tokens": 13334, "grade": "ok", "err": "", "engine": ""}
-{"candidate": "omnifeed", "pass": "c", "url": "https://stackoverflow.com/questions/11227809", "cat": "walled", "s": 0.32, "chars": 71248, "tokens": 17812, "grade": "ok", "err": "", "engine": "stackexchange"}
-{"candidate": "omnifeed", "pass": "c", "url": "https://www.npmjs.com/package/react", "cat": "walled", "s": 1.91, "chars": 1926, "tokens": 481, "grade": "ok", "err": "", "engine": ""}
-{"candidate": "omnifeed", "pass": "c", "url": "https://www.lequipe.fr/", "cat": "walled", "s": 6.23, "chars": 46451, "tokens": 11612, "grade": "ok", "err": "", "engine": ""}
-{"candidate": "omnifeed", "pass": "c", "url": "https://www.bbc.com/news", "cat": "news", "s": 3.26, "chars": 11148, "tokens": 2787, "grade": "ok", "err": "", "engine": ""}
-{"candidate": "omnifeed", "pass": "c", "url": "https://www.theverge.com/", "cat": "news", "s": 7.25, "chars": 53811, "tokens": 13452, "grade": "ok", "err": "", "engine": ""}
-{"candidate": "omnifeed", "pass": "c", "url": "https://pypi.org/project/requests/", "cat": "registry", "s": 3.32, "chars": 47090, "tokens": 11772, "grade": "ok", "err": "", "engine": ""}
-{"candidate": "omnifeed", "pass": "c", "url": "https://crates.io/crates/serde", "cat": "registry", "s": 2.49, "chars": 2629, "tokens": 657, "grade": "ok", "err": "", "engine": ""}
+{"candidate": "omnifeed", "pass": 1, "url": "https://docs.netbird.io/how-to/getting-started", "cat": "docs", "s": 2.26, "chars": 14420, "tokens": 3605, "grade": "ok", "err": ""}
+{"candidate": "omnifeed", "pass": 1, "url": "https://cloudnative-pg.io/documentation/current/", "cat": "docs", "s": 1.16, "chars": 11615, "tokens": 2903, "grade": "ok", "err": ""}
+{"candidate": "omnifeed", "pass": 1, "url": "https://code.claude.com/docs/en/overview", "cat": "docs", "s": 2.24, "chars": 119962, "tokens": 29990, "grade": "ok", "err": ""}
+{"candidate": "omnifeed", "pass": 1, "url": "https://openrouter.ai/docs/quickstart", "cat": "docs", "s": 1.87, "chars": 144813, "tokens": 36203, "grade": "ok", "err": ""}
+{"candidate": "omnifeed", "pass": 1, "url": "https://www.home-assistant.io/integrations/mqtt/", "cat": "docs", "s": 1.66, "chars": 84513, "tokens": 21128, "grade": "ok", "err": ""}
+{"candidate": "omnifeed", "pass": 1, "url": "https://developers.cloudflare.com/workers/", "cat": "docs", "s": 2.06, "chars": 5046, "tokens": 1261, "grade": "ok", "err": ""}
+{"candidate": "omnifeed", "pass": 1, "url": "https://ubuntu.com/server/docs", "cat": "docs", "s": 2.38, "chars": 15986, "tokens": 3996, "grade": "ok", "err": ""}
+{"candidate": "omnifeed", "pass": 1, "url": "https://kubernetes.io/docs/concepts/workloads/pods/", "cat": "docs", "s": 1.24, "chars": 31075, "tokens": 7768, "grade": "ok", "err": ""}
+{"candidate": "omnifeed", "pass": 1, "url": "https://www.better-auth.com/docs/introduction", "cat": "docs", "s": 1.28, "chars": 1946, "tokens": 486, "grade": "ok", "err": ""}
+{"candidate": "omnifeed", "pass": 1, "url": "https://grafana.com/docs/grafana/latest/", "cat": "docs", "s": 2.3, "chars": 7598, "tokens": 1899, "grade": "ok", "err": ""}
+{"candidate": "omnifeed", "pass": 1, "url": "https://docs.victoriametrics.com/victoriametrics/single-server-victoriametrics/", "cat": "docs", "s": 4.36, "chars": 310715, "tokens": 77678, "grade": "ok", "err": ""}
+{"candidate": "omnifeed", "pass": 1, "url": "https://nextjs.org/docs", "cat": "docs", "s": 1.27, "chars": 5018, "tokens": 1254, "grade": "ok", "err": ""}
+{"candidate": "omnifeed", "pass": 1, "url": "https://docs.github.com/en/actions/get-started/understand-github-actions", "cat": "docs", "s": 1.26, "chars": 8693, "tokens": 2173, "grade": "ok", "err": ""}
+{"candidate": "omnifeed", "pass": 1, "url": "https://docs.k3s.io/", "cat": "docs", "s": 0.93, "chars": 1968, "tokens": 492, "grade": "ok", "err": ""}
+{"candidate": "omnifeed", "pass": 1, "url": "https://go.dev/doc/effective_go", "cat": "docs", "s": 1.73, "chars": 108094, "tokens": 27023, "grade": "ok", "err": ""}
+{"candidate": "omnifeed", "pass": 1, "url": "https://docs.python.org/3/library/asyncio-task.html", "cat": "docs", "s": 1.52, "chars": 68880, "tokens": 17220, "grade": "ok", "err": ""}
+{"candidate": "omnifeed", "pass": 1, "url": "https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Status/429", "cat": "docs", "s": 0.98, "chars": 3957, "tokens": 989, "grade": "ok", "err": ""}
+{"candidate": "omnifeed", "pass": 1, "url": "https://www.postgresql.org/docs/current/sql-select.html", "cat": "docs", "s": 1.4, "chars": 71073, "tokens": 17768, "grade": "ok", "err": ""}
+{"candidate": "omnifeed", "pass": 1, "url": "https://docs.rs/tokio/latest/tokio/", "cat": "docs", "s": 1.19, "chars": 23932, "tokens": 5983, "grade": "ok", "err": ""}
+{"candidate": "omnifeed", "pass": 1, "url": "https://en.wikipedia.org/wiki/Raspberry_Pi", "cat": "reference", "s": 4.76, "chars": 263966, "tokens": 65991, "grade": "ok", "err": ""}
+{"candidate": "omnifeed", "pass": 1, "url": "https://arxiv.org/abs/1706.03762", "cat": "reference", "s": 0.96, "chars": 7069, "tokens": 1767, "grade": "ok", "err": ""}
+{"candidate": "omnifeed", "pass": 1, "url": "https://arxiv.org/pdf/1706.03762", "cat": "pdf", "s": 4.06, "chars": 39925, "tokens": 9981, "grade": "ok", "err": ""}
+{"candidate": "omnifeed", "pass": 1, "url": "https://blog.cloudflare.com/", "cat": "listing", "s": 1.15, "chars": 9060, "tokens": 2265, "grade": "ok", "err": ""}
+{"candidate": "omnifeed", "pass": 1, "url": "https://lwn.net/", "cat": "listing", "s": 1.24, "chars": 27607, "tokens": 6901, "grade": "ok", "err": ""}
+{"candidate": "omnifeed", "pass": 1, "url": "https://www.githubstatus.com/", "cat": "listing", "s": 1.52, "chars": 1524, "tokens": 381, "grade": "ok", "err": ""}
+{"candidate": "omnifeed", "pass": 1, "url": "https://github.com/firecrawl/firecrawl", "cat": "app", "s": 0.42, "chars": 26142, "tokens": 6535, "grade": "ok", "err": ""}
+{"candidate": "omnifeed", "pass": 1, "url": "https://react.dev/learn", "cat": "spa", "s": 1.44, "chars": 14977, "tokens": 3744, "grade": "ok", "err": ""}
+{"candidate": "omnifeed", "pass": 1, "url": "https://artificialanalysis.ai/", "cat": "spa", "s": 2.44, "chars": 51191, "tokens": 12797, "grade": "ok", "err": ""}
+{"candidate": "omnifeed", "pass": 1, "url": "https://vercel.com/blog", "cat": "spa", "s": 1.37, "chars": 11350, "tokens": 2837, "grade": "ok", "err": ""}
+{"candidate": "omnifeed", "pass": 1, "url": "https://quotes.toscrape.com/js/", "cat": "js-only", "s": 1.39, "chars": 1463, "tokens": 365, "grade": "ok", "err": ""}
+{"candidate": "omnifeed", "pass": 1, "url": "https://lafibre.info/", "cat": "forum", "s": 1.34, "chars": 68691, "tokens": 17172, "grade": "ok", "err": ""}
+{"candidate": "omnifeed", "pass": 1, "url": "https://stackoverflow.com/questions/11227809", "cat": "walled", "s": 0.41, "chars": 71248, "tokens": 17812, "grade": "ok", "err": ""}
+{"candidate": "omnifeed", "pass": 1, "url": "https://www.npmjs.com/package/react", "cat": "walled", "s": 1.31, "chars": 1926, "tokens": 481, "grade": "ok", "err": ""}
+{"candidate": "omnifeed", "pass": 1, "url": "https://www.lequipe.fr/", "cat": "walled", "s": 3.0, "chars": 49239, "tokens": 12309, "grade": "ok", "err": ""}
+{"candidate": "omnifeed", "pass": 1, "url": "https://www.bbc.com/news", "cat": "news", "s": 1.39, "chars": 11148, "tokens": 2787, "grade": "ok", "err": ""}
+{"candidate": "omnifeed", "pass": 1, "url": "https://www.theverge.com/", "cat": "news", "s": 2.27, "chars": 54733, "tokens": 13683, "grade": "ok", "err": ""}
+{"candidate": "omnifeed", "pass": 1, "url": "https://pypi.org/project/requests/", "cat": "registry", "s": 1.83, "chars": 47090, "tokens": 11772, "grade": "ok", "err": ""}
+{"candidate": "omnifeed", "pass": 1, "url": "https://crates.io/crates/serde", "cat": "registry", "s": 1.27, "chars": 2629, "tokens": 657, "grade": "ok", "err": ""}
+{"candidate": "omnifeed", "pass": "c", "url": "https://docs.netbird.io/how-to/getting-started", "cat": "docs", "s": 2.81, "chars": 14420, "tokens": 3605, "grade": "ok", "err": ""}
+{"candidate": "omnifeed", "pass": "c", "url": "https://cloudnative-pg.io/documentation/current/", "cat": "docs", "s": 2.81, "chars": 11615, "tokens": 2903, "grade": "ok", "err": ""}
+{"candidate": "omnifeed", "pass": "c", "url": "https://code.claude.com/docs/en/overview", "cat": "docs", "s": 3.0, "chars": 119962, "tokens": 29990, "grade": "ok", "err": ""}
+{"candidate": "omnifeed", "pass": "c", "url": "https://openrouter.ai/docs/quickstart", "cat": "docs", "s": 3.48, "chars": 144813, "tokens": 36203, "grade": "ok", "err": ""}
+{"candidate": "omnifeed", "pass": "c", "url": "https://www.home-assistant.io/integrations/mqtt/", "cat": "docs", "s": 2.51, "chars": 84513, "tokens": 21128, "grade": "ok", "err": ""}
+{"candidate": "omnifeed", "pass": "c", "url": "https://developers.cloudflare.com/workers/", "cat": "docs", "s": 2.55, "chars": 5046, "tokens": 1261, "grade": "ok", "err": ""}
+{"candidate": "omnifeed", "pass": "c", "url": "https://ubuntu.com/server/docs", "cat": "docs", "s": 1.65, "chars": 15986, "tokens": 3996, "grade": "ok", "err": ""}
+{"candidate": "omnifeed", "pass": "c", "url": "https://kubernetes.io/docs/concepts/workloads/pods/", "cat": "docs", "s": 1.92, "chars": 31075, "tokens": 7768, "grade": "ok", "err": ""}
+{"candidate": "omnifeed", "pass": "c", "url": "https://www.better-auth.com/docs/introduction", "cat": "docs", "s": 2.65, "chars": 1946, "tokens": 486, "grade": "ok", "err": ""}
+{"candidate": "omnifeed", "pass": "c", "url": "https://grafana.com/docs/grafana/latest/", "cat": "docs", "s": 8.87, "chars": 7598, "tokens": 1899, "grade": "ok", "err": ""}
+{"candidate": "omnifeed", "pass": "c", "url": "https://docs.victoriametrics.com/victoriametrics/single-server-victoriametrics/", "cat": "docs", "s": 6.01, "chars": 310715, "tokens": 77678, "grade": "ok", "err": ""}
+{"candidate": "omnifeed", "pass": "c", "url": "https://nextjs.org/docs", "cat": "docs", "s": 2.76, "chars": 3666, "tokens": 916, "grade": "ok", "err": ""}
+{"candidate": "omnifeed", "pass": "c", "url": "https://docs.github.com/en/actions/get-started/understand-github-actions", "cat": "docs", "s": 2.97, "chars": 8693, "tokens": 2173, "grade": "ok", "err": ""}
+{"candidate": "omnifeed", "pass": "c", "url": "https://docs.k3s.io/", "cat": "docs", "s": 1.58, "chars": 1968, "tokens": 492, "grade": "ok", "err": ""}
+{"candidate": "omnifeed", "pass": "c", "url": "https://go.dev/doc/effective_go", "cat": "docs", "s": 2.57, "chars": 108094, "tokens": 27023, "grade": "ok", "err": ""}
+{"candidate": "omnifeed", "pass": "c", "url": "https://docs.python.org/3/library/asyncio-task.html", "cat": "docs", "s": 1.73, "chars": 68880, "tokens": 17220, "grade": "ok", "err": ""}
+{"candidate": "omnifeed", "pass": "c", "url": "https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Status/429", "cat": "docs", "s": 6.94, "chars": 3957, "tokens": 989, "grade": "ok", "err": ""}
+{"candidate": "omnifeed", "pass": "c", "url": "https://www.postgresql.org/docs/current/sql-select.html", "cat": "docs", "s": 7.51, "chars": 71073, "tokens": 17768, "grade": "ok", "err": ""}
+{"candidate": "omnifeed", "pass": "c", "url": "https://docs.rs/tokio/latest/tokio/", "cat": "docs", "s": 6.92, "chars": 23932, "tokens": 5983, "grade": "ok", "err": ""}
+{"candidate": "omnifeed", "pass": "c", "url": "https://en.wikipedia.org/wiki/Raspberry_Pi", "cat": "reference", "s": 9.67, "chars": 263966, "tokens": 65991, "grade": "ok", "err": ""}
+{"candidate": "omnifeed", "pass": "c", "url": "https://arxiv.org/abs/1706.03762", "cat": "reference", "s": 6.67, "chars": 7069, "tokens": 1767, "grade": "ok", "err": ""}
+{"candidate": "omnifeed", "pass": "c", "url": "https://arxiv.org/pdf/1706.03762", "cat": "pdf", "s": 4.74, "chars": 39925, "tokens": 9981, "grade": "ok", "err": ""}
+{"candidate": "omnifeed", "pass": "c", "url": "https://blog.cloudflare.com/", "cat": "listing", "s": 13.02, "chars": 0, "tokens": 0, "grade": "error", "err": "captcha"}
+{"candidate": "omnifeed", "pass": "c", "url": "https://lwn.net/", "cat": "listing", "s": 1.98, "chars": 27607, "tokens": 6901, "grade": "ok", "err": ""}
+{"candidate": "omnifeed", "pass": "c", "url": "https://www.githubstatus.com/", "cat": "listing", "s": 4.3, "chars": 1524, "tokens": 381, "grade": "ok", "err": ""}
+{"candidate": "omnifeed", "pass": "c", "url": "https://github.com/firecrawl/firecrawl", "cat": "app", "s": 0.28, "chars": 26142, "tokens": 6535, "grade": "ok", "err": ""}
+{"candidate": "omnifeed", "pass": "c", "url": "https://react.dev/learn", "cat": "spa", "s": 4.92, "chars": 14866, "tokens": 3716, "grade": "ok", "err": ""}
+{"candidate": "omnifeed", "pass": "c", "url": "https://artificialanalysis.ai/", "cat": "spa", "s": 6.32, "chars": 51185, "tokens": 12796, "grade": "ok", "err": ""}
+{"candidate": "omnifeed", "pass": "c", "url": "https://vercel.com/blog", "cat": "spa", "s": 6.19, "chars": 11350, "tokens": 2837, "grade": "ok", "err": ""}
+{"candidate": "omnifeed", "pass": "c", "url": "https://quotes.toscrape.com/js/", "cat": "js-only", "s": 3.7, "chars": 1463, "tokens": 365, "grade": "ok", "err": ""}
+{"candidate": "omnifeed", "pass": "c", "url": "https://lafibre.info/", "cat": "forum", "s": 4.31, "chars": 53336, "tokens": 13334, "grade": "ok", "err": ""}
+{"candidate": "omnifeed", "pass": "c", "url": "https://stackoverflow.com/questions/11227809", "cat": "walled", "s": 0.32, "chars": 71248, "tokens": 17812, "grade": "ok", "err": ""}
+{"candidate": "omnifeed", "pass": "c", "url": "https://www.npmjs.com/package/react", "cat": "walled", "s": 1.91, "chars": 1926, "tokens": 481, "grade": "ok", "err": ""}
+{"candidate": "omnifeed", "pass": "c", "url": "https://www.lequipe.fr/", "cat": "walled", "s": 6.23, "chars": 46451, "tokens": 11612, "grade": "ok", "err": ""}
+{"candidate": "omnifeed", "pass": "c", "url": "https://www.bbc.com/news", "cat": "news", "s": 3.26, "chars": 11148, "tokens": 2787, "grade": "ok", "err": ""}
+{"candidate": "omnifeed", "pass": "c", "url": "https://www.theverge.com/", "cat": "news", "s": 7.25, "chars": 53811, "tokens": 13452, "grade": "ok", "err": ""}
+{"candidate": "omnifeed", "pass": "c", "url": "https://pypi.org/project/requests/", "cat": "registry", "s": 3.32, "chars": 47090, "tokens": 11772, "grade": "ok", "err": ""}
+{"candidate": "omnifeed", "pass": "c", "url": "https://crates.io/crates/serde", "cat": "registry", "s": 2.49, "chars": 2629, "tokens": 657, "grade": "ok", "err": ""}

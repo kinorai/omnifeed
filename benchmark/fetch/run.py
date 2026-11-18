@@ -39,7 +39,9 @@ UA = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
       "Chrome/156.0.0.0 Safari/537.36")
 BLOCK = ["just a moment", "verify you are human", "captcha", "access denied",
          "enable javascript", "attention required", "are you a robot"]
-# omnifeed's generic crawl payload with its defaults (internal/engine/crawl4ai).
+# omnifeed's generic crawl payload with its defaults, copied by hand from
+# internal/engine/crawl4ai/engine.go: re-copy it when that payload changes.
+# The omnifeed candidate always sends the real one.
 C4A_PARAMS = {
     "word_count_threshold": 10, "wait_until": "domcontentloaded",
     "delay_before_return_html": 0.1, "page_timeout": 60000,
@@ -93,7 +95,10 @@ def call_crawl4ai(base, url, token):
     md = res.get("markdown") or {}
     text = md if isinstance(md, str) else (
         (md.get("fit_markdown") or "").strip() or md.get("raw_markdown") or "")
-    return text, j.get("error") or j.get("detail") or res.get("error_message") or "", {}
+    err = j.get("error") or j.get("detail") or res.get("error_message") or ""
+    if not err and res.get("success") is False:
+        err = "success=false"
+    return text, err, {}
 
 
 def call_firecrawl(base, url, token):
@@ -205,7 +210,7 @@ def run_one(name, kind, base, token, item, pass_no):
     rec = {"candidate": name, "pass": pass_no, "url": item["url"], "cat": item["cat"],
            "s": s, "chars": len(text), "tokens": len(text) // 4,
            "grade": grade(text, err, item["must"]), "err": str(err)[:200],
-           "engine": meta.get("engine", ""), "head": text[:300]}
+           "head": text[:300]}
     if kind == "http":
         rec["serves"] = meta["serves"] and rec["grade"] == "ok"
         rec["serves_but_missing"] = meta["serves"] and rec["grade"] != "ok"
@@ -237,7 +242,9 @@ def main():
     for spec in a.candidate:
         name, rest = spec.split("=", 1)
         kind, base = rest.split(":", 1)
-        samplers = {c: Sampler(c) for c in a.container}
+        # A plain GET never touches the containers: sampling them would only
+        # report the previous candidate's leftovers.
+        samplers = {} if kind == "http" else {c: Sampler(c) for c in a.container}
         idle = {c: s.measure() for c, s in samplers.items()}
         for s in samplers.values():
             s.start()
@@ -260,7 +267,8 @@ def main():
         for s in samplers.values():
             s.done.set()
             s.join()
-        time.sleep(a.settle)
+        if samplers:
+            time.sleep(a.settle)
         after = {c: s.measure() for c, s in samplers.items()}
 
         grades = {g: sum(r["grade"] == g for r in recs) for g in
