@@ -1,0 +1,38 @@
+{"url": "https://docs.netbird.io/how-to/getting-started", "cat": "docs", "must": ["A curl command to download and", "Select the operating system of your"]}
+{"url": "https://cloudnative-pg.io/documentation/current/", "cat": "docs", "must": ["available on the cloudnative-pg project's GitHub", "recovery via volume snapshots (if supported"]}
+{"url": "https://code.claude.com/docs/en/overview", "cat": "docs", "must": ["Review diffs visually, run multiple sessions", "morning PR reviews, overnight CI failure"]}
+{"url": "https://openrouter.ai/docs/quickstart", "cat": "docs", "must": ["your app to appear on the", "SDKs documentation for streaming, embeddings, and"]}
+{"url": "https://www.home-assistant.io/integrations/mqtt/", "cat": "docs", "must": ["Assistant, and reload the MQTT integration.", "by publishing an empty payload to"]}
+{"url": "https://developers.cloudflare.com/workers/", "cat": "docs", "must": ["of choice, including React, Vue, Svelte,", "connect to data stores with Smart"]}
+{"url": "https://ubuntu.com/server/docs", "cat": "docs", "must": [": Install OpenSSH • Firewalls •", ": Intro to multipathing • Multipath"]}
+{"url": "https://kubernetes.io/docs/concepts/workloads/pods/", "cat": "docs", "must": ["and are included in workload resources", "of these fields on the Pod's"]}
+{"url": "https://www.better-auth.com/docs/introduction", "cat": "docs", "must": ["framework-agnostic", "simplifies adding advanced functionalities"]}
+{"url": "https://grafana.com/docs/grafana/latest/", "cat": "docs", "must": ["and explore your metrics, logs, and", "right for you can be challenging."]}
+{"url": "https://docs.victoriametrics.com/victoriametrics/single-server-victoriametrics/", "cat": "docs", "must": ["This may be useful when CPU", "VictoriaMetrics (destination). The copied data should"]}
+{"url": "https://nextjs.org/docs", "cat": "docs", "must": ["dropdown menu that allows you to", "to Next.js, you're always welcome to"]}
+{"url": "https://docs.github.com/en/actions/get-started/understand-github-actions", "cat": "docs", "must": ["workflow within another workflow. For more", "within a workflow , reducing the"]}
+{"url": "https://docs.k3s.io/", "cat": "docs", "must": ["as the default storage backend. etcd3,", "a single binary and process, allowing"]}
+{"url": "https://go.dev/doc/effective_go", "cat": "docs", "must": ["gofmt", "share by communicating"]}
+{"url": "https://docs.python.org/3/library/asyncio-task.html", "cat": "docs", "must": ["still cancels the remaining tasks and", "the result or raises the exception"]}
+{"url": "https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Status/429", "cat": "docs", "must": ["response to indicate how long a", "based on a client's IP but"]}
+{"url": "https://www.postgresql.org/docs/current/sql-select.html", "cat": "docs", "must": ["nesting. In the absence of parentheses,", "evaluated left to right, unless parentheses"]}
+{"url": "https://docs.rs/tokio/latest/tokio/", "cat": "docs", "must": ["happen at .await points, so code", "mio crate. You can find a"]}
+{"url": "https://en.wikipedia.org/wiki/Raspberry_Pi", "cat": "reference", "must": ["Raspberry Pi Foundation", "Broadcom"]}
+{"url": "https://arxiv.org/abs/1706.03762", "cat": "reference", "must": ["Attention Is All You Need", "Transformer"]}
+{"url": "https://arxiv.org/pdf/1706.03762", "cat": "pdf", "must": ["compare various aspects of self-attention layers", "This suggests that determining compatibility is"]}
+{"url": "https://blog.cloudflare.com/", "cat": "listing", "must": ["cloudflare"], "weak": true}
+{"url": "https://lwn.net/", "cat": "listing", "must": ["LWN.net", "Weekly Edition"]}
+{"url": "https://www.githubstatus.com/", "cat": "listing", "must": ["Git Operations", "au.githubstatus.com"]}
+{"url": "https://github.com/firecrawl/firecrawl", "cat": "app", "must": ["firecrawl", "AGPL"]}
+{"url": "https://react.dev/learn", "cat": "spa", "must": ["expressions inside the JSX curly braces", "is called a re-render. This time,"]}
+{"url": "https://artificialanalysis.ai/", "cat": "spa", "must": ["Intelligence Index", "generating images from text prompts"]}
+{"url": "https://vercel.com/blog", "cat": "spa", "must": ["Featured articles"], "weak": true}
+{"url": "https://quotes.toscrape.com/js/", "cat": "js-only", "must": ["as though nothing is a miracle.", "man of success. Rather become a"]}
+{"url": "https://lafibre.info/", "cat": "forum", "must": ["lafibre"], "weak": true}
+{"url": "https://stackoverflow.com/questions/11227809", "cat": "walled", "must": ["branch prediction", "sorted array"]}
+{"url": "https://www.npmjs.com/package/react", "cat": "walled", "must": ["React is a JavaScript library", "is typically used together with a"]}
+{"url": "https://www.lequipe.fr/", "cat": "walled", "must": ["football"], "weak": true}
+{"url": "https://www.bbc.com/news", "cat": "news", "must": ["BBC"], "weak": true}
+{"url": "https://www.theverge.com/", "cat": "news", "must": ["The Verge"], "weak": true}
+{"url": "https://pypi.org/project/requests/", "cat": "registry", "must": ["pip install requests", "requests"]}
+{"url": "https://crates.io/crates/serde", "cat": "registry", "must": ["serialization/deserialization framework", "serde"]}
