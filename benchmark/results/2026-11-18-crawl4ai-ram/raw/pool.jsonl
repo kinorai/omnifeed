@@ -1,0 +1,60 @@
+{"variant": "prod", "step": "boot", "t": "22:17:45", "ws_mib": 328, "chrome_browsers": 1, "chrome_procs": 5, "chrome_rss_mib": 267, "python_rss_mib": 336}
+{"variant": "prod", "step": "crawl https://kubernetes.io/docs/concepts/workloads/pods/", "s": 1.56, "chars": 32768, "err": ""}
+{"variant": "prod", "step": "crawl https://docs.netbird.io/how-to/getting-started", "s": 2.02, "chars": 16029, "err": ""}
+{"variant": "prod", "step": "crawl https://cloudnative-pg.io/documentation/current/", "s": 1.49, "chars": 11509, "err": ""}
+{"variant": "prod", "step": "crawl https://www.home-assistant.io/integrations/mqtt/", "s": 1.25, "chars": 94386, "err": ""}
+{"variant": "prod", "step": "crawl https://go.dev/doc/effective_go", "s": 1.61, "chars": 109932, "err": ""}
+{"variant": "prod", "step": "after 5 generic crawls", "t": "22:17:53", "ws_mib": 596, "chrome_browsers": 2, "chrome_procs": 12, "chrome_rss_mib": 831, "python_rss_mib": 514}
+{"variant": "prod", "step": "crawl alt-fingerprint", "s": 1.43, "chars": 32768, "err": ""}
+{"variant": "prod", "step": "after alt-fingerprint crawl", "t": "22:17:55", "ws_mib": 811, "chrome_browsers": 3, "chrome_procs": 18, "chrome_rss_mib": 1319, "python_rss_mib": 655}
+{"variant": "prod", "step": "execute_js", "s": 0.38, "ok": true, "err": ""}
+{"variant": "prod", "step": "after execute_js", "t": "22:17:55", "ws_mib": 847, "chrome_browsers": 3, "chrome_procs": 19, "chrome_rss_mib": 1472, "python_rss_mib": 666}
+{"variant": "prod", "step": "crawl again https://kubernetes.io/docs/concepts/workloads/pods/", "s": 1.07, "chars": 32768, "err": ""}
+{"variant": "prod", "step": "crawl again https://docs.netbird.io/how-to/getting-started", "s": 1.24, "chars": 16029, "err": ""}
+{"variant": "prod", "step": "after 2 more crawls", "t": "22:17:58", "ws_mib": 983, "chrome_browsers": 3, "chrome_procs": 21, "chrome_rss_mib": 1747, "python_rss_mib": 691}
+{"variant": "prod", "step": "after 200 s idle", "t": "22:21:18", "ws_mib": 394, "chrome_browsers": 1, "chrome_procs": 6, "chrome_rss_mib": 420, "python_rss_mib": 371}
+{"variant": "aligned", "step": "boot", "t": "22:21:52", "ws_mib": 299, "chrome_browsers": 1, "chrome_procs": 5, "chrome_rss_mib": 266, "python_rss_mib": 336}
+{"variant": "aligned", "step": "crawl https://kubernetes.io/docs/concepts/workloads/pods/", "s": 1.33, "chars": 32768, "err": ""}
+{"variant": "aligned", "step": "crawl https://docs.netbird.io/how-to/getting-started", "s": 2.13, "chars": 16029, "err": ""}
+{"variant": "aligned", "step": "crawl https://cloudnative-pg.io/documentation/current/", "s": 1.35, "chars": 11509, "err": ""}
+{"variant": "aligned", "step": "crawl https://www.home-assistant.io/integrations/mqtt/", "s": 1.21, "chars": 94386, "err": ""}
+{"variant": "aligned", "step": "crawl https://go.dev/doc/effective_go", "s": 1.36, "chars": 109932, "err": ""}
+{"variant": "aligned", "step": "after 5 generic crawls", "t": "22:21:59", "ws_mib": 403, "chrome_browsers": 1, "chrome_procs": 7, "chrome_rss_mib": 546, "python_rss_mib": 378}
+{"variant": "aligned", "step": "crawl alt-fingerprint", "s": 1.59, "chars": 32768, "err": ""}
+{"variant": "aligned", "step": "after alt-fingerprint crawl", "t": "22:22:01", "ws_mib": 598, "chrome_browsers": 2, "chrome_procs": 13, "chrome_rss_mib": 1013, "python_rss_mib": 522}
+{"variant": "aligned", "step": "execute_js", "s": 0.34, "ok": true, "err": ""}
+{"variant": "aligned", "step": "after execute_js", "t": "22:22:01", "ws_mib": 600, "chrome_browsers": 2, "chrome_procs": 13, "chrome_rss_mib": 1013, "python_rss_mib": 523}
+{"variant": "aligned", "step": "crawl again https://kubernetes.io/docs/concepts/workloads/pods/", "s": 1.07, "chars": 32768, "err": ""}
+{"variant": "aligned", "step": "crawl again https://docs.netbird.io/how-to/getting-started", "s": 1.28, "chars": 16029, "err": ""}
+{"variant": "aligned", "step": "after 2 more crawls", "t": "22:22:04", "ws_mib": 711, "chrome_browsers": 2, "chrome_procs": 15, "chrome_rss_mib": 1281, "python_rss_mib": 528}
+{"variant": "aligned", "step": "after 200 s idle", "t": "22:25:24", "ws_mib": 375, "chrome_browsers": 1, "chrome_procs": 7, "chrome_rss_mib": 545, "python_rss_mib": 354}
+{"variant": "infra-only", "step": "boot", "t": "22:26:18", "ws_mib": 292, "chrome_browsers": 1, "chrome_procs": 5, "chrome_rss_mib": 267, "python_rss_mib": 337}
+{"variant": "infra-only", "step": "crawl https://kubernetes.io/docs/concepts/workloads/pods/", "s": 1.45, "chars": 32768, "err": ""}
+{"variant": "infra-only", "step": "crawl https://docs.netbird.io/how-to/getting-started", "s": 2.25, "chars": 16029, "err": ""}
+{"variant": "infra-only", "step": "crawl https://cloudnative-pg.io/documentation/current/", "s": 1.21, "chars": 11509, "err": ""}
+{"variant": "infra-only", "step": "crawl https://www.home-assistant.io/integrations/mqtt/", "s": 1.22, "chars": 94386, "err": ""}
+{"variant": "infra-only", "step": "crawl https://go.dev/doc/effective_go", "s": 1.66, "chars": 109932, "err": ""}
+{"variant": "infra-only", "step": "after 5 generic crawls", "t": "22:26:26", "ws_mib": 556, "chrome_browsers": 2, "chrome_procs": 12, "chrome_rss_mib": 837, "python_rss_mib": 513}
+{"variant": "infra-only", "step": "crawl alt-fingerprint", "s": 1.43, "chars": 32768, "err": ""}
+{"variant": "infra-only", "step": "after alt-fingerprint crawl", "t": "22:26:28", "ws_mib": 768, "chrome_browsers": 3, "chrome_procs": 18, "chrome_rss_mib": 1329, "python_rss_mib": 656}
+{"variant": "infra-only", "step": "execute_js", "s": 0.36, "ok": true, "err": ""}
+{"variant": "infra-only", "step": "after execute_js", "t": "22:26:28", "ws_mib": 806, "chrome_browsers": 3, "chrome_procs": 19, "chrome_rss_mib": 1486, "python_rss_mib": 667}
+{"variant": "infra-only", "step": "crawl again https://kubernetes.io/docs/concepts/workloads/pods/", "s": 1.08, "chars": 32768, "err": ""}
+{"variant": "infra-only", "step": "crawl again https://docs.netbird.io/how-to/getting-started", "s": 1.25, "chars": 16029, "err": ""}
+{"variant": "infra-only", "step": "after 2 more crawls", "t": "22:26:31", "ws_mib": 939, "chrome_browsers": 3, "chrome_procs": 21, "chrome_rss_mib": 1763, "python_rss_mib": 694}
+{"variant": "infra-only", "step": "after 200 s idle", "t": "22:29:51", "ws_mib": 320, "chrome_browsers": 1, "chrome_procs": 6, "chrome_rss_mib": 423, "python_rss_mib": 344}
+{"variant": "infra-text-off", "step": "boot", "t": "22:31:12", "ws_mib": 289, "chrome_browsers": 1, "chrome_procs": 5, "chrome_rss_mib": 268, "python_rss_mib": 337}
+{"variant": "infra-text-off", "step": "crawl https://kubernetes.io/docs/concepts/workloads/pods/", "s": 1.21, "chars": 32768, "err": ""}
+{"variant": "infra-text-off", "step": "crawl https://docs.netbird.io/how-to/getting-started", "s": 2.03, "chars": 16029, "err": ""}
+{"variant": "infra-text-off", "step": "crawl https://cloudnative-pg.io/documentation/current/", "s": 1.19, "chars": 11509, "err": ""}
+{"variant": "infra-text-off", "step": "crawl https://www.home-assistant.io/integrations/mqtt/", "s": 1.26, "chars": 94386, "err": ""}
+{"variant": "infra-text-off", "step": "crawl https://go.dev/doc/effective_go", "s": 1.59, "chars": 109932, "err": ""}
+{"variant": "infra-text-off", "step": "after 5 generic crawls", "t": "22:31:20", "ws_mib": 420, "chrome_browsers": 1, "chrome_procs": 7, "chrome_rss_mib": 569, "python_rss_mib": 375}
+{"variant": "infra-text-off", "step": "crawl alt-fingerprint", "s": 1.55, "chars": 32768, "err": ""}
+{"variant": "infra-text-off", "step": "after alt-fingerprint crawl", "t": "22:31:21", "ws_mib": 631, "chrome_browsers": 2, "chrome_procs": 13, "chrome_rss_mib": 1053, "python_rss_mib": 519}
+{"variant": "infra-text-off", "step": "execute_js", "s": 0.31, "ok": true, "err": ""}
+{"variant": "infra-text-off", "step": "after execute_js", "t": "22:31:22", "ws_mib": 629, "chrome_browsers": 2, "chrome_procs": 13, "chrome_rss_mib": 1053, "python_rss_mib": 516}
+{"variant": "infra-text-off", "step": "crawl again https://kubernetes.io/docs/concepts/workloads/pods/", "s": 1.07, "chars": 32768, "err": ""}
+{"variant": "infra-text-off", "step": "crawl again https://docs.netbird.io/how-to/getting-started", "s": 1.22, "chars": 16029, "err": ""}
+{"variant": "infra-text-off", "step": "after 2 more crawls", "t": "22:31:24", "ws_mib": 747, "chrome_browsers": 2, "chrome_procs": 15, "chrome_rss_mib": 1331, "python_rss_mib": 527}
+{"variant": "infra-text-off", "step": "after 200 s idle", "t": "22:34:45", "ws_mib": 382, "chrome_browsers": 1, "chrome_procs": 7, "chrome_rss_mib": 563, "python_rss_mib": 356}
