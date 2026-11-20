@@ -61,9 +61,10 @@ netbird, CloudNativePG, Claude Code, OpenRouter and Home Assistant).
   page and update the phrase in the same PR as the report.
 
 `corpus/top-sites.jsonl` holds 54 URLs that production actually fetched,
-two from each of the 29 most-fetched hosts on the generic crawl4ai path
-(VictoriaLogs, June to November 2026; Reddit, Hacker News, GitHub, X and the
-Discourse forums have their own engines and are left out). It has no
+up to two from each of the 28 most-fetched hosts on the generic crawl4ai path
+(VictoriaLogs, June to November 2026; dead URLs are left out, and so are
+Reddit, Hacker News, GitHub, X and the Discourse forums, which have their own
+engines). It has no
 phrases: run it with `--reference`, which scores each candidate by the share
 of the reference candidate's sentences it contains (`cov`). Coverage tells
 you a candidate lost text; it can't tell you the reference was right, so
