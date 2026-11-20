@@ -681,8 +681,13 @@ func (e *Engine) crawlRung(ctx context.Context, rawURL string, o crawlOpts) (dom
 		// our own client-side retry (which covers genuine transient 500s, at
 		// MaxAttempts 2, visibly in metrics).
 		// script/style/noscript carry no prose but do reach the markdown on pages
-		// that inline them, so they go out with the structural chrome.
-		"excluded_tags":              []string{"nav", "footer", "header", "form", "aside", "script", "style", "noscript"},
+		// that inline them, so they go out with the structural chrome. So does
+		// template: a browser never renders its content (a declarative shadow
+		// root is already attached, not a template, by the time crawl4ai reads
+		// the page), yet crawl4ai converts it. Mintlify docs (code.claude.com,
+		// openrouter.ai) ship their compiled MDX in one, 100k+ characters of
+		// `_jsx(_components.p, …)` after the real text.
+		"excluded_tags":              []string{"nav", "footer", "header", "form", "aside", "script", "style", "noscript", "template"},
 		"remove_consent_popups":      true,
 		"exclude_external_links":     excludeExternalLinks,
 		"exclude_social_media_links": true,
