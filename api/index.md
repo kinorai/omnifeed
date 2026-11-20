@@ -2,6 +2,7 @@
 
 Generated from the Go source by [gomarkdoc](https://github.com/princjef/gomarkdoc).
 
+- [benchmark/fetch/gomd](benchmark/fetch/gomd.md)
 - [cmd/omnifeed](cmd/omnifeed.md)
 - [internal/antibot](internal/antibot.md)
 - [internal/auth](internal/auth.md)

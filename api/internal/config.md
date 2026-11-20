@@ -18,7 +18,7 @@ Package config loads all runtime configuration from OMNIFEED\_\-prefixed environ
 
 ## Constants
 
-<a name="DefaultCrawl4AIUserAgent"></a>DefaultCrawl4AIUserAgent matches the Chromium bundled in crawl4ai 0.9.5.
+<a name="DefaultCrawl4AIUserAgent"></a>DefaultCrawl4AIUserAgent matches the Chromium bundled in crawl4ai 0.9.5. A deployment can repeat it, with enable\_stealth, in crawl4ai's config.yml browser kwargs, so generic crawls reuse crawl4ai's permanent browser instead of starting a second Chrome; then the two change together. See benchmark/results/2026\-11\-18\-crawl4ai\-ram.
 
 ```go
 const DefaultCrawl4AIUserAgent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36"
