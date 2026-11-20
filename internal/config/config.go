@@ -17,6 +17,10 @@ import (
 )
 
 // DefaultCrawl4AIUserAgent matches the Chromium bundled in crawl4ai 0.9.5.
+// A deployment can repeat it, with enable_stealth, in crawl4ai's config.yml
+// browser kwargs, so generic crawls reuse crawl4ai's permanent browser instead
+// of starting a second Chrome; then the two change together. See
+// benchmark/results/2026-11-18-crawl4ai-ram.
 const DefaultCrawl4AIUserAgent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36"
 
 // Config is the fully-resolved runtime configuration.
