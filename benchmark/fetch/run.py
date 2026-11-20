@@ -186,7 +186,7 @@ def letters(text):
 def sentences(text, n=10):
     """Up to n sentences of 8+ words, spread over the text, for coverage."""
     out = [p.strip() for p in re.split(r"(?<=[.!?])\s+|\n+", plain_lines(text))
-           if len(p.split()) >= 8 and "http" not in p]
+           if len(p.split()) >= 8 and "://" not in p]
     if len(out) > n:
         out = [out[int(i * len(out) / n)] for i in range(n)]
     return out
@@ -201,11 +201,13 @@ def coverage(ref, text):
     """Share of the reference's sentences found in text (letters and digits
     only, so markdown, spacing and punctuation don't count). None when the
     reference has no sentence to check."""
-    sents = sentences(ref)
+    # A sentence with no a-z or 0-9 (Cyrillic, CJK) letters() to "", which
+    # every text contains: leave it out rather than count it as found.
+    sents = [s for s in map(letters, sentences(ref)) if s]
     if not sents:
         return None
     have = letters(text)
-    return round(sum(letters(s) in have for s in sents) / len(sents), 2)
+    return round(sum(s in have for s in sents) / len(sents), 2)
 
 
 def grade(text, err, must):
@@ -305,7 +307,7 @@ def main():
                 text = r.pop("text")
                 if name == a.reference and p == 1:
                     ref_text[item["url"]] = text
-                elif a.reference:
+                elif a.reference and name != a.reference:
                     r["cov"] = coverage(ref_text.get(item["url"], ""), text)
                 recs.append(r)
                 raw.write(json.dumps(r) + "\n")

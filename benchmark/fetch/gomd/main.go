@@ -16,9 +16,10 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
+
+	"golang.org/x/net/html/charset"
 
 	"codeberg.org/readeck/go-readability/v2"
 	"github.com/JohannesKaufmann/html-to-markdown/v2/converter"
@@ -48,10 +49,6 @@ func newConverter() *converter.Converter {
 }
 
 func convert(client *http.Client, conv *converter.Converter, rawURL, mode string) (string, error) {
-	page, err := url.Parse(rawURL)
-	if err != nil {
-		return "", err
-	}
 	req, err := http.NewRequest(http.MethodGet, rawURL, nil)
 	if err != nil {
 		return "", err
@@ -69,7 +66,13 @@ func convert(client *http.Client, conv *converter.Converter, rawURL, mode string
 	if ct := resp.Header.Get("Content-Type"); !strings.Contains(ct, "html") {
 		return "", fmt.Errorf("content-type %s", ct)
 	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
+	// The converters parse UTF-8 only: decode a Latin-1 or Shift_JIS page
+	// from its Content-Type or <meta charset> first.
+	utf8Body, err := charset.NewReader(io.LimitReader(resp.Body, 10<<20), resp.Header.Get("Content-Type"))
+	if err != nil {
+		return "", err
+	}
+	body, err := io.ReadAll(utf8Body)
 	if err != nil {
 		return "", err
 	}
@@ -88,6 +91,8 @@ func convert(client *http.Client, conv *converter.Converter, rawURL, mode string
 		}
 		src = buf.Bytes()
 	}
+	// Links resolve against the page after redirects, as Readability's do.
+	page := resp.Request.URL
 	md, err := conv.ConvertReader(bytes.NewReader(src), converter.WithDomain(page.Scheme+"://"+page.Host))
 	return string(md), err
 }

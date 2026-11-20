@@ -38,8 +38,8 @@ lose the comment trees. Neither has stealth for the walled pages below.
 
 ## Method
 
-- `corpus/top-sites.jsonl`: 54 URLs production fetched, two per host for the
-  29 most-fetched generic hosts. Dead URLs (404 everywhere) and the
+- `corpus/top-sites.jsonl`: 54 URLs production fetched, up to two from each
+  of the 28 most-fetched generic hosts. Dead URLs (404 everywhere) and the
   Discourse forums (their own engine in production) are left out. It has no
   phrases; candidates are scored by coverage of the shipped output
   (`--reference`, see the README), and the 38-URL `corpus/fetch.jsonl`
@@ -71,7 +71,11 @@ lose the comment trees. Neither has stealth for the walled pages below.
 | Corpus: tokens | 494k | 384k | 394k | 302k |
 
 Raw: [raw/top-sites.md](raw/top-sites.md), [raw/fetch.md](raw/fetch.md)
-and their `.jsonl`.
+and their `.jsonl`. Coverage here was scored before two fixes to `run.py`
+in the same PR: a sentence containing "http" was skipped (now only one with
+`://`), and a sentence with no Latin letters or digits counted as found
+(now skipped). The corpus is English, so the second can't have moved a
+number; the first left fewer sentences to check on pages about HTTP.
 
 ### The template leak, fixed
 
