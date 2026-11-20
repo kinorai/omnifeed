@@ -430,14 +430,14 @@ func jsonStrings(t *testing.T, params map[string]any, key string) []string {
 	return out
 }
 
-// Chrome trimming: script/style/noscript join the excluded tags, consent popups
+// Chrome trimming: script/style/noscript/template join the excluded tags, consent popups
 // are removed, and the conservative excluded_selector default ships on by
 // default. target_elements is opt-in, so it must be absent unless configured.
 func TestCrawlRequestChromeDefaults(t *testing.T) {
 	params := crawlParams(t, Config{})
 
 	tags := jsonStrings(t, params, "excluded_tags")
-	for _, want := range []string{"nav", "footer", "header", "form", "aside", "script", "style", "noscript"} {
+	for _, want := range []string{"nav", "footer", "header", "form", "aside", "script", "style", "noscript", "template"} {
 		if !slices.Contains(tags, want) {
 			t.Errorf("excluded_tags = %v, want it to contain %q", tags, want)
 		}
