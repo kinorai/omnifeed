@@ -60,6 +60,15 @@ netbird, CloudNativePG, Claude Code, OpenRouter and Home Assistant).
 - A page changes; when a phrase stops matching on every candidate, check the
   page and update the phrase in the same PR as the report.
 
+`corpus/top-sites.jsonl` holds 54 URLs that production actually fetched,
+two from each of the 29 most-fetched hosts on the generic crawl4ai path
+(VictoriaLogs, June to November 2026; Reddit, Hacker News, GitHub, X and the
+Discourse forums have their own engines and are left out). It has no
+phrases: run it with `--reference`, which scores each candidate by the share
+of the reference candidate's sentences it contains (`cov`). Coverage tells
+you a candidate lost text; it can't tell you the reference was right, so
+read the pages behind every low score.
+
 ## Running suite A or C
 
 Everything runs locally. Tests are hermetic, but benchmarks are not: they
@@ -96,9 +105,13 @@ container at a time, and remove containers and images when done.
 
 Candidate kinds: `omnifeed` (the shipped path, through the loader route),
 `crawl4ai` (omnifeed's payload sent straight to crawl4ai), `firecrawl`
-(`/v2/scrape`), and `http` (one plain GET with Firecrawl Local's
+(`/v2/scrape`), `http` (one plain GET with Firecrawl Local's
 `needs_browser()` check; it tells you which pages need no browser, nothing
-about markdown quality).
+about markdown quality), and `gomd` (one plain GET converted to markdown in
+Go by `fetch/gomd`, the converter a plain-HTTP step in omnifeed would use;
+start it with `go -C benchmark/fetch/gomd run . -addr 127.0.0.1:18090` and
+pass `gomd:http://127.0.0.1:18090/?mode=raw`, or `?mode=read` for
+Readability first).
 
 ## Suite H: check against production
 
