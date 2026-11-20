@@ -17,6 +17,13 @@ Candidate kinds:
   http       one plain GET and Firecrawl Local's needs_browser() heuristic;
              says which pages a fetch without a browser would serve. Its
              "content" is tag-stripped HTML, good for phrase checks only.
+  gomd       GET <url>&url=..., the Go converter helper in fetch/gomd
+             (one plain GET, HTML to markdown in Go); base is
+             http://127.0.0.1:18090/?mode=raw or ?mode=read
+
+--reference NAME scores every other candidate against NAME's text on the
+same URL: "cov" is the share of NAME's sentences found in it. It needs no
+must-contain phrases, so it works on corpus/top-sites.jsonl.
 
 Writes <out>/raw.jsonl (one line per call) and <out>/summary.md.
 See benchmark/README.md for the suites and how to read the numbers.
@@ -32,6 +39,7 @@ import subprocess
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 # omnifeed's DefaultCrawl4AIUserAgent (internal/config/config.go).
@@ -150,8 +158,17 @@ def call_http(_base, url, _token):
     return text, "", {"serves": not needs_browser(raw, text)}
 
 
+def call_gomd(base, url, _token):
+    try:
+        with urllib.request.urlopen(base + "&url=" + urllib.parse.quote(url, safe=""), timeout=60) as r:
+            j = json.load(r)
+    except Exception as e:  # noqa: BLE001
+        return "", str(e), {}
+    return j.get("markdown") or "", j.get("error") or "", {}
+
+
 KINDS = {"omnifeed": call_omnifeed, "crawl4ai": call_crawl4ai,
-         "firecrawl": call_firecrawl, "http": call_http}
+         "firecrawl": call_firecrawl, "http": call_http, "gomd": call_gomd}
 
 
 def plain(text):
@@ -160,6 +177,35 @@ def plain(text):
     text = re.sub(r"!?\[([^\]]*)\]\([^)]*\)", r"\1", text)
     text = re.sub(r"[*_`#>|]", "", text)
     return re.sub(r"\s+", " ", text).lower()
+
+
+def letters(text):
+    return re.sub(r"[^a-z0-9]", "", plain(text))
+
+
+def sentences(text, n=10):
+    """Up to n sentences of 8+ words, spread over the text, for coverage."""
+    out = [p.strip() for p in re.split(r"(?<=[.!?])\s+|\n+", plain_lines(text))
+           if len(p.split()) >= 8 and "http" not in p]
+    if len(out) > n:
+        out = [out[int(i * len(out) / n)] for i in range(n)]
+    return out
+
+
+def plain_lines(text):
+    """plain(), but keeping line breaks so sentences can be split on them."""
+    return "\n".join(plain(line) for line in text.splitlines())
+
+
+def coverage(ref, text):
+    """Share of the reference's sentences found in text (letters and digits
+    only, so markdown, spacing and punctuation don't count). None when the
+    reference has no sentence to check."""
+    sents = sentences(ref)
+    if not sents:
+        return None
+    have = letters(text)
+    return round(sum(letters(s) in have for s in sents) / len(sents), 2)
 
 
 def grade(text, err, must):
@@ -210,7 +256,7 @@ def run_one(name, kind, base, token, item, pass_no):
     rec = {"candidate": name, "pass": pass_no, "url": item["url"], "cat": item["cat"],
            "s": s, "chars": len(text), "tokens": len(text) // 4,
            "grade": grade(text, err, item["must"]), "err": str(err)[:200],
-           "head": text[:300]}
+           "head": text[:300], "text": text}
     if kind == "http":
         rec["serves"] = meta["serves"] and rec["grade"] == "ok"
         rec["serves_but_missing"] = meta["serves"] and rec["grade"] != "ok"
@@ -232,7 +278,11 @@ def main():
     ap.add_argument("--passes", type=int, default=1)
     ap.add_argument("--concurrency", type=int, default=0, help="extra pass at this concurrency")
     ap.add_argument("--settle", type=int, default=0, help="seconds idle after the run, then sample again")
+    ap.add_argument("--reference", help="candidate name the others are scored against (cov)")
     a = ap.parse_args()
+    if a.reference and not a.candidate[0].startswith(a.reference + "="):
+        ap.error("--reference must name the first --candidate")
+    ref_text = {}
 
     corpus = [json.loads(ln) for ln in open(a.corpus) if ln.strip()]
     os.makedirs(a.out, exist_ok=True)
@@ -252,6 +302,11 @@ def main():
         for p in range(1, a.passes + 1):
             for item in corpus:
                 r = run_one(name, kind, base, a.token, item, p)
+                text = r.pop("text")
+                if name == a.reference and p == 1:
+                    ref_text[item["url"]] = text
+                elif a.reference:
+                    r["cov"] = coverage(ref_text.get(item["url"], ""), text)
                 recs.append(r)
                 raw.write(json.dumps(r) + "\n")
                 raw.flush()
@@ -263,6 +318,7 @@ def main():
                 conc = list(ex.map(lambda it: run_one(name, kind, base, a.token, it, "c"), corpus))
             wall = round(time.monotonic() - t, 1)
             for r in conc:
+                r.pop("text")
                 raw.write(json.dumps(r) + "\n")
         for s in samplers.values():
             s.done.set()
@@ -283,6 +339,10 @@ def main():
         if wall is not None:
             summary.append(f"- concurrency {a.concurrency}: wall {wall} s, "
                            f"ok {sum(r['grade'] == 'ok' for r in conc)}/{len(conc)}")
+        covs = [r["cov"] for r in recs if r.get("cov") is not None]
+        if covs:
+            summary.append(f"- coverage of {a.reference}: median {statistics.median(covs)}, "
+                           f"below 0.8 on {sum(c < 0.8 for c in covs)}/{len(covs)}")
         if kind == "http":
             n = sum(r["serves"] for r in recs)
             bad = sum(r["serves_but_missing"] for r in recs)
@@ -294,11 +354,11 @@ def main():
             summary.append(f"- {c}: idle {idle[c]['ws_mib']} MiB / {idle[c]['chrome_browsers']} Chrome, "
                            f"peak {peak} MiB / {peak_b} Chrome, after {a.settle} s "
                            f"{after[c]['ws_mib']} MiB / {after[c]['chrome_browsers']} Chrome")
-        bad = [r for r in recs if r["grade"] != "ok"]
+        bad = [r for r in recs if r["grade"] != "ok" or (r.get("cov") is not None and r["cov"] < 0.8)]
         if bad:
-            summary += ["", "| url | grade | s | chars | err |", "|---|---|---|---|---|"]
-            summary += [f"| {r['url']} | {r['grade']} | {r['s']} | {r['chars']} | {r['err'][:60]} |"
-                        for r in bad]
+            summary += ["", "| url | grade | cov | s | chars | err |", "|---|---|---|---|---|---|"]
+            summary += [f"| {r['url']} | {r['grade']} | {r.get('cov', '')} | {r['s']} | {r['chars']} "
+                        f"| {r['err'][:60]} |" for r in bad]
         summary.append("")
     with open(os.path.join(a.out, "summary.md"), "w") as f:
         f.write("\n".join(summary))
