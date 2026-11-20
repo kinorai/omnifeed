@@ -3,9 +3,11 @@
 // omnifeed's generic engine would do it. It is a separate module so the
 // converter libraries stay out of omnifeed's go.mod until one is chosen.
 //
-//	go run . -addr 127.0.0.1:18090
-//	GET /?mode=raw&url=...   the page minus omnifeed's excluded tags
-//	GET /?mode=read&url=...  Readability's main content first
+//	go build -o /tmp/gomd .
+//	/tmp/gomd -mode raw  URL   the page minus omnifeed's excluded tags
+//	/tmp/gomd -mode read URL   Readability's main content first
+//
+// It prints one JSON object: {"markdown": ..., "error": ...}.
 package main
 
 import (
@@ -16,6 +18,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -98,18 +101,18 @@ func convert(client *http.Client, conv *converter.Converter, rawURL, mode string
 }
 
 func main() {
-	addr := flag.String("addr", "127.0.0.1:18090", "listen address")
+	mode := flag.String("mode", "raw", "raw, or read for Readability first")
 	flag.Parse()
+	if flag.NArg() != 1 {
+		log.Fatal("usage: gomd [-mode raw|read] URL")
+	}
 	client := &http.Client{Timeout: 30 * time.Second}
-	conv := newConverter()
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		md, err := convert(client, conv, r.URL.Query().Get("url"), r.URL.Query().Get("mode"))
-		out := reply{Markdown: md}
-		if err != nil {
-			out.Error = err.Error()
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(out)
-	})
-	log.Fatal(http.ListenAndServe(*addr, nil))
+	md, err := convert(client, newConverter(), flag.Arg(0), *mode)
+	out := reply{Markdown: md}
+	if err != nil {
+		out.Error = err.Error()
+	}
+	if err := json.NewEncoder(os.Stdout).Encode(out); err != nil {
+		log.Fatal(err)
+	}
 }
