@@ -17,9 +17,9 @@ Candidate kinds:
   http       one plain GET and Firecrawl Local's needs_browser() heuristic;
              says which pages a fetch without a browser would serve. Its
              "content" is tag-stripped HTML, good for phrase checks only.
-  gomd       GET <url>&url=..., the Go converter helper in fetch/gomd
-             (one plain GET, HTML to markdown in Go); base is
-             http://127.0.0.1:18090/?mode=raw or ?mode=read
+  gomd       the Go converter in fetch/gomd (one plain GET, HTML to
+             markdown in Go); base is the built binary and its mode,
+             /tmp/gomd,raw or /tmp/gomd,read
 
 --reference NAME scores every other candidate against NAME's text on the
 same URL: "cov" is the share of NAME's sentences found in it. It needs no
@@ -39,7 +39,6 @@ import subprocess
 import threading
 import time
 import urllib.error
-import urllib.parse
 import urllib.request
 
 # omnifeed's DefaultCrawl4AIUserAgent (internal/config/config.go).
@@ -159,9 +158,11 @@ def call_http(_base, url, _token):
 
 
 def call_gomd(base, url, _token):
+    binary, mode = base.rsplit(",", 1)
     try:
-        with urllib.request.urlopen(base + "&url=" + urllib.parse.quote(url, safe=""), timeout=60) as r:
-            j = json.load(r)
+        out = subprocess.run([binary, "-mode", mode, url], capture_output=True, text=True,
+                             timeout=60, check=True).stdout
+        j = json.loads(out)
     except Exception as e:  # noqa: BLE001
         return "", str(e), {}
     return j.get("markdown") or "", j.get("error") or "", {}

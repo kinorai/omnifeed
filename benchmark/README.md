@@ -110,9 +110,9 @@ Candidate kinds: `omnifeed` (the shipped path, through the loader route),
 `needs_browser()` check; it tells you which pages need no browser, nothing
 about markdown quality), and `gomd` (one plain GET converted to markdown in
 Go by `fetch/gomd`, the converter a plain-HTTP step in omnifeed would use;
-start it with `go -C benchmark/fetch/gomd run . -addr 127.0.0.1:18090` and
-pass `gomd:http://127.0.0.1:18090/?mode=raw`, or `?mode=read` for
-Readability first).
+build it with `go -C benchmark/fetch/gomd build -o /tmp/gomd .` and
+pass `gomd:/tmp/gomd,raw`, or `gomd:/tmp/gomd,read` for Readability
+first).
 
 ## Suite H: check against production
 
