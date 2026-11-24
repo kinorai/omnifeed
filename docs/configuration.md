@@ -72,7 +72,7 @@ cannot check before they are fetched ([SECURITY.md](../SECURITY.md)).
 | `OMNIFEED_TWITTER_ENABLED` | `true` | Render X/Twitter post URLs (`x.com`, `twitter.com`, `fxtwitter.com`, `fixupx.com`, `vxtwitter.com`, `fixvx.com`, and `t.co` links that land on a post) with the Twitter engine. `false` sends them to the generic fallback, which loads `x.com` in crawl4ai. See [Twitter/X posts](#twitterx-posts). |
 | `OMNIFEED_TWITTER_FXTWITTER_URL` | `https://api.fxtwitter.com` | Base URL of the FxTwitter API the engine reads first. Point it at a **self-hosted [FxEmbed](https://github.com/FxEmbed/FxEmbed)** to stop depending on the public instance. |
 | `OMNIFEED_TWITTER_MAX_REPLIES` | `20` | Replies rendered under a post, from the first page FxTwitter returns (about 35). Must be at least `1`. |
-| `OMNIFEED_TWITTER_RSSHUB_URL` | _(empty)_ | Base URL of the [RSSHub](https://docs.rsshub.app) instance the X timelines are read from: `x.com/home` (For you), `x.com/home?f=following`, `x.com/{handle}` and `x.com/search?q=…`. RSSHub needs `TWITTER_AUTH_TOKEN` (an X account's `auth_token` cookie). Empty: those URLs answer an error. See [Twitter/X timelines](#twitterx-timelines). |
+| `OMNIFEED_TWITTER_RSSHUB_URL` | _(empty)_ | Base URL of the [RSSHub](https://docs.rsshub.app) instance the X timelines are read from: `x.com/home` (For you), `x.com/home?f=following`, `x.com/{handle}` and `x.com/search?q=…`. RSSHub needs `TWITTER_AUTH_TOKEN` (an X account's `auth_token` cookie). Empty: the home timeline answers an error that names this variable, and profiles and search go to crawl4ai as before. See [Twitter/X timelines](#twitterx-timelines). |
 | `OMNIFEED_TWITTER_RSSHUB_KEY` | _(empty)_ | That RSSHub's `ACCESS_KEY`, sent as its `key` parameter. Never logged or put in an error. Empty: no key is sent. |
 | `OMNIFEED_REDDIT_TIMEOUT` | `4m` | Wall-clock cap for a Reddit thread expansion |
 | `OMNIFEED_REDDIT_MAX_ROUNDS` | `3` | Default `/api/morechildren` rounds, capped at 40. `0` here means the default `3`. Only a request's `expand: 0` turns expansion off. `?expand=full` allows up to 40. The `browser` method reads it as the most "more replies" requests a thread page may send, capped at 10. |
@@ -322,21 +322,27 @@ time. For one post, FxTwitter answered in 0.21 s with counts and RSSHub in 2.1 s
 
 RSSHub items carry no counts, so each post is then loaded like a linked post (the
 FxTwitter chain above, four at a time, cached), in RSSHub's order. A repost shows the
-original post, once. A post the chain cannot load keeps the item's text, author and date
-with no counts, and `_meta` gets `partial: true`, `partial_reason` and
+original post, once. A post two sources call gone (deleted, protected or withheld) is
+dropped. A post the chain cannot load for another reason (a rate limit, an outage) keeps
+the item's text, author and date (no date on a repost: the item's is the reposter's),
+its counts are marked missing (`counts_missing: true` in JSON and TOON, no counts in the
+markdown header), and `_meta` gets `partial: true`, `partial_reason` and
 `unhydrated_posts`.
 
 Output is markdown by default: a title line, then each post as its header line and body.
 `format: json` or `toon` returns `{kind, handle?, query?, posts[]}`, `kind` being `home`,
-`following`, `profile` or `search` and each post the same shape as a post's `post`.
+`following`, `profile` or `search` and each post the same shape as a post's `post`, plus
+`counts_missing` when its counts did not load (absent counts otherwise mean 0).
 `_meta` carries `kind`, `upstream: rsshub` and `posts`.
 
 The home and following timelines are the feed of the X account behind RSSHub, so they
 are marked `private: true` and the response cache never stores them. Profiles and search
-are cached with the threads TTL. Without `OMNIFEED_TWITTER_RSSHUB_URL` these URLs answer
-an error that names the variable. RSSHub's own errors (503 when X refused, 403 for a wrong
-key, 404 for an unknown account) keep their kind. Both are final: crawl4ai only gets X's
-logged-out shell for these pages.
+are cached with the threads TTL. Without `OMNIFEED_TWITTER_RSSHUB_URL` the home timeline
+answers an error that names the variable (logged out it is only X's sign-in page), and
+profiles and search are not claimed: they go to crawl4ai as before. RSSHub's own errors
+(503 when X refused, 403 for a wrong key, 404 for an unknown account) keep their kind,
+and the message names RSSHub. Both are final: crawl4ai only gets X's logged-out shell for
+these pages.
 
 ## Reddit access
 

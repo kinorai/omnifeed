@@ -397,4 +397,7 @@ type OutPost struct {
 	Poll      []string `json:"poll,omitempty" toon:"poll,omitempty"`
 	Card      string   `json:"card,omitempty" toon:"card,omitempty"`
 	Article   string   `json:"article,omitempty" toon:"article,omitempty"`
+	// CountsMissing marks a timeline post the post chain could not load: its
+	// likes, reposts, replies and views are unknown, not zero.
+	CountsMissing bool `json:"counts_missing,omitempty" toon:"counts_missing,omitempty"`
 }

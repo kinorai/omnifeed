@@ -46,7 +46,7 @@ func FetchURL(reg engine.Dispatcher, defaults reddit.Options, metrics *observabi
 			"its quote, media alt text, community note, the author's thread and top replies. " +
 			"X timelines need the server's RSSHub: x.com/home (For you) and x.com/home?f=following (Following) are its " +
 			"account's own feed; x.com/{handle} lists a profile's recent posts; x.com/search?q=... runs an X search, " +
-			"operators included (from:, since:, until:, min_faves:). Each post comes with its counts. " +
+			"operators included (from:, since:, until:, min_faves:). Each post comes with its counts; counts_missing marks one whose counts could not load. " +
 			"Successful results are cached briefly (threads ~10 min, pages ~30 min; _meta.cache is hit or miss, _meta.cached_at " +
 			"says when it was fetched), so re-reading a URL is free — pass no_cache=true only when you need content newer than that. " +
 			"A Reddit thread whose reply expansion was cut short is flagged _meta.partial with a 'note:' first line.",

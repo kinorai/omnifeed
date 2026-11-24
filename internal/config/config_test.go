@@ -339,15 +339,6 @@ func TestLoad_RedditQuota(t *testing.T) {
 
 // The Twitter knobs: on by default, the public FxTwitter API, 20 replies; a
 // self-hosted FxEmbed URL and a reply cap are taken verbatim; nonsense fails.
-// An RSSHub URL must be absolute; the table above has other bad values set by
-// then, so this one gets a clean environment.
-func TestLoad_TwitterRSSHubURLMustBeAbsolute(t *testing.T) {
-	_, err := loadWith(t, "OMNIFEED_TWITTER_RSSHUB_URL", "rsshub:1200")
-	if err == nil || !strings.Contains(err.Error(), "OMNIFEED_TWITTER_RSSHUB_URL") {
-		t.Errorf("err = %v, want the RSSHub URL rejected", err)
-	}
-}
-
 func TestLoad_Twitter(t *testing.T) {
 	cfg, err := loadWith(t, "", "")
 	if err != nil {
@@ -386,6 +377,16 @@ func TestLoad_Twitter(t *testing.T) {
 		if err != nil || !tc.check(cfg) {
 			t.Errorf("%s=%q: err=%v cfg=%+v", tc.key, tc.value, err, cfg)
 		}
+	}
+}
+
+// An RSSHub URL must be absolute. In TestLoad_Twitter's table each case keeps
+// the earlier cases' variables, so a bad value there could fail for another
+// reason; this one runs in a clean environment.
+func TestLoad_TwitterRSSHubURLMustBeAbsolute(t *testing.T) {
+	_, err := loadWith(t, "OMNIFEED_TWITTER_RSSHUB_URL", "rsshub:1200")
+	if err == nil || !strings.Contains(err.Error(), "OMNIFEED_TWITTER_RSSHUB_URL") {
+		t.Errorf("err = %v, want the RSSHub URL rejected", err)
 	}
 }
 

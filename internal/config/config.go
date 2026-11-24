@@ -245,8 +245,9 @@ type Config struct {
 	// the public api.fxtwitter.com, or a self-hosted FxEmbed. TwitterMaxReplies
 	// caps the replies rendered under a post. TwitterRSSHubURL is the RSSHub
 	// instance the X timelines (home, following, profiles, search) are read
-	// from; empty = those URLs answer with an error. TwitterRSSHubKey is that
-	// instance's ACCESS_KEY, sent as its key parameter; empty = none.
+	// from; empty = home answers an error and profiles and search go to the
+	// generic engine. TwitterRSSHubKey is that instance's ACCESS_KEY, sent as
+	// its key parameter; empty = none.
 	TwitterEnabled      bool
 	TwitterFxTwitterURL string
 	TwitterMaxReplies   int

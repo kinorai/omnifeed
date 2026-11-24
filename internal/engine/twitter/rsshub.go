@@ -17,6 +17,7 @@ import (
 
 	"github.com/kinorai/omnifeed/internal/domain"
 	"github.com/kinorai/omnifeed/internal/httpx"
+	"github.com/kinorai/omnifeed/internal/linkfmt"
 	"github.com/kinorai/omnifeed/internal/observability"
 )
 
@@ -116,6 +117,10 @@ func (e *Engine) fetchRSSHub(ctx context.Context, path string) ([]rsshubItem, er
 	// (an X rate limit, a missing credential) do not clear in a second.
 	resp, err := e.rsshub.DoRetry(ctx, http.MethodGet, base+"?"+q.Encode(), nil,
 		map[string]string{"Accept": "application/feed+json, application/json"}, httpx.RetryConfig{MaxAttempts: 1})
+	if se, ok := errors.AsType[*httpx.StatusError](err); ok {
+		// DoRetry hands a 429 or 5xx back as an error, with no response.
+		return nil, rsshubStatusError(se.StatusCode)
+	}
 	if err != nil {
 		return nil, httpx.ClassifyClientError(redactURL(err, base), domain.KindUpstreamError)
 	}
@@ -147,7 +152,8 @@ func rsshubStatusError(status int) error {
 		kind = domain.KindNotFound
 		msg += ": no such account or route"
 	case http.StatusServiceUnavailable:
-		msg += ": the route failed on X's side (rate limit or credential), see the RSSHub log"
+		msg += ": the route failed on X's side (a rate limit, an expired TWITTER_AUTH_TOKEN, or X changed " +
+			"its request signing and RSSHub needs an update), see the RSSHub log"
 	}
 	return &domain.FetchError{Kind: kind, StatusCode: status, Err: errors.New(msg)}
 }
@@ -174,9 +180,11 @@ type timelinePost struct {
 }
 
 // hydrate turns RSSHub items into posts, in RSSHub's order, loading each one
-// through the post chain with a few workers. A post the chain cannot load
-// keeps what the item has (text, author, date) with zero counts; failed counts
-// those, firstErr is the first one's error.
+// through the post chain with a few workers. A post two sources call gone
+// (deleted, protected, withheld) is dropped. A post the chain cannot load for
+// any other reason (a rate limit, an outage) keeps what the item has (text,
+// author, date) without counts; failed counts those, firstErr is the first
+// one's error.
 func (e *Engine) hydrate(ctx context.Context, items []rsshubItem) (posts []timelinePost, failed int, firstErr error) {
 	seen := map[string]bool{}
 	for _, it := range items {
@@ -189,6 +197,7 @@ func (e *Engine) hydrate(ctx context.Context, items []rsshubItem) (posts []timel
 	}
 
 	errs := make([]error, len(posts))
+	gone := make([]bool, len(posts))
 	sem := make(chan struct{}, hydrateWorkers)
 	var wg sync.WaitGroup
 	for i := range posts {
@@ -196,6 +205,10 @@ func (e *Engine) hydrate(ctx context.Context, items []rsshubItem) (posts []timel
 			sem <- struct{}{}
 			defer func() { <-sem }()
 			b, err := e.fetchBundle(ctx, posts[i].ID)
+			if c, ok := errors.AsType[*chainError](err); ok && c.notFound() {
+				gone[i] = true
+				return
+			}
 			if err != nil {
 				errs[i] = err
 				return
@@ -204,66 +217,108 @@ func (e *Engine) hydrate(ctx context.Context, items []rsshubItem) (posts []timel
 		})
 	}
 	wg.Wait()
-	for _, err := range errs {
-		if err == nil {
+	kept := posts[:0]
+	for i, p := range posts {
+		if gone[i] {
+			continue
+		}
+		kept = append(kept, p)
+		if errs[i] == nil {
 			continue
 		}
 		failed++
 		if firstErr == nil {
-			firstErr = err
+			firstErr = errs[i]
 		}
 	}
-	return posts, failed, firstErr
+	return kept, failed, firstErr
 }
 
 // itemPost is the bare post an RSSHub item describes. A repost names the
-// original post (its "repost" link), which is what the timeline shows.
+// original post (its "repost" link), which is what the timeline shows; a
+// reply names the post it answers (its "reply" link).
 func itemPost(it rsshubItem) (post, bool) {
 	link, repost := it.URL, false
+	var replyTo string
 	if it.Extra != nil {
 		for _, l := range it.Extra.Links {
-			if l.Type == "repost" && l.URL != "" {
+			switch {
+			case l.URL == "":
+			case l.Type == "repost":
 				link, repost = l.URL, true
-				break
+			case l.Type == "reply":
+				replyTo = l.URL
 			}
 		}
 	}
+	p, ok := statusRef(link)
+	if !ok {
+		return post{}, false
+	}
+	if r, ok := statusRef(replyTo); ok && !repost {
+		p.ReplyToID, p.ReplyTo = r.ID, r.Handle
+	}
+	p.Text = htmlText(it.ContentHTML, p.ReplyTo != "")
+	// On a repost the item's author and date are the reposter's, so only an
+	// original post takes them.
+	if !repost {
+		if len(it.Authors) > 0 {
+			p.Name = it.Authors[0].Name
+		}
+		if ts, err := time.Parse(time.RFC3339, it.DatePublished); err == nil {
+			p.Created = ts.UTC().Format(time.RFC3339)
+		}
+	}
+	return p, true
+}
+
+// statusRef is the id and author handle of an x.com post URL.
+func statusRef(link string) (post, bool) {
 	u, err := url.Parse(link)
-	if err != nil {
+	if err != nil || link == "" {
 		return post{}, false
 	}
 	m := statusPath.FindStringSubmatch(u.Path)
 	if m == nil {
 		return post{}, false
 	}
-	p := post{ID: m[1], Text: htmlText(it.ContentHTML)}
+	p := post{ID: m[1]}
 	if h, _, ok := strings.Cut(strings.TrimPrefix(u.Path, "/"), "/"); ok && h != "i" {
 		p.Handle = h
-	}
-	// The item's author is the reposter on a repost, so only an original
-	// post takes its display name.
-	if !repost && len(it.Authors) > 0 {
-		p.Name = it.Authors[0].Name
-	}
-	if ts, err := time.Parse(time.RFC3339, it.DatePublished); err == nil {
-		p.Created = ts.UTC().Format(time.RFC3339)
 	}
 	return p, true
 }
 
 var (
-	htmlBreak = regexp.MustCompile(`(?i)<br\s*/?>`)
-	htmlTag   = regexp.MustCompile(`<[^>]*>`)
-	manyBlank = regexp.MustCompile(`\n{3,}`)
+	htmlAnchor = regexp.MustCompile(`(?is)<a\s[^>]*?href="([^"]*)"[^>]*>(.*?)</a>`)
+	htmlBreak  = regexp.MustCompile(`(?i)<br\s*/?>`)
+	htmlTag    = regexp.MustCompile(`<[^>]*>`)
+	manyBlank  = regexp.MustCompile(`\n{3,}`)
 )
 
-// htmlText reduces an RSSHub item body to plain text: line breaks kept,
-// tags (images, links, the quote box) dropped, entities decoded.
-func htmlText(s string) string {
+// htmlText reduces an RSSHub item body to plain text: line breaks kept, a
+// link's target kept (see keepHref), other tags (images, the quote box)
+// dropped, entities decoded. reply drops the @handles X prepends to a reply.
+func htmlText(s string, reply bool) string {
+	s = htmlAnchor.ReplaceAllStringFunc(s, keepHref)
 	s = htmlBreak.ReplaceAllString(s, "\n")
 	s = htmlTag.ReplaceAllString(s, "")
 	s = html.UnescapeString(s)
-	return cleanText(manyBlank.ReplaceAllString(s, "\n\n"), false)
+	return cleanText(manyBlank.ReplaceAllString(s, "\n\n"), reply)
+}
+
+// keepHref renders one <a> as its text and target (linkfmt), so a link X
+// shows shortened keeps its full URL. @mentions and #hashtags keep their text
+// alone: their targets are x.com pages, and the text already names them. The
+// result is re-escaped, since htmlText unescapes the whole body once after.
+func keepHref(a string) string {
+	m := htmlAnchor.FindStringSubmatch(a)
+	href := strings.TrimSpace(html.UnescapeString(m[1]))
+	text := strings.TrimSpace(html.UnescapeString(htmlTag.ReplaceAllString(m[2], "")))
+	if strings.HasPrefix(text, "@") || strings.HasPrefix(text, "#") || strings.HasPrefix(text, "$") {
+		return html.EscapeString(text)
+	}
+	return html.EscapeString(linkfmt.Link(text, href))
 }
 
 // timelineDocument renders a timeline and attaches its metadata. The home
@@ -275,7 +330,9 @@ func (e *Engine) timelineDocument(t target, posts []timelinePost, failed int, fi
 		func() any {
 			tl.Posts = make([]OutPost, 0, len(posts))
 			for _, p := range posts {
-				tl.Posts = append(tl.Posts, outPost(p.post))
+				o := outPost(p.post)
+				o.CountsMissing = !p.hydrated
+				tl.Posts = append(tl.Posts, o)
 			}
 			return tl
 		},

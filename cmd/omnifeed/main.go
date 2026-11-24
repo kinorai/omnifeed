@@ -330,7 +330,8 @@ func run(cfg config.Config, logger *slog.Logger) error {
 	// Needs outbound access to api.fxtwitter.com (or the configured FxEmbed),
 	// cdn.syndication.twimg.com, api.vxtwitter.com and t.co. Timelines (home,
 	// following, profiles, search) come from the RSSHub at
-	// OMNIFEED_TWITTER_RSSHUB_URL alone; unset, they answer an error.
+	// OMNIFEED_TWITTER_RSSHUB_URL alone; unset, home answers an error and
+	// profiles and search go to the generic engine.
 	threadEngines := []domain.Engine{redditEngine, hackerNewsEngine, gitHubEngine, discourseEngine, blueskyEngine, stackExchangeEngine}
 	if cfg.TwitterEnabled {
 		twitterEngine := twitter.New(twitter.Config{
