@@ -2,6 +2,7 @@ package config
 
 import (
 	"slices"
+	"strings"
 	"testing"
 	"time"
 )
@@ -338,6 +339,15 @@ func TestLoad_RedditQuota(t *testing.T) {
 
 // The Twitter knobs: on by default, the public FxTwitter API, 20 replies; a
 // self-hosted FxEmbed URL and a reply cap are taken verbatim; nonsense fails.
+// An RSSHub URL must be absolute; the table above has other bad values set by
+// then, so this one gets a clean environment.
+func TestLoad_TwitterRSSHubURLMustBeAbsolute(t *testing.T) {
+	_, err := loadWith(t, "OMNIFEED_TWITTER_RSSHUB_URL", "rsshub:1200")
+	if err == nil || !strings.Contains(err.Error(), "OMNIFEED_TWITTER_RSSHUB_URL") {
+		t.Errorf("err = %v, want the RSSHub URL rejected", err)
+	}
+}
+
 func TestLoad_Twitter(t *testing.T) {
 	cfg, err := loadWith(t, "", "")
 	if err != nil {
@@ -357,6 +367,10 @@ func TestLoad_Twitter(t *testing.T) {
 			return c.TwitterFxTwitterURL == "http://fxembed.internal:8787"
 		}, false},
 		{"OMNIFEED_TWITTER_MAX_REPLIES", "50", func(c Config) bool { return c.TwitterMaxReplies == 50 }, false},
+		{"OMNIFEED_TWITTER_RSSHUB_URL", "http://rsshub:1200", func(c Config) bool {
+			return c.TwitterRSSHubURL == "http://rsshub:1200"
+		}, false},
+		{"OMNIFEED_TWITTER_RSSHUB_KEY", " synthetic-key ", func(c Config) bool { return c.TwitterRSSHubKey == "synthetic-key" }, false},
 		{"OMNIFEED_TWITTER_MAX_REPLIES", "0", nil, true},
 		{"OMNIFEED_TWITTER_MAX_REPLIES", "many", nil, true},
 		{"OMNIFEED_TWITTER_ENABLED", "maybe", nil, true},

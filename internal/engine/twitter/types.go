@@ -2,8 +2,11 @@
 // twitter.com, fxtwitter.com, fixupx.com, vxtwitter.com, fixvx.com) post URL
 // as the post itself — full text, quote, media with alt text, community note,
 // poll, link card, X Article body — plus its parents, the author's
-// self-thread and the top replies. Markdown by default; TOON or JSON when the
-// caller passes `format`.
+// self-thread and the top replies. The home timeline (For you and
+// Following), a profile and a /search URL render as a list of posts read from
+// RSSHub (OMNIFEED_TWITTER_RSSHUB_URL), each post then loaded like a linked
+// one for its counts and media (rsshub.go). Markdown by default; TOON or JSON
+// when the caller passes `format`.
 //
 // x.com is bot-walled for headless browsers and twitter.com links fail in
 // crawl4ai outright, so the engine reads public JSON mirrors DIRECTLY over
@@ -360,6 +363,15 @@ type Output struct {
 	Replies   []OutPost `json:"replies,omitempty" toon:"replies,omitempty"`
 	Source    string    `json:"source" toon:"source"`
 	Truncated bool      `json:"truncated" toon:"truncated"`
+}
+
+// Timeline is the structured rendering of a timeline: the home timeline
+// (For you or Following), a profile or a search, in X's order.
+type Timeline struct {
+	Kind   string    `json:"kind" toon:"kind"` // home | following | profile | search
+	Handle string    `json:"handle,omitempty" toon:"handle,omitempty"`
+	Query  string    `json:"query,omitempty" toon:"query,omitempty"`
+	Posts  []OutPost `json:"posts" toon:"posts"`
 }
 
 // OutPost is one post in the structured output. Media, Poll and Card are

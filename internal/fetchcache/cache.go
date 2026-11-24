@@ -10,10 +10,11 @@
 // What it caches: successful, complete documents only. Errors, generic
 // fallback renders (domain.FallbackFromKey) and partial crawls
 // (domain.PartialKey) are never stored, so the next caller gets a fresh chance
-// at the real thing. Concurrent identical requests share one upstream fetch
-// (singleflight). Backend failures degrade to a miss, never to a failed
-// request; a Redis that refuses the cache's keys (ACL) is replaced by the
-// in-process backend (Failover).
+// at the real thing. Private documents (domain.PrivateKey, a person's own
+// feed) are never stored either. Concurrent identical requests share one
+// upstream fetch (singleflight). Backend failures degrade to a miss, never to
+// a failed request; a Redis that refuses the cache's keys (ACL) is replaced by
+// the in-process backend (Failover).
 package fetchcache
 
 import (
@@ -308,13 +309,15 @@ func (c *Cache) observe(result string) {
 // Cacheable reports whether doc may be stored: a complete, non-empty document
 // from the engine that claimed the URL. Fallback renders and partial crawls
 // are stand-ins for the real thing; caching them would serve a degraded answer
-// for a whole TTL after the upstream recovered.
+// for a whole TTL after the upstream recovered. Private documents are someone's
+// own feed and stay out of a cache every caller reads.
 func Cacheable(doc domain.Document) bool {
 	if doc.PageContent == "" {
 		return false
 	}
 	m := doc.Metadata
-	return m[domain.PartialKey] != "true" && m[domain.FallbackFromKey] == "" && m["error"] != "true"
+	return m[domain.PartialKey] != "true" && m[domain.FallbackFromKey] == "" && m["error"] != "true" &&
+		m[domain.PrivateKey] != "true"
 }
 
 // Key derives the cache key from the normalized URL and every option that

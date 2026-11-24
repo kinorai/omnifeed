@@ -34,7 +34,7 @@ const MaxFetchChars = 500000
 
 // FetchURL returns the `fetch_url` tool: URL → LLM-friendly content via the
 // engine registry (Reddit engine for reddit.com, Hacker News engine for
-// news.ycombinator.com, Twitter engine for X posts, crawl4ai fallback for the
+// news.ycombinator.com, Twitter engine for X posts and timelines, crawl4ai fallback for the
 // rest).
 // defaultMaxChars caps markdown content when the caller omits `max_chars`
 // (0 = unlimited); it comes from OMNIFEED_FETCH_MAX_CHARS.
@@ -44,6 +44,9 @@ func FetchURL(reg engine.Dispatcher, defaults reddit.Options, metrics *observabi
 		Description: "Fetch any URL and return LLM-friendly content. You MUST use it for Reddit and Hacker News URLs. " +
 			"X/Twitter post links (x.com, twitter.com, fxtwitter/fixupx/vxtwitter/fixvx, t.co) return the full post with " +
 			"its quote, media alt text, community note, the author's thread and top replies. " +
+			"X timelines need the server's RSSHub: x.com/home (For you) and x.com/home?f=following (Following) are its " +
+			"account's own feed; x.com/{handle} lists a profile's recent posts; x.com/search?q=... runs an X search, " +
+			"operators included (from:, since:, until:, min_faves:). Each post comes with its counts. " +
 			"Successful results are cached briefly (threads ~10 min, pages ~30 min; _meta.cache is hit or miss, _meta.cached_at " +
 			"says when it was fetched), so re-reading a URL is free — pass no_cache=true only when you need content newer than that. " +
 			"A Reddit thread whose reply expansion was cut short is flagged _meta.partial with a 'note:' first line.",

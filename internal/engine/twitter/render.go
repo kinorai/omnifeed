@@ -29,24 +29,11 @@ func (e *Engine) document(b bundle, rawURL string, opts domain.EngineOptions) (d
 		replies = replies[:e.maxReplies]
 	}
 
-	format := explicitFormat(opts)
-	var content, contentType string
-	switch format {
-	case "toon", "json":
-		out := structured(b, replies)
-		var raw []byte
-		var err error
-		if format == "json" {
-			raw, err = json.Marshal(out)
-		} else {
-			raw, err = toon.Marshal(out)
-		}
-		if err != nil {
-			return domain.Document{}, fmt.Errorf("encode: %w", err)
-		}
-		content, contentType = string(raw), format
-	default:
-		content, contentType = renderMarkdown(b, replies), domain.ContentTypeMarkdown
+	content, contentType, err := encode(opts,
+		func() any { return structured(b, replies) },
+		func() string { return renderMarkdown(b, replies) })
+	if err != nil {
+		return domain.Document{}, err
 	}
 
 	meta := map[string]string{
@@ -65,6 +52,25 @@ func (e *Engine) document(b bundle, rawURL string, opts domain.EngineOptions) (d
 	}
 	e.logger.Info("twitter crawl complete", "source", rawURL, "upstream", b.Source, "bytes", len(content))
 	return domain.Document{PageContent: content, Metadata: meta}, nil
+}
+
+// encode renders markdown, or the structured shape as TOON or JSON when the
+// caller asked for one, and returns the content with its content type.
+func encode(opts domain.EngineOptions, structured func() any, markdown func() string) (content, contentType string, err error) {
+	format := explicitFormat(opts)
+	var raw []byte
+	switch format {
+	case "json":
+		raw, err = json.Marshal(structured())
+	case "toon":
+		raw, err = toon.Marshal(structured())
+	default:
+		return markdown(), domain.ContentTypeMarkdown, nil
+	}
+	if err != nil {
+		return "", "", fmt.Errorf("encode: %w", err)
+	}
+	return string(raw), format, nil
 }
 
 // renderMarkdown lays the post out for an LLM reader: header line, parents,
