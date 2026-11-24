@@ -102,6 +102,10 @@ services:
       # service below (and start the stack with `--profile redis`); unset, each
       # instance paces in its own memory, which is all a single one needs.
       # OMNIFEED_REDIS_URL: redis://redis:6379/0
+      # X timelines (x.com/home, ?f=following, profiles, search) come from
+      # RSSHub. Uncomment together with the rsshub service below (and start
+      # the stack with `--profile rsshub`); unset, those URLs answer an error.
+      # OMNIFEED_TWITTER_RSSHUB_URL: http://rsshub:1200
     depends_on:
       crawl4ai:
         condition: service_healthy
@@ -129,6 +133,23 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
+
+  # RSSHub, the source of the X timelines, off by default. It reads X with
+  # the auth_token cookie of an X account: home and following are that
+  # account's own feed. Put TWITTER_AUTH_TOKEN in .env, start it with
+  #   docker compose --profile rsshub up
+  # and uncomment OMNIFEED_TWITTER_RSSHUB_URL on the proxy service above. It
+  # listens on the compose network only; set ACCESS_KEY here and
+  # OMNIFEED_TWITTER_RSSHUB_KEY above if anything else can reach it.
+  rsshub:
+    image: diygod/rsshub:2026-11-24
+    container_name: omnifeed-rsshub
+    profiles: ["rsshub"]
+    environment:
+      NODE_ENV: production
+      CACHE_TYPE: ""   # no cache: omnifeed caches profiles and search itself
+      TWITTER_AUTH_TOKEN: ${TWITTER_AUTH_TOKEN:-}
     restart: unless-stopped
 
   # Stdio MCP, for clients that only speak stdio. Prefer the HTTP transport on
