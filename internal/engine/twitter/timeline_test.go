@@ -239,11 +239,15 @@ func TestTimelineHydrationOrderAndReposts(t *testing.T) {
 	}
 }
 
-// A post no source can load keeps the RSSHub item's text, author and date,
-// with zero counts, and the document is marked partial.
+// A post the chain cannot load for a transient reason (here FxTwitter 503)
+// keeps the RSSHub item's text, author and date, is marked counts_missing,
+// and the document is partial. A repost keeps no date (the item's is the
+// reposter's); a reply keeps the post it answers and loses its @mention.
 func TestTimelineHydrationFailureKeepsMinimalPost(t *testing.T) {
 	routes := homePosts(t)
-	delete(routes, "/2/conversation/1910000000000000001")
+	for id := range routes {
+		routes[id] = failing
+	}
 	_, posts := newUpstream(t, routes)
 	_, rss := newRSSHub(t, http.StatusOK, fixture(t, "rsshub_home.json"))
 	e := newTimelineEngine(t, posts, rss, "", nil)
@@ -252,42 +256,103 @@ func TestTimelineHydrationFailureKeepsMinimalPost(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Crawl: %v", err)
 	}
-	if doc.Metadata[domain.PartialKey] != "true" || doc.Metadata[domain.PartialReasonKey] == "" || doc.Metadata["unhydrated_posts"] != "1" {
-		t.Errorf("meta = %v, want partial with a reason and 1 unhydrated post", doc.Metadata)
+	if doc.Metadata[domain.PartialKey] != "true" || doc.Metadata[domain.PartialReasonKey] == "" || doc.Metadata["unhydrated_posts"] != "3" {
+		t.Errorf("meta = %v, want partial with a reason and 3 unhydrated posts", doc.Metadata)
 	}
 	var tl Timeline
 	if err := json.Unmarshal([]byte(doc.PageContent), &tl); err != nil {
 		t.Fatalf("json: %v", err)
 	}
-	p := tl.Posts[0]
-	want := OutPost{ID: "1910000000000000001", URL: "https://x.com/example_dev/status/1910000000000000001",
-		Author: "example_dev", Name: "Example Dev", CreatedAt: "2026-11-20T10:00:00Z",
-		Text: "Shipping the new parser today.\n\nNotes: example.com/notes"}
-	if p.ID != want.ID || p.URL != want.URL || p.Author != want.Author || p.Name != want.Name ||
-		p.CreatedAt != want.CreatedAt || p.Text != want.Text || p.Likes != 0 || p.Views != 0 {
-		t.Errorf("minimal post = %+v, want %+v", p, want)
+	if len(tl.Posts) != 3 {
+		t.Fatalf("posts = %+v, want 3", tl.Posts)
 	}
-	if len(tl.Posts) != 3 || tl.Posts[1].Likes != 310 {
-		t.Errorf("other posts = %+v", tl.Posts)
+	want := []OutPost{
+		{ID: "1910000000000000001", URL: "https://x.com/example_dev/status/1910000000000000001",
+			Author: "example_dev", Name: "Example Dev", CreatedAt: "2026-11-20T10:00:00Z",
+			Text: "Shipping the new parser today.\n\nNotes: https://example.com/notes", CountsMissing: true},
+		{ID: "1910000000000000002", URL: "https://x.com/demo_lab/status/1910000000000000002",
+			Author: "demo_lab", Text: "Queue models for telescope time & why FIFO loses", CountsMissing: true},
+		{ID: "1910000000000000003", URL: "https://x.com/example_dev/status/1910000000000000003",
+			Author: "example_dev", Name: "Example Dev", CreatedAt: "2026-11-20T08:00:00Z",
+			Text: "Agreed, the queue model fits.", ReplyTo: "1910000000000000002", CountsMissing: true},
 	}
+	for i, w := range want {
+		g := tl.Posts[i]
+		if g.ID != w.ID || g.URL != w.URL || g.Author != w.Author || g.Name != w.Name || g.CreatedAt != w.CreatedAt ||
+			g.Text != w.Text || g.ReplyTo != w.ReplyTo || g.CountsMissing != w.CountsMissing || g.Likes != 0 || g.Views != 0 {
+			t.Errorf("minimal post %d = %+v, want %+v", i, g, w)
+		}
+	}
+	mustContain(t, doc.PageContent, `"counts_missing":true`)
 
-	// Markdown shows no counts for the post it could not load.
+	// Markdown shows no counts for the posts it could not load.
 	md, err := e.Crawl(context.Background(), "https://x.com/home", domain.EngineOptions{})
 	if err != nil {
 		t.Fatalf("Crawl markdown: %v", err)
 	}
-	mustContain(t, md.PageContent, "@example_dev (Example Dev) · 2026-11-20T10:00:00Z · https://x.com/example_dev/status/1910000000000000001\n")
+	mustContain(t, md.PageContent,
+		"@example_dev (Example Dev) · 2026-11-20T10:00:00Z · https://x.com/example_dev/status/1910000000000000001\n",
+		"@demo_lab · https://x.com/demo_lab/status/1910000000000000002\n",
+		"https://x.com/example_dev/status/1910000000000000003\nReplying to @demo_lab\n")
+}
+
+// A post two sources call gone (deleted, protected) is dropped, and the
+// timeline is not partial: there is nothing a retry would bring back.
+func TestTimelineGonePostIsDropped(t *testing.T) {
+	routes := homePosts(t)
+	delete(routes, "/2/conversation/1910000000000000001") // every source answers 404
+	_, posts := newUpstream(t, routes)
+	_, rss := newRSSHub(t, http.StatusOK, fixture(t, "rsshub_home.json"))
+	doc, err := newTimelineEngine(t, posts, rss, "", nil).Crawl(context.Background(), "https://x.com/home",
+		domain.EngineOptions{RedditFormat: "json", FormatExplicit: true})
+	if err != nil {
+		t.Fatalf("Crawl: %v", err)
+	}
+	if doc.Metadata[domain.PartialKey] != "" || doc.Metadata["posts"] != "2" {
+		t.Errorf("meta = %v, want 2 posts and no partial", doc.Metadata)
+	}
+	var tl Timeline
+	if err := json.Unmarshal([]byte(doc.PageContent), &tl); err != nil {
+		t.Fatalf("json: %v", err)
+	}
+	if len(tl.Posts) != 2 || tl.Posts[0].ID != "1910000000000000002" || tl.Posts[0].CountsMissing || tl.Posts[0].Likes != 310 {
+		t.Errorf("posts = %+v, want the gone post dropped and the others loaded", tl.Posts)
+	}
+	mustNotContain(t, doc.PageContent, "counts_missing")
+}
+
+func TestHTMLText(t *testing.T) {
+	for _, tc := range []struct {
+		in    string
+		reply bool
+		want  string
+	}{
+		{`Read <a href="https://example.com/a/very/long/path">example.com/a/very…</a><br>now`, false,
+			"Read https://example.com/a/very/long/path\nnow"},
+		{`See <a href="https://example.com/x">the docs</a> &amp; more`, false, "See [the docs](https://example.com/x) & more"},
+		{`<a href="https://x.com/demo_lab">@demo_lab</a> yes <a href="https://x.com/hashtag/go">#go</a>`, true, "yes #go"},
+		{`<a href="https://x.com/demo_lab">@demo_lab</a> yes`, false, "@demo_lab yes"},
+		{`text<img src="https://pbs.twimg.com/media/a.jpg"><br><br><br><br>end`, false, "text\n\nend"},
+	} {
+		if got := htmlText(tc.in, tc.reply); got != tc.want {
+			t.Errorf("htmlText(%q, %v) = %q, want %q", tc.in, tc.reply, got, tc.want)
+		}
+	}
 }
 
 // --- Errors -------------------------------------------------------------------
 
-// Without RSSHub a timeline is a final error: crawl4ai would only get X's
-// logged-out shell.
-func TestTimelineWithoutRSSHubIsFinal(t *testing.T) {
-	gen := &genericFake{}
+// Without RSSHub the home timeline is a final error naming the variable
+// (logged out it is X's sign-in shell), while profiles and search are not
+// claimed and go to the generic engine as before.
+func TestTimelineWithoutRSSHub(t *testing.T) {
+	gen := &genericFake{doc: domain.Document{PageContent: "rendered", Metadata: map[string]string{}}}
 	e := New(Config{Logger: quiet, Client: httpx.New(nil), Generic: gen})
 	reg := engine.New().Register(e).Fallback(gen)
-	for _, u := range []string{"https://x.com/home", "https://x.com/home?f=following", "https://x.com/example_dev", "https://x.com/search?q=parser"} {
+	for _, u := range []string{"https://x.com/home", "https://x.com/home?f=following"} {
+		if !e.Matches(u) {
+			t.Errorf("%s: not claimed", u)
+		}
 		_, err := reg.Crawl(context.Background(), u, domain.EngineOptions{})
 		if err == nil || !strings.Contains(err.Error(), "set OMNIFEED_TWITTER_RSSHUB_URL") {
 			t.Errorf("%s: err = %v, want the RSSHub setup error", u, err)
@@ -298,6 +363,25 @@ func TestTimelineWithoutRSSHubIsFinal(t *testing.T) {
 	}
 	if len(gen.urls) != 0 {
 		t.Errorf("fallback crawled %v", gen.urls)
+	}
+
+	for _, u := range []string{"https://x.com/example_dev", "https://x.com/search?q=parser"} {
+		if e.Matches(u) {
+			t.Errorf("%s: claimed without RSSHub", u)
+		}
+		if _, err := reg.Crawl(context.Background(), u, domain.EngineOptions{}); err != nil {
+			t.Errorf("%s: registry err = %v, want the generic render", u, err)
+		}
+	}
+	if len(gen.urls) != 2 {
+		t.Errorf("fallback crawled %v, want the profile and the search", gen.urls)
+	}
+
+	withRSSHub := New(Config{Logger: quiet, Client: httpx.New(nil), RSSHubURL: "http://rsshub.test"})
+	for _, u := range []string{"https://x.com/example_dev", "https://x.com/search?q=parser", "https://x.com/home"} {
+		if !withRSSHub.Matches(u) {
+			t.Errorf("%s: not claimed with RSSHub", u)
+		}
 	}
 }
 
@@ -328,6 +412,7 @@ func TestTimelineRSSHubErrors(t *testing.T) {
 		if n := len(fake.requests()); n != 1 {
 			t.Errorf("%d: rsshub asked %d times, want 1", tc.status, n)
 		}
+		mustContain(t, err.Error(), "rsshub returned")
 		mustNotContain(t, err.Error()+logs.String(), testKey)
 	}
 }

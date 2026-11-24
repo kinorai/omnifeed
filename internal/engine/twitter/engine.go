@@ -53,7 +53,7 @@ type Engine struct {
 	fxBase            string
 	syndBase          string
 	vxBase            string
-	rsshubBase        string // "" = timelines answer errNoRSSHub
+	rsshubBase        string // "" = home answers errNoRSSHub, profiles and search are not claimed
 	rsshubKey         string
 	maxReplies        int
 	timeout           time.Duration
@@ -75,7 +75,8 @@ type Config struct {
 	VxTwitterURL   string // defaults to the public endpoint; overridden in tests
 	MaxReplies     int    // defaults to DefaultMaxReplies
 	// RSSHubURL is the RSSHub instance the timelines (home, following,
-	// profiles, search) are read from; empty = they answer an error.
+	// profiles, search) are read from; empty = home answers an error and
+	// profiles and search are not claimed.
 	// RSSHubKey is its ACCESS_KEY, sent as the key parameter.
 	RSSHubURL string
 	RSSHubKey string
@@ -140,19 +141,27 @@ func New(cfg Config) *Engine {
 // Name returns the engine identifier ("twitter").
 func (*Engine) Name() string { return "twitter" }
 
-// Matches claims post URLs, the home timeline (For you and Following),
-// profiles and search on x.com, twitter.com and the fixer mirrors, and t.co
-// short links. Profile tabs, lists and the rest fall through to the generic
-// engine (which rewrites twitter.com to x.com).
-func (*Engine) Matches(rawURL string) bool {
-	_, ok := parseTarget(rawURL)
-	return ok
+// Matches claims post URLs and the home timeline (For you and Following) on
+// x.com, twitter.com and the fixer mirrors, and t.co short links. Profiles
+// and search are claimed only when an RSSHub is configured; without one they
+// fall through like profile tabs, lists and the rest, to the generic engine
+// (which rewrites twitter.com to x.com). The home timeline is claimed either
+// way: logged out it is only X's sign-in shell, so the engine's error naming
+// OMNIFEED_TWITTER_RSSHUB_URL beats a crawl of it.
+func (e *Engine) Matches(rawURL string) bool {
+	t, ok := parseTarget(rawURL)
+	return ok && e.claims(t)
+}
+
+// claims reports whether this engine renders target t as configured.
+func (e *Engine) claims(t target) bool {
+	return e.rsshubBase != "" || (t.kind != kindProfile && t.kind != kindSearch)
 }
 
 // Crawl renders the post or the timeline behind rawURL.
 func (e *Engine) Crawl(ctx context.Context, rawURL string, opts domain.EngineOptions) (domain.Document, error) {
 	t, ok := parseTarget(rawURL)
-	if !ok {
+	if !ok || !e.claims(t) {
 		return domain.Document{}, fmt.Errorf("unsupported twitter url: %s", rawURL)
 	}
 	switch t.kind {
