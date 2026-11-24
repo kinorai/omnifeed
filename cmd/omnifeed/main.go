@@ -328,7 +328,9 @@ func run(cfg config.Config, logger *slog.Logger) error {
 	// post URLs read public JSON mirrors directly (FxTwitter, then the embed
 	// syndication endpoint and vxTwitter), with crawl4ai on the x.com URL last.
 	// Needs outbound access to api.fxtwitter.com (or the configured FxEmbed),
-	// cdn.syndication.twimg.com, api.vxtwitter.com and t.co.
+	// cdn.syndication.twimg.com, api.vxtwitter.com and t.co. Timelines (home,
+	// following, profiles, search) come from the RSSHub at
+	// OMNIFEED_TWITTER_RSSHUB_URL alone; unset, they answer an error.
 	threadEngines := []domain.Engine{redditEngine, hackerNewsEngine, gitHubEngine, discourseEngine, blueskyEngine, stackExchangeEngine}
 	if cfg.TwitterEnabled {
 		twitterEngine := twitter.New(twitter.Config{
@@ -337,11 +339,15 @@ func run(cfg config.Config, logger *slog.Logger) error {
 			Generic:         crawl4aiEngine,
 			FxTwitterURL:    cfg.TwitterFxTwitterURL,
 			MaxReplies:      cfg.TwitterMaxReplies,
+			RSSHubURL:       cfg.TwitterRSSHubURL,
+			RSSHubKey:       cfg.TwitterRSSHubKey,
 			BlockPrivateIPs: cfg.BlockPrivateIPs,
 			Logger:          logger,
 		})
 		registry.Register(twitterEngine)
 		// A post and its replies change like a thread: the threads TTL.
+		// Profiles and search share it; home and following are private
+		// documents the response cache never stores.
 		threadEngines = append(threadEngines, twitterEngine)
 	}
 

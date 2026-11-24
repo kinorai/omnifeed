@@ -316,13 +316,15 @@ func TestCrawl_ZeroTTLDoesNotStore(t *testing.T) {
 
 // --- what must never be cached ---
 
-func TestCrawl_DoesNotCacheErrorsFallbacksOrPartials(t *testing.T) {
+func TestCrawl_DoesNotCacheErrorsFallbacksPartialsOrPrivate(t *testing.T) {
 	fallback := page(testURL)
 	fallback.Metadata[domain.FallbackFromKey] = "reddit"
 	fallback.Metadata["fallback_reason"] = "timeout"
 	partial := page(testURL)
 	partial.Metadata[domain.PartialKey] = "true"
 	partial.Metadata[domain.PartialReasonKey] = "http_429"
+	private := page(testURL)
+	private.Metadata[domain.PrivateKey] = "true"
 
 	cases := map[string]func(context.Context, int32) (domain.Document, error){
 		"error": func(context.Context, int32) (domain.Document, error) {
@@ -330,6 +332,7 @@ func TestCrawl_DoesNotCacheErrorsFallbacksOrPartials(t *testing.T) {
 		},
 		"fallback": func(context.Context, int32) (domain.Document, error) { return fallback, nil },
 		"partial":  func(context.Context, int32) (domain.Document, error) { return partial, nil },
+		"private":  func(context.Context, int32) (domain.Document, error) { return private, nil },
 		"empty":    func(context.Context, int32) (domain.Document, error) { return domain.Document{}, nil },
 	}
 	for name, respond := range cases {

@@ -15,6 +15,12 @@ const (
 	// so it is never cached either.
 	FallbackFromKey = "fallback_from"
 
+	// PrivateKey is "true" on a document rendered from someone's own account
+	// view (the X home and following timelines of the RSSHub owner). It is
+	// complete, but it is that person's feed: the shared response cache never
+	// stores it.
+	PrivateKey = "private"
+
 	// CacheKey is the response cache's verdict on a document: "hit", "miss"
 	// or "bypass". Absent when no cache sits in front of the engines.
 	CacheKey = "cache"

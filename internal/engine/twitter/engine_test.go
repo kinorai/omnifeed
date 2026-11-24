@@ -58,22 +58,20 @@ func TestParseTarget(t *testing.T) {
 	}
 	for _, u := range claim {
 		got, ok := parseTarget(u)
-		if !ok || got.shortLink || got.id != id {
+		if !ok || got.kind != kindPost || got.id != id {
 			t.Errorf("parseTarget(%q) = %+v, %v; want id %s", u, got, ok, id)
 		}
 	}
 
 	shortLinks := []string{"https://t.co/Ys7KQNsu5w", "http://t.co/abc123", "https://T.CO/abc123/"}
 	for _, u := range shortLinks {
-		if got, ok := parseTarget(u); !ok || !got.shortLink {
+		if got, ok := parseTarget(u); !ok || got.kind != kindShortLink {
 			t.Errorf("parseTarget(%q) = %+v, %v; want a t.co short link", u, got, ok)
 		}
 	}
 
 	fallThrough := []string{
-		"https://x.com/tuakdotsol",                          // profile
 		"https://twitter.com/tuakdotsol/with_replies",       // profile tab
-		"https://x.com/search?q=go",                         // search
 		"https://x.com/i/lists/123",                         // list
 		"https://x.com/tuakdotsol/status/",                  // no id
 		"https://x.com/tuakdotsol/status/abc",               // non-numeric id
@@ -120,6 +118,7 @@ type route struct {
 	status   int
 	body     []byte
 	location string
+	delay    time.Duration // before answering
 }
 
 func newUpstream(t *testing.T, routes map[string]route) (*upstream, *httptest.Server) {
@@ -146,6 +145,7 @@ func (u *upstream) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"status":null,"thread":null,"author":null,"code":404}`))
 		return
 	}
+	time.Sleep(rt.delay)
 	if rt.location != "" {
 		w.Header().Set("Location", rt.location)
 	}

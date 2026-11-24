@@ -44,14 +44,17 @@ const (
 	sourceCrawl4AI      = "crawl4ai"
 )
 
-// Engine implements domain.Engine for X / Twitter post URLs.
+// Engine implements domain.Engine for X / Twitter post and timeline URLs.
 type Engine struct {
 	fx, synd, vx, tco *httpx.Client
+	rsshub            *httpx.Client
 	limiter           httpx.Limiter
 	generic           domain.Engine
 	fxBase            string
 	syndBase          string
 	vxBase            string
+	rsshubBase        string // "" = timelines answer errNoRSSHub
+	rsshubKey         string
 	maxReplies        int
 	timeout           time.Duration
 	blockPrivate      bool
@@ -71,7 +74,12 @@ type Config struct {
 	SyndicationURL string // defaults to the public endpoint; overridden in tests
 	VxTwitterURL   string // defaults to the public endpoint; overridden in tests
 	MaxReplies     int    // defaults to DefaultMaxReplies
-	Timeout        time.Duration
+	// RSSHubURL is the RSSHub instance the timelines (home, following,
+	// profiles, search) are read from; empty = they answer an error.
+	// RSSHubKey is its ACCESS_KEY, sent as the key parameter.
+	RSSHubURL string
+	RSSHubKey string
+	Timeout   time.Duration
 	// BlockPrivateIPs applies the SSRF guard to the destination of a t.co
 	// link before it is crawled.
 	BlockPrivateIPs bool
@@ -113,11 +121,14 @@ func New(cfg Config) *Engine {
 		synd:         cfg.Client.WithUpstream("twitter", "syndication"),
 		vx:           cfg.Client.WithUpstream("twitter", "vxtwitter"),
 		tco:          tco.WithUpstream("twitter", "tco"),
+		rsshub:       cfg.Client.WithUpstream("twitter", "rsshub"),
 		limiter:      cfg.Limiter,
 		generic:      cfg.Generic,
 		fxBase:       strings.TrimRight(cfg.FxTwitterURL, "/"),
 		syndBase:     strings.TrimRight(cfg.SyndicationURL, "/"),
 		vxBase:       strings.TrimRight(cfg.VxTwitterURL, "/"),
+		rsshubBase:   strings.TrimRight(cfg.RSSHubURL, "/"),
+		rsshubKey:    cfg.RSSHubKey,
 		maxReplies:   cfg.MaxReplies,
 		timeout:      cfg.Timeout,
 		blockPrivate: cfg.BlockPrivateIPs,
@@ -129,29 +140,33 @@ func New(cfg Config) *Engine {
 // Name returns the engine identifier ("twitter").
 func (*Engine) Name() string { return "twitter" }
 
-// Matches claims post URLs on x.com, twitter.com and the fixer mirrors, and
-// t.co short links. Profiles, search, lists and the rest fall through to the
-// generic engine (which rewrites twitter.com to x.com).
+// Matches claims post URLs, the home timeline (For you and Following),
+// profiles and search on x.com, twitter.com and the fixer mirrors, and t.co
+// short links. Profile tabs, lists and the rest fall through to the generic
+// engine (which rewrites twitter.com to x.com).
 func (*Engine) Matches(rawURL string) bool {
 	_, ok := parseTarget(rawURL)
 	return ok
 }
 
-// Crawl renders the post behind rawURL.
+// Crawl renders the post or the timeline behind rawURL.
 func (e *Engine) Crawl(ctx context.Context, rawURL string, opts domain.EngineOptions) (domain.Document, error) {
 	t, ok := parseTarget(rawURL)
 	if !ok {
 		return domain.Document{}, fmt.Errorf("unsupported twitter url: %s", rawURL)
 	}
-	if !t.shortLink {
+	switch t.kind {
+	case kindPost:
 		return e.crawlPost(ctx, rawURL, t.id, opts)
+	case kindHome, kindFollowing, kindProfile, kindSearch:
+		return e.crawlTimeline(ctx, rawURL, t, opts)
 	}
 
 	dest, err := e.resolveShortLink(ctx, rawURL)
 	if err != nil {
 		return domain.Document{}, err
 	}
-	if dt, ok := parseTarget(dest); ok && !dt.shortLink {
+	if dt, ok := parseTarget(dest); ok && dt.kind == kindPost {
 		return e.crawlPost(ctx, rawURL, dt.id, opts)
 	}
 	// Not a post: hand the destination to the generic path. The registry

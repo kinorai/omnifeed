@@ -243,10 +243,15 @@ type Config struct {
 	// Twitter/X engine. TwitterEnabled off sends every x.com/twitter.com URL
 	// to the generic fallback. TwitterFxTwitterURL is the FxTwitter API base —
 	// the public api.fxtwitter.com, or a self-hosted FxEmbed. TwitterMaxReplies
-	// caps the replies rendered under a post.
+	// caps the replies rendered under a post. TwitterRSSHubURL is the RSSHub
+	// instance the X timelines (home, following, profiles, search) are read
+	// from; empty = those URLs answer with an error. TwitterRSSHubKey is that
+	// instance's ACCESS_KEY, sent as its key parameter; empty = none.
 	TwitterEnabled      bool
 	TwitterFxTwitterURL string
 	TwitterMaxReplies   int
+	TwitterRSSHubURL    string
+	TwitterRSSHubKey    string
 
 	// Reddit engine defaults.
 	RedditTimeout     time.Duration
@@ -356,6 +361,8 @@ func Load() (Config, error) {
 		StackExchangeKey: strings.TrimSpace(env("OMNIFEED_STACKEXCHANGE_KEY", "")),
 
 		TwitterFxTwitterURL: env("OMNIFEED_TWITTER_FXTWITTER_URL", "https://api.fxtwitter.com"),
+		TwitterRSSHubURL:    strings.TrimSpace(env("OMNIFEED_TWITTER_RSSHUB_URL", "")),
+		TwitterRSSHubKey:    strings.TrimSpace(env("OMNIFEED_TWITTER_RSSHUB_KEY", "")),
 
 		RedditFormat:   env("OMNIFEED_REDDIT_FORMAT", "toon"),
 		RedditSession:  strings.TrimSpace(env("OMNIFEED_REDDIT_SESSION", "")),
@@ -589,6 +596,11 @@ func Load() (Config, error) {
 	}
 	if u, perr := url.Parse(c.TwitterFxTwitterURL); perr != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		return c, fmt.Errorf("OMNIFEED_TWITTER_FXTWITTER_URL must be an absolute http(s) URL, got %q", c.TwitterFxTwitterURL)
+	}
+	if c.TwitterRSSHubURL != "" {
+		if u, perr := url.Parse(c.TwitterRSSHubURL); perr != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			return c, fmt.Errorf("OMNIFEED_TWITTER_RSSHUB_URL must be an absolute http(s) URL, got %q", c.TwitterRSSHubURL)
+		}
 	}
 	if c.RedditMaxComments < 0 {
 		return c, fmt.Errorf("OMNIFEED_REDDIT_MAX_COMMENTS must be >= 0 (0 = unlimited), got %d", c.RedditMaxComments)
