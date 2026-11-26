@@ -8,6 +8,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
 	"github.com/kinorai/omnifeed/internal/config"
 	"github.com/kinorai/omnifeed/internal/httpx"
 	"github.com/kinorai/omnifeed/internal/httpx/redislimit"
@@ -283,5 +284,36 @@ func TestSearxngLocalLimiterStaysSerialAsTheRedisFallback(t *testing.T) {
 	defer cancel()
 	if _, err := limiter.Acquire(ctx, "searxng", "https://searxng.test/search"); err == nil {
 		t.Fatal("second Acquire succeeded, want it held behind the single fallback slot")
+	}
+}
+
+// A timeline loads its posts 4 at a time, so the twitter limiter must admit
+// TwitterConcurrency callers to one host at once, with Redis and without. With
+// Redis and no ClusterConcurrency, MinDelay alone serializes a host across the
+// cluster, which put x.com/home past the 60s client timeout.
+func TestTwitterLimiterAdmitsConcurrentCallsToOneHost(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+
+	cfg := config.Config{TwitterConcurrency: 4, TwitterDelay: 10 * time.Millisecond, RedisKeyPrefix: "omnifeed:test"}
+	for name, client := range map[string]redis.UniversalClient{"local": nil, "redis": rdb} {
+		t.Run(name, func(t *testing.T) {
+			limiter := twitterLimiter(cfg, client, observability.NewMetrics(), logger)
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			for i := range cfg.TwitterConcurrency {
+				// None releases: each Acquire must still be admitted.
+				if _, err := limiter.Acquire(ctx, "twitter", "https://api.fxtwitter.com/2/status/1"); err != nil {
+					t.Fatalf("Acquire %d of %d: %v", i+1, cfg.TwitterConcurrency, err)
+				}
+			}
+			short, cancelShort := context.WithTimeout(context.Background(), 100*time.Millisecond)
+			defer cancelShort()
+			if _, err := limiter.Acquire(short, "twitter", "https://api.fxtwitter.com/2/status/1"); err == nil {
+				t.Fatal("Acquire past the cap succeeded, want it held")
+			}
+		})
 	}
 }
