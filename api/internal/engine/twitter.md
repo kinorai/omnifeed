@@ -6,7 +6,7 @@
 import "github.com/kinorai/omnifeed/internal/engine/twitter"
 ```
 
-Package twitter implements the Twitter/X engine. It renders an x.com \(or twitter.com, fxtwitter.com, fixupx.com, vxtwitter.com, fixvx.com\) post URL as the post itself — full text, quote, media with alt text, community note, poll, link card, X Article body — plus its parents, the author's self\-thread and the top replies. Markdown by default; TOON or JSON when the caller passes \`format\`.
+Package twitter implements the Twitter/X engine. It renders an x.com \(or twitter.com, fxtwitter.com, fixupx.com, vxtwitter.com, fixvx.com\) post URL as the post itself — full text, quote, media with alt text, community note, poll, link card, X Article body — plus its parents, the author's self\-thread and the top replies. The home timeline \(For you and Following\), a profile and a /search URL render as a list of posts read from RSSHub \(OMNIFEED\_TWITTER\_RSSHUB\_URL\), each post then loaded like a linked one for its counts and media \(rsshub.go\). Markdown by default; TOON or JSON when the caller passes \`format\`.
 
 x.com is bot\-walled for headless browsers and twitter.com links fail in crawl4ai outright, so the engine reads public JSON mirrors DIRECTLY over HTTP, in order:
 
@@ -23,10 +23,11 @@ When every source fails the engine returns a classified "tweet unavailable" erro
 - [type Engine](<#Engine>)
   - [func New\(cfg Config\) \*Engine](<#New>)
   - [func \(e \*Engine\) Crawl\(ctx context.Context, rawURL string, opts domain.EngineOptions\) \(domain.Document, error\)](<#Engine.Crawl>)
-  - [func \(\*Engine\) Matches\(rawURL string\) bool](<#Engine.Matches>)
+  - [func \(e \*Engine\) Matches\(rawURL string\) bool](<#Engine.Matches>)
   - [func \(\*Engine\) Name\(\) string](<#Engine.Name>)
 - [type OutPost](<#OutPost>)
 - [type Output](<#Output>)
+- [type Timeline](<#Timeline>)
 
 
 ## Constants
@@ -60,7 +61,13 @@ type Config struct {
     SyndicationURL string // defaults to the public endpoint; overridden in tests
     VxTwitterURL   string // defaults to the public endpoint; overridden in tests
     MaxReplies     int    // defaults to DefaultMaxReplies
-    Timeout        time.Duration
+    // RSSHubURL is the RSSHub instance the timelines (home, following,
+    // profiles, search) are read from; empty = home answers an error and
+    // profiles and search are not claimed.
+    // RSSHubKey is its ACCESS_KEY, sent as the key parameter.
+    RSSHubURL string
+    RSSHubKey string
+    Timeout   time.Duration
     // BlockPrivateIPs applies the SSRF guard to the destination of a t.co
     // link before it is crawled.
     BlockPrivateIPs bool
@@ -71,7 +78,7 @@ type Config struct {
 <a name="Engine"></a>
 ## type Engine
 
-Engine implements domain.Engine for X / Twitter post URLs.
+Engine implements domain.Engine for X / Twitter post and timeline URLs.
 
 ```go
 type Engine struct {
@@ -95,16 +102,16 @@ New returns a Twitter Engine configured per cfg.
 func (e *Engine) Crawl(ctx context.Context, rawURL string, opts domain.EngineOptions) (domain.Document, error)
 ```
 
-Crawl renders the post behind rawURL.
+Crawl renders the post or the timeline behind rawURL.
 
 <a name="Engine.Matches"></a>
 ### func \(\*Engine\) Matches
 
 ```go
-func (*Engine) Matches(rawURL string) bool
+func (e *Engine) Matches(rawURL string) bool
 ```
 
-Matches claims post URLs on x.com, twitter.com and the fixer mirrors, and t.co short links. Profiles, search, lists and the rest fall through to the generic engine \(which rewrites twitter.com to x.com\).
+Matches claims post URLs and the home timeline \(For you and Following\) on x.com, twitter.com and the fixer mirrors, and t.co short links. Profiles and search are claimed only when an RSSHub is configured; without one they fall through like profile tabs, lists and the rest, to the generic engine \(which rewrites twitter.com to x.com\). The home timeline is claimed either way: logged out it is only X's sign\-in shell, so the engine's error naming OMNIFEED\_TWITTER\_RSSHUB\_URL beats a crawl of it.
 
 <a name="Engine.Name"></a>
 ### func \(\*Engine\) Name
@@ -141,6 +148,9 @@ type OutPost struct {
     Poll      []string `json:"poll,omitempty" toon:"poll,omitempty"`
     Card      string   `json:"card,omitempty" toon:"card,omitempty"`
     Article   string   `json:"article,omitempty" toon:"article,omitempty"`
+    // CountsMissing marks a timeline post the post chain could not load: its
+    // likes, reposts, replies and views are unknown, not zero.
+    CountsMissing bool `json:"counts_missing,omitempty" toon:"counts_missing,omitempty"`
 }
 ```
 
@@ -157,6 +167,20 @@ type Output struct {
     Replies   []OutPost `json:"replies,omitempty" toon:"replies,omitempty"`
     Source    string    `json:"source" toon:"source"`
     Truncated bool      `json:"truncated" toon:"truncated"`
+}
+```
+
+<a name="Timeline"></a>
+## type Timeline
+
+Timeline is the structured rendering of a timeline: the home timeline \(For you or Following\), a profile or a search, in X's order.
+
+```go
+type Timeline struct {
+    Kind   string    `json:"kind" toon:"kind"` // home | following | profile | search
+    Handle string    `json:"handle,omitempty" toon:"handle,omitempty"`
+    Query  string    `json:"query,omitempty" toon:"query,omitempty"`
+    Posts  []OutPost `json:"posts" toon:"posts"`
 }
 ```
 

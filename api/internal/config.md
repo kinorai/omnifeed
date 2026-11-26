@@ -263,10 +263,16 @@ type Config struct {
     // Twitter/X engine. TwitterEnabled off sends every x.com/twitter.com URL
     // to the generic fallback. TwitterFxTwitterURL is the FxTwitter API base —
     // the public api.fxtwitter.com, or a self-hosted FxEmbed. TwitterMaxReplies
-    // caps the replies rendered under a post.
+    // caps the replies rendered under a post. TwitterRSSHubURL is the RSSHub
+    // instance the X timelines (home, following, profiles, search) are read
+    // from; empty = home answers an error and profiles and search go to the
+    // generic engine. TwitterRSSHubKey is that instance's ACCESS_KEY, sent as
+    // its key parameter; empty = none.
     TwitterEnabled      bool
     TwitterFxTwitterURL string
     TwitterMaxReplies   int
+    TwitterRSSHubURL    string
+    TwitterRSSHubKey    string
 
     // Reddit engine defaults.
     RedditTimeout     time.Duration
