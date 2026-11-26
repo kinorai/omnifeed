@@ -267,12 +267,17 @@ type Config struct {
     // instance the X timelines (home, following, profiles, search) are read
     // from; empty = home answers an error and profiles and search go to the
     // generic engine. TwitterRSSHubKey is that instance's ACCESS_KEY, sent as
-    // its key parameter; empty = none.
+    // its key parameter; empty = none. TwitterConcurrency and TwitterDelay pace
+    // the engine's own calls per host (FxTwitter, syndication, vxTwitter, t.co,
+    // RSSHub) instead of the crawl limiter's 1.5s: a timeline loads every post
+    // through the post chain, and FxTwitter allows 1000 requests a minute.
     TwitterEnabled      bool
     TwitterFxTwitterURL string
     TwitterMaxReplies   int
     TwitterRSSHubURL    string
     TwitterRSSHubKey    string
+    TwitterConcurrency  int
+    TwitterDelay        time.Duration
 
     // Reddit engine defaults.
     RedditTimeout     time.Duration
