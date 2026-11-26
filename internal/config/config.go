@@ -247,12 +247,17 @@ type Config struct {
 	// instance the X timelines (home, following, profiles, search) are read
 	// from; empty = home answers an error and profiles and search go to the
 	// generic engine. TwitterRSSHubKey is that instance's ACCESS_KEY, sent as
-	// its key parameter; empty = none.
+	// its key parameter; empty = none. TwitterConcurrency and TwitterDelay pace
+	// the engine's own calls per host (FxTwitter, syndication, vxTwitter, t.co,
+	// RSSHub) instead of the crawl limiter's 1.5s: a timeline loads every post
+	// through the post chain, and FxTwitter allows 1000 requests a minute.
 	TwitterEnabled      bool
 	TwitterFxTwitterURL string
 	TwitterMaxReplies   int
 	TwitterRSSHubURL    string
 	TwitterRSSHubKey    string
+	TwitterConcurrency  int
+	TwitterDelay        time.Duration
 
 	// Reddit engine defaults.
 	RedditTimeout     time.Duration
@@ -490,6 +495,12 @@ func Load() (Config, error) {
 	if c.TwitterEnabled, err = envBool("OMNIFEED_TWITTER_ENABLED", true); err != nil {
 		return c, err
 	}
+	if c.TwitterConcurrency, err = envInt("OMNIFEED_TWITTER_CONCURRENCY", 4); err != nil {
+		return c, err
+	}
+	if c.TwitterDelay, err = envDuration("OMNIFEED_TWITTER_DELAY", 250*time.Millisecond); err != nil {
+		return c, err
+	}
 	if c.TwitterMaxReplies, err = envInt("OMNIFEED_TWITTER_MAX_REPLIES", 20); err != nil {
 		return c, err
 	}
@@ -591,6 +602,12 @@ func Load() (Config, error) {
 	}
 	if c.RedditDepth < 1 {
 		return c, fmt.Errorf("OMNIFEED_REDDIT_DEPTH must be >= 1, got %d", c.RedditDepth)
+	}
+	if c.TwitterConcurrency < 1 {
+		return c, fmt.Errorf("OMNIFEED_TWITTER_CONCURRENCY must be >= 1, got %d", c.TwitterConcurrency)
+	}
+	if c.TwitterDelay < 0 {
+		return c, fmt.Errorf("OMNIFEED_TWITTER_DELAY must be >= 0, got %s", c.TwitterDelay)
 	}
 	if c.TwitterMaxReplies < 1 {
 		return c, fmt.Errorf("OMNIFEED_TWITTER_MAX_REPLIES must be >= 1, got %d", c.TwitterMaxReplies)

@@ -336,7 +336,7 @@ func run(cfg config.Config, logger *slog.Logger) error {
 	if cfg.TwitterEnabled {
 		twitterEngine := twitter.New(twitter.Config{
 			Client:          httpClient,
-			Limiter:         limiter,
+			Limiter:         traceLimiter(tracing, "twitter", twitterLimiter(cfg, rdb, metrics, logger)),
 			Generic:         crawl4aiEngine,
 			FxTwitterURL:    cfg.TwitterFxTwitterURL,
 			MaxReplies:      cfg.TwitterMaxReplies,
@@ -697,6 +697,22 @@ func redditQuota(cfg config.Config, rdb redis.UniversalClient, metrics *observab
 			MaxConcurrent: cfg.PerDomainConcurrency,
 			Quota:         cfg.RedditQuota,
 			Window:        cfg.RedditQuotaWindow,
+		},
+		metrics, logger)
+}
+
+// twitterLimiter builds the pacing limiter of the Twitter engine's own calls.
+// The crawl limiter's 1.5s gap per host suits a page crawl, not a timeline: a
+// timeline loads each of its 20-50 posts through the post chain, which at that
+// gap ran past a 60s client timeout. FxTwitter documents 1000 requests a minute
+// per IP; the defaults (4 at once, 250ms apart) stay far below it.
+func twitterLimiter(cfg config.Config, rdb redis.UniversalClient, metrics *observability.Metrics, logger *slog.Logger) pacer {
+	return buildLimiter("twitter", rdb,
+		httpx.NewDomainLimiter(cfg.TwitterConcurrency, cfg.TwitterDelay),
+		redislimit.Config{
+			Prefix:        cfg.RedisKeyPrefix,
+			MaxConcurrent: cfg.TwitterConcurrency,
+			MinDelay:      cfg.TwitterDelay,
 		},
 		metrics, logger)
 }

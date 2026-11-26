@@ -32,7 +32,8 @@ const (
 	// in seconds, slower than the JSON mirrors.
 	rsshubTimeout = 30 * time.Second
 	// hydrateWorkers is how many posts of a timeline load at once. The post
-	// chain is paced by the per-domain limiter anyway; this bounds the burst.
+	// chain is paced by the engine's limiter (OMNIFEED_TWITTER_CONCURRENCY,
+	// default 4, per host) anyway; this bounds the burst.
 	hydrateWorkers = 4
 )
 

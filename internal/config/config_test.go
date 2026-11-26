@@ -344,8 +344,10 @@ func TestLoad_Twitter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if !cfg.TwitterEnabled || cfg.TwitterFxTwitterURL != "https://api.fxtwitter.com" || cfg.TwitterMaxReplies != 20 {
-		t.Errorf("defaults = %v %q %d", cfg.TwitterEnabled, cfg.TwitterFxTwitterURL, cfg.TwitterMaxReplies)
+	if !cfg.TwitterEnabled || cfg.TwitterFxTwitterURL != "https://api.fxtwitter.com" || cfg.TwitterMaxReplies != 20 ||
+		cfg.TwitterConcurrency != 4 || cfg.TwitterDelay != 250*time.Millisecond {
+		t.Errorf("defaults = %v %q %d %d %s", cfg.TwitterEnabled, cfg.TwitterFxTwitterURL, cfg.TwitterMaxReplies,
+			cfg.TwitterConcurrency, cfg.TwitterDelay)
 	}
 
 	for _, tc := range []struct {
@@ -362,6 +364,10 @@ func TestLoad_Twitter(t *testing.T) {
 			return c.TwitterRSSHubURL == "http://rsshub:1200"
 		}, false},
 		{"OMNIFEED_TWITTER_RSSHUB_KEY", " synthetic-key ", func(c Config) bool { return c.TwitterRSSHubKey == "synthetic-key" }, false},
+		{"OMNIFEED_TWITTER_CONCURRENCY", "8", func(c Config) bool { return c.TwitterConcurrency == 8 }, false},
+		{"OMNIFEED_TWITTER_DELAY", "1s", func(c Config) bool { return c.TwitterDelay == time.Second }, false},
+		{"OMNIFEED_TWITTER_CONCURRENCY", "0", nil, true},
+		{"OMNIFEED_TWITTER_DELAY", "-1s", nil, true},
 		{"OMNIFEED_TWITTER_MAX_REPLIES", "0", nil, true},
 		{"OMNIFEED_TWITTER_MAX_REPLIES", "many", nil, true},
 		{"OMNIFEED_TWITTER_ENABLED", "maybe", nil, true},
