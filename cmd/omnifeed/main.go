@@ -334,9 +334,19 @@ func run(cfg config.Config, logger *slog.Logger) error {
 	// profiles and search go to the generic engine.
 	threadEngines := []domain.Engine{redditEngine, hackerNewsEngine, gitHubEngine, discourseEngine, blueskyEngine, stackExchangeEngine}
 	if cfg.TwitterEnabled {
+		// Its own client so a 429's Retry-After penalizes the "twitter" pacer
+		// that paces these hosts (see retryAfterHook), as the searxng client does.
+		twitterPacer := twitterLimiter(cfg, rdb, metrics, logger)
+		if tracing {
+			twitterPacer = httpx.TraceLimiter("twitter", twitterPacer)
+		}
+		twitterClient := httpx.New(&http.Client{Timeout: cfg.Crawl4AITimeout, Transport: transport})
+		twitterClient.OnAttempt = metrics.ObserveAttempt
+		twitterClient.OnUpstream = metrics.ObserveUpstream
+		twitterClient.OnRetryAfter = retryAfterHook(twitterPacer, metrics)
 		twitterEngine := twitter.New(twitter.Config{
-			Client:          httpClient,
-			Limiter:         traceLimiter(tracing, "twitter", twitterLimiter(cfg, rdb, metrics, logger)),
+			Client:          twitterClient,
+			Limiter:         twitterPacer,
 			Generic:         crawl4aiEngine,
 			FxTwitterURL:    cfg.TwitterFxTwitterURL,
 			MaxReplies:      cfg.TwitterMaxReplies,
@@ -706,13 +716,21 @@ func redditQuota(cfg config.Config, rdb redis.UniversalClient, metrics *observab
 // timeline loads each of its 20-50 posts through the post chain, which at that
 // gap ran past a 60s client timeout. FxTwitter documents 1000 requests a minute
 // per IP; the defaults (4 at once, 250ms apart) stay far below it.
+//
+// Send-spaced, like the searxng cluster cap: with Redis, ClusterConcurrency is
+// what lets 4 calls overlap (MinDelay alone serializes a host across the
+// cluster, see redislimit's package doc), and MaxConcurrent stays 1 because
+// semFor raises it to the cluster cap. The default 60s lease covers the longest
+// hold, an RSSHub call bounded at 30s. Without Redis, or degraded, the local
+// limiter spaces sends the same way per pod.
 func twitterLimiter(cfg config.Config, rdb redis.UniversalClient, metrics *observability.Metrics, logger *slog.Logger) pacer {
 	return buildLimiter("twitter", rdb,
-		httpx.NewDomainLimiter(cfg.TwitterConcurrency, cfg.TwitterDelay),
+		httpx.NewSpacedDomainQuotaLimiter(cfg.TwitterConcurrency, cfg.TwitterDelay, 0, 0),
 		redislimit.Config{
-			Prefix:        cfg.RedisKeyPrefix,
-			MaxConcurrent: cfg.TwitterConcurrency,
-			MinDelay:      cfg.TwitterDelay,
+			Prefix:             cfg.RedisKeyPrefix,
+			MaxConcurrent:      1,
+			MinDelay:           cfg.TwitterDelay,
+			ClusterConcurrency: cfg.TwitterConcurrency,
 		},
 		metrics, logger)
 }
